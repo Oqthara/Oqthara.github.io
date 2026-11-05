@@ -104,7 +104,14 @@ jobs:
           check_contains "${BASE_URL%/}/" "reads like"
           check_contains "${BASE_URL%/}/tour.html" "Learn Oqthara in one sitting"
           check_contains "${BASE_URL%/}/status.html" "what does not work yet"
-          check_contains "${BASE_URL%/}/stdlib.html" "Global functions"
+          # Documentation and the changelog are fetched from GitHub at request time, so
+          # their shells cannot contain the document text. Assert the shell instead: the
+          # page must identify itself and point at the canonical GitHub source.
+          check_contains "${BASE_URL%/}/stdlib.html" "Standard library"
+          check_contains "${BASE_URL%/}/docs.html" "Documentation"
+          check_contains "${BASE_URL%/}/changelog.html" "Project history"
+          check_contains "${BASE_URL%/}/docs/spec/language.html" "github.com/Oqthara/oqthara/blob/main/docs/spec/language.md"
+          check_contains "${BASE_URL%/}/404.html" "does not exist"
 
           # A deep link must render the real page, not an empty React shell, on every request.
           for attempt in 1 2; do
