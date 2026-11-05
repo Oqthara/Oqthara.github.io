@@ -12,6 +12,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import GithubSlugger from "github-slugger";
+import { CodeBlock } from "./components/Code.js";
 import { resolveImage, resolveRelative } from "./source.js";
 
 const HEADINGS = ["h1", "h2", "h3", "h4", "h5", "h6"];
@@ -53,6 +54,21 @@ const EXTERNAL = /^(?:https?:)?\/\//i;
  */
 export function buildComponents({ path = "", ref = "main" } = {}) {
   return {
+    // Copy controls on fenced blocks. `pre` receives the `code` child, so the text is read
+    // from its props rather than the DOM, which keeps this working during server rendering.
+    pre({ node: _node, children, ...props }) {
+      const codeChild = Array.isArray(children) ? children[0] : children;
+      const text = codeChild?.props?.children;
+      const raw = Array.isArray(text) ? text.join("") : text;
+      const language = /language-([\w+-]+)/.exec(String(codeChild?.props?.className ?? ""))?.[1];
+      return h(CodeBlock, { code: typeof raw === "string" ? raw : "", label: language });
+    },
+    h2({ node: _node, children, id, ...props }) {
+      return h("h2", { id, ...props }, children, id ? h("a", { className: "heading-anchor", href: `#${id}`, "aria-label": "Link to this section" }, "#") : null);
+    },
+    h3({ node: _node, children, id, ...props }) {
+      return h("h3", { id, ...props }, children, id ? h("a", { className: "heading-anchor", href: `#${id}`, "aria-label": "Link to this section" }, "#") : null);
+    },
     a({ node: _node, href, children, ...props }) {
       const target = href === undefined ? null : resolveRelative(path, href, ref);
       if (target === null || target === undefined) {

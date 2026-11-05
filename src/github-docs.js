@@ -1,38 +1,78 @@
-// Reading documentation from GitHub at runtime.
+// Everything the site reads from GitHub, with deliberate caching.
 //
-// The site has no build step that knows about `docs/`. Every request goes to
-// raw.githubusercontent.com, which serves `cache-control: max-age=300` and
-// `access-control-allow-origin: *`, so the browser HTTP cache is part of the caching story.
-// On top of that this module keeps an in-memory Map keyed by `<ref>:<path>`:
+// Three kinds of request are made:
 //
-// - the promise itself is cached, so two components asking for the same file make one request;
-// - entries are fresh for five minutes;
-// - after that the previous value is returned immediately while a refresh runs in the
-//   background, so a reader never loses the page they are on to a spinner.
+//   1. raw.githubusercontent.com for file contents (Markdown, example source, changelog);
+//   2. api.github.com for the recursive git tree (document and example discovery);
+//   3. api.github.com for published releases (the channel selector).
 //
-// Combined with the raw CDN's five minutes, a merged documentation change is visible within
-// about ten minutes without a site change, rebuild or redeploy.
+// Fixing the bug that broke the deployed site starts here: every loader has an explicit,
+// documented return type. `loadTree` returns an array, `loadCatalog` returns an array,
+// `loadReleases` returns an array. Nothing returns an object that a caller might iterate.
+//
+// Caching
+// -------
+// One Map keyed by request purpose. The cached value is the *promise*, so two components
+// asking for the same file share one network round trip; concurrent callers cannot stampede.
+// Entries are fresh for five minutes. After that the previous value is returned immediately
+// while a refresh runs in the background (stale-while-revalidate), so a reader never loses
+// a rendered page to a spinner. Failures are never cached, so Retry always retries.
+//
+// The raw CDN adds `cache-control: max-age=300` of its own, so a merged documentation change
+// is visible within about ten minutes with no site change, rebuild or redeploy.
+//
+// Rate limits
+// -----------
+// Documents are read from the raw CDN, which has no API quota. Only the tree and the release
+// list touch the API, and both are cached for the whole session. A 403 or 429 is surfaced as
+// a typed error carrying `rateLimited: true`, so the UI can say "GitHub rate limit reached"
+// instead of a generic failure.
 
-import { DEFAULT_REF, blobUrl, rawUrl } from "./source.js";
+import {
+  CHANGELOG_PATH,
+  DEFAULT_REF,
+  blobUrl,
+  documentRoute,
+  isDocumentPath,
+  isExamplePath,
+  normalizePath,
+  normalizeRepoPath,
+  rawUrl,
+  releasesApiUrl,
+  sectionForPath,
+  titleFromMarkdown,
+  titleFromPath,
+  treeApiUrl,
+} from "./source.js";
 
 export const CACHE_TTL_MS = 5 * 60 * 1000;
 export const FETCH_TIMEOUT_MS = 15 * 1000;
-export const CATALOG_PATH = "docs/catalog.json";
+/** Titles are read one request per document; this keeps a cold index load civil. */
+export const TITLE_CONCURRENCY = 6;
 
-/** A fetch or validation failure that the UI can explain and link back to GitHub. */
-export class DocsError extends Error {
-  constructor(message, { url, path = "", ref = DEFAULT_REF, status = 0, cause = null } = {}) {
+/**
+ * A failure the UI can explain.
+ *
+ * `url` always points at a human-readable GitHub page so an error state can offer a way
+ * forward instead of a dead end.
+ */
+export class GitHubError extends Error {
+  constructor(message, { url = "", path = "", ref = DEFAULT_REF, status = 0, rateLimited = false, cause = null } = {}) {
     super(message);
-    this.name = "DocsError";
+    this.name = "GitHubError";
     this.url = url;
     this.path = path;
     this.ref = ref;
     this.status = status;
+    this.rateLimited = rateLimited;
     if (cause) this.cause = cause;
   }
 }
 
-/** `${ref}:${path}` -> { promise, at, value }. */
+/** Alias kept so an existing import site cannot silently break. */
+export const DocsError = GitHubError;
+
+/** purpose-key -> { promise, at, value }. */
 const cache = new Map();
 
 /** Clears every cached promise. Tests call this between cases; nothing else does. */
@@ -40,47 +80,49 @@ export function __resetCacheForTests() {
   cache.clear();
 }
 
-async function requestJson(url, context) {
-  const response = await get(url, context);
-  try {
-    return await response.json();
-  } catch (cause) {
-    throw new DocsError(`Invalid JSON from ${url}`, { ...context, url, cause });
-  }
+/** The fetch implementation, replaceable in tests without touching the cache. */
+let fetchImpl = (...args) => fetch(...args);
+
+/** Test seam: install a stub fetch. Passing nothing restores the real one. */
+export function __setFetchForTests(impl = null) {
+  fetchImpl = impl ?? ((...args) => fetch(...args));
 }
 
-async function requestText(url, context) {
-  const response = await get(url, context);
-  return response.text();
-}
-
-async function get(url, context) {
+async function get(url, { path = "", ref = DEFAULT_REF, accept = "*/*" } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   let response;
   try {
-    // `cache: "default"` lets the browser HTTP cache (and the raw CDN's max-age) participate
-    // instead of forcing a revalidation on every render.
-    response = await fetch(url, {
+    response = await fetchImpl(url, {
       signal: controller.signal,
+      // Let the browser HTTP cache and the raw CDN participate.
       cache: "default",
-      headers: { Accept: "text/plain, application/json;q=0.9, */*;q=0.1" },
+      headers: { Accept: accept },
     });
   } catch (cause) {
-    const reason = cause?.name === "AbortError" ? "timed out" : "could not be reached";
-    throw new DocsError(
-      `Documentation at ${url} ${reason}.`,
-      { ...context, url, cause },
+    const aborted = cause?.name === "AbortError";
+    throw new GitHubError(
+      aborted
+        ? "GitHub did not answer in time. Check the connection and try again."
+        : "GitHub could not be reached. Check the connection and try again.",
+      { url: blobUrl(path || "docs", ref), path, ref, cause },
     );
   } finally {
     clearTimeout(timer);
   }
 
   if (!response.ok) {
-    throw new DocsError(`GitHub returned ${response.status} for ${url}.`, {
-      ...context,
-      url: blobUrl(context.path || "", context.ref),
+    const rateLimited =
+      response.status === 403 || response.status === 429;
+    const detail = rateLimited
+      ? "GitHub's API rate limit was reached. This clears on its own; try again shortly."
+      : `GitHub returned ${response.status}.`;
+    throw new GitHubError(detail, {
+      url: blobUrl(path || "docs", ref),
+      path,
+      ref,
       status: response.status,
+      rateLimited,
     });
   }
   return response;
@@ -89,19 +131,20 @@ async function get(url, context) {
 /**
  * Runs `load` for `key` with promise deduplication and stale-while-revalidate.
  *
- * While fresh, the cached promise is reused. Once stale, a new promise replaces the entry
- * but the old value is still returned; the refresh result is used by the next reader.
+ * While fresh, the cached promise is reused. Once stale, a new promise replaces the entry but
+ * the previous value is still returned, so rendered content survives a slow refresh. A
+ * failure on the very first load is not cached, so Retry refetches immediately.
  */
 function cached(key, load) {
   const now = Date.now();
   const existing = cache.get(key);
 
   if (existing) {
-    const age = now - existing.at;
-    if (age < CACHE_TTL_MS) return existing.promise;
+    if (now - existing.at < CACHE_TTL_MS) return existing.promise;
     if (existing.value !== undefined) {
+      const previous = existing;
       const promise = load();
-      cache.set(key, { promise, at: now, value: existing.value });
+      cache.set(key, { promise, at: now, value: previous.value });
       promise.then(
         (value) => {
           const entry = cache.get(key);
@@ -109,11 +152,10 @@ function cached(key, load) {
         },
         () => {
           const entry = cache.get(key);
-          // Keep serving the last good value if the background refresh failed.
-          if (entry && entry.promise === promise) cache.set(key, { promise: existing.promise, at: existing.at, value: existing.value });
+          if (entry && entry.promise === promise) cache.set(key, previous);
         },
       );
-      return Promise.resolve(existing.value);
+      return Promise.resolve(previous.value);
     }
   }
 
@@ -127,92 +169,168 @@ function cached(key, load) {
     },
     () => {
       const current = cache.get(key);
-      // A failed first load is not cached, so Retry can try again immediately.
       if (current && current.promise === promise) cache.delete(key);
     },
   );
   return promise;
 }
 
-/** Validates the catalog written by `scripts/gen-docs-catalog.py`. */
-export function validateCatalog(value, { url, ref } = {}) {
-  const context = { url, ref, path: CATALOG_PATH };
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new DocsError("The documentation catalog is not an object.", context);
-  }
-  if (value.schema !== 1) {
-    throw new DocsError(`Unsupported documentation catalog schema: ${String(value.schema)}`, context);
-  }
-  if (!Array.isArray(value.docs) || value.docs.length === 0) {
-    throw new DocsError("The documentation catalog has no documents.", context);
-  }
-  const docs = value.docs.map((entry) => {
-    if (!entry || typeof entry !== "object") {
-      throw new DocsError("The documentation catalog contains a malformed entry.", context);
-    }
-    const { path, title, section = "", slug = "" } = entry;
-    if (typeof path !== "string" || !path.startsWith("docs/") || !path.endsWith(".md")) {
-      throw new DocsError(`The documentation catalog has an invalid path: ${String(path)}`, context);
-    }
-    if (typeof title !== "string" || !title.trim()) {
-      throw new DocsError(`The documentation catalog entry ${path} has no title.`, context);
-    }
-    return {
-      path,
-      title: title.trim(),
-      section: typeof section === "string" ? section : "",
-      slug: typeof slug === "string" ? slug : path.replace(/\.md$/, ""),
-    };
-  });
-  return { schema: 1, docs };
-}
-
-/** Loads and validates `docs/catalog.json` for a channel. */
-export function loadCatalog(ref = DEFAULT_REF) {
-  const key = `${ref}:${CATALOG_PATH}`;
-  const url = rawUrl(CATALOG_PATH, ref);
+/** Reads a text file from the raw CDN. */
+export function loadText(ref, path) {
+  const repoPath = normalizePath(normalizeRepoPath(path));
+  const key = `text:${ref}:${repoPath}`;
   return cached(key, async () => {
-    const value = await requestJson(url, { url, path: CATALOG_PATH, ref });
-    return validateCatalog(value, { url, ref });
+    const url = rawUrl(repoPath, ref);
+    const response = await get(url, { path: repoPath, ref, accept: "text/plain, */*" });
+    return response.text();
   });
 }
 
-/** The first level-one heading in a Markdown document, or an empty string. */
-export function titleFromMarkdown(markdown) {
-  let fence = false;
-  for (const line of String(markdown).split("\n")) {
-    if (/^\s*```/.test(line)) {
-      fence = !fence;
-      continue;
-    }
-    if (fence) continue;
-    const match = /^#\s+(.+?)\s*$/.exec(line);
-    if (match) return match[1].replace(/[*_`]/g, "").trim();
+/** Fetch helpers used only where a raw response body is required. */
+async function getJson(url, { path = "", ref = DEFAULT_REF } = {}) {
+  const response = await get(url, { path, ref, accept: "application/vnd.github+json" });
+  try {
+    return await response.json();
+  } catch (cause) {
+    throw new GitHubError("GitHub returned a response this site could not read.", {
+      url: blobUrl(path || "docs", ref),
+      path,
+      ref,
+      cause,
+    });
   }
-  return "";
 }
 
 /**
- * Loads one Markdown document for a channel.
- * Returns `{ path, title, markdown, sourceUrl }`; failures are typed `DocsError`s.
+ * Validates a Git Tree API response and returns the entries worth keeping.
+ *
+ * The API is not trusted: `tree` must be an array of objects with a string `path`, and only
+ * `blob` entries (files) are considered. A malformed payload is an error, not an empty list,
+ * because showing an empty documentation index would look like the docs had vanished.
  */
+export function validateTree(payload, { ref = DEFAULT_REF } = {}) {
+  if (!payload || typeof payload !== "object" || !Array.isArray(payload.tree)) {
+    throw new GitHubError("GitHub returned a tree this site could not read.", {
+      url: `https://github.com/Oqthara/oqthara/tree/${ref}`,
+      ref,
+    });
+  }
+  return payload.tree
+    .filter((entry) => entry && typeof entry.path === "string" && entry.type === "blob")
+    .map((entry) => ({ path: normalizeRepoPath(entry.path), size: Number(entry.size) || 0 }));
+}
+
+/** The recursive tree of a ref. Always an array. */
+export function loadTree(ref = DEFAULT_REF) {
+  const key = `tree:${ref}`;
+  return cached(key, async () => validateTree(await getJson(treeApiUrl(ref), { ref, path: "docs" }), { ref }));
+}
+
+/**
+ * Discovers every Markdown document under `docs/`, at any depth, for a ref.
+ *
+ * Returns an array of `{ path, section, title, route, sourceUrl }`, sorted by section then
+ * path. `title` is derived from the file name here; `loadCatalog` upgrades it to the
+ * document's real heading where it can.
+ */
+export async function loadDocumentIndex(ref = DEFAULT_REF) {
+  const tree = await loadTree(ref);
+  const docs = tree
+    .filter((entry) => isDocumentPath(entry.path))
+    .map((entry) => ({
+      path: entry.path,
+      section: sectionForPath(entry.path),
+      title: titleFromPath(entry.path),
+      route: documentRoute(entry.path, ref),
+      sourceUrl: blobUrl(entry.path, ref),
+    }))
+    .sort((a, b) => a.section.localeCompare(b.section) || a.path.localeCompare(b.path));
+  return docs;
+}
+
+/**
+ * The documentation catalogue: discovered documents with their real Markdown titles.
+ *
+ * Titles come from each document's first heading, which is what a reader expects to see. The
+ * requests are bounded so a cold load of forty documents does not open forty sockets at once.
+ * A document whose title cannot be read keeps its path-derived title instead of failing the
+ * whole index, because one unreadable file must not hide the rest of the manual.
+ */
+export function loadCatalog(ref = DEFAULT_REF) {
+  const key = `catalog:${ref}`;
+  return cached(key, async () => {
+    const docs = await loadDocumentIndex(ref);
+    const titled = new Array(docs.length);
+    let next = 0;
+
+    async function worker() {
+      while (next < docs.length) {
+        const index = next++;
+        const doc = docs[index];
+        try {
+          const markdown = await loadText(ref, doc.path);
+          titled[index] = { ...doc, title: titleFromMarkdown(markdown) || doc.title };
+        } catch {
+          // Keep the path-derived title: the document still belongs in the index.
+          titled[index] = doc;
+        }
+      }
+    }
+
+    await Promise.all(
+      Array.from({ length: Math.min(TITLE_CONCURRENCY, docs.length) }, worker),
+    );
+    return titled;
+  });
+}
+
+/**
+ * Discovers every `.oq` example for a ref.
+ *
+ * Returns an array of `{ path, name, category, route, sourceUrl }`. The category is the first
+ * directory beneath `examples/`, so a new folder becomes a new group with no site change.
+ * `name` is the file name without its extension, which is what the program calls itself.
+ */
+export async function loadExamples(ref = DEFAULT_REF) {
+  const key = `examples:${ref}`;
+  return cached(key, async () => {
+    const tree = await loadTree(ref);
+    return tree
+      .filter((entry) => isExamplePath(entry.path))
+      .map((entry) => {
+        const parts = entry.path.split("/");
+        const file = parts[parts.length - 1] ?? entry.path;
+        return {
+          path: entry.path,
+          name: file.replace(/\.oq$/i, ""),
+          category: parts.length > 2 ? parts[1] : "Examples",
+          route: `/example.html?path=${encodeURIComponent(entry.path)}&ref=${encodeURIComponent(ref)}`,
+          sourceUrl: blobUrl(entry.path, ref),
+          size: entry.size,
+        };
+      })
+      .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+  });
+}
+
+/** Loads one Markdown document: `{ path, title, markdown, sourceUrl }`. */
 export function loadDocument(ref, path) {
-  const repoPath = String(path ?? "").replace(/^\/+/, "");
-  if (!repoPath || !repoPath.toLowerCase().endsWith(".md")) {
+  const repoPath = normalizePath(normalizeRepoPath(path));
+  if (!isDocumentPath(repoPath)) {
     return Promise.reject(
-      new DocsError(`Not a documentation path: ${String(path)}`, {
-        url: blobUrl(repoPath, ref),
+      new GitHubError(`Not a documentation path: ${String(path)}`, {
+        url: blobUrl("docs", ref),
         path: repoPath,
         ref,
       }),
     );
   }
-  const key = `${ref}:${repoPath}`;
-  const url = rawUrl(repoPath, ref);
+  const key = `doc:${ref}:${repoPath}`;
   return cached(key, async () => {
-    const markdown = await requestText(url, { url, path: repoPath, ref });
+    const markdown = await loadText(ref, repoPath);
     return {
       path: repoPath,
+      ref,
       title: titleFromMarkdown(markdown),
       markdown,
       sourceUrl: blobUrl(repoPath, ref),
@@ -220,10 +338,89 @@ export function loadDocument(ref, path) {
   });
 }
 
-/** Loads a repository file such as `CHANGELOG.md` verbatim. */
-export function loadText(ref, path) {
-  const repoPath = String(path ?? "").replace(/^\/+/, "");
-  const key = `${ref}:${repoPath}`;
-  const url = rawUrl(repoPath, ref);
-  return cached(key, () => requestText(url, { url, path: repoPath, ref }));
+/** Loads one example's source. */
+export function loadExample(ref, path) {
+  const repoPath = normalizePath(normalizeRepoPath(path));
+  if (!isExamplePath(repoPath)) {
+    return Promise.reject(
+      new GitHubError(`Not an example path: ${String(path)}`, {
+        url: `https://github.com/Oqthara/oqthara/tree/${ref}/examples`,
+        path: repoPath,
+        ref,
+      }),
+    );
+  }
+  const key = `example:${ref}:${repoPath}`;
+  return cached(key, async () => ({
+    path: repoPath,
+    ref,
+    source: await loadText(ref, repoPath),
+    sourceUrl: blobUrl(repoPath, ref),
+  }));
+}
+
+/** Loads the canonical changelog. */
+export function loadChangelog(ref = DEFAULT_REF) {
+  return loadText(ref, CHANGELOG_PATH);
+}
+
+/**
+ * Validates the releases API payload into a channel list.
+ *
+ * Drafts are excluded; prereleases are included, because this project publishes prereleases
+ * as its real releases. The development channel is always first. An entry whose `tag_name`
+ * is missing is skipped rather than shown as a channel that cannot be read.
+ */
+export function validateReleases(payload, { includeDev = true } = {}) {
+  if (!Array.isArray(payload)) {
+    throw new GitHubError("GitHub returned a release list this site could not read.", {
+      url: "https://github.com/Oqthara/oqthara/releases",
+    });
+  }
+  const channels = includeDev
+    ? [{ id: "main", label: "Development (main)", ref: "main", prerelease: false, dev: true }]
+    : [];
+
+  for (const release of payload) {
+    if (!release || typeof release !== "object" || release.draft) continue;
+    const ref = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
+    if (!ref) continue;
+    const published = typeof release.published_at === "string" ? release.published_at : "";
+    channels.push({
+      // The channel id is the readable version; the ref is the git tag that actually exists.
+      id: ref.replace(/^v/, ""),
+      label: release.name?.trim() || ref,
+      ref,
+      prerelease: Boolean(release.prerelease),
+      published,
+      url: typeof release.html_url === "string" ? release.html_url : "",
+    });
+  }
+
+  const [dev, ...releases] = channels;
+  releases.sort((a, b) => {
+    const at = Date.parse(a.published) || 0;
+    const bt = Date.parse(b.published) || 0;
+    if (at !== bt) return bt - at;
+    return b.ref.localeCompare(a.ref, undefined, { numeric: true });
+  });
+  return dev ? [dev, ...releases] : releases;
+}
+
+/** Published releases as channels. Always an array; development is always first. */
+export function loadReleases() {
+  return cached("releases", async () => validateReleases(await getJson(releasesApiUrl(), { path: "releases" })));
+}
+
+/** Finds the channel a URL named. Accepts either the channel id or the git ref. */
+export function findChannel(channels, value) {
+  const wanted = String(value ?? "").trim();
+  if (!wanted) return channels[0] ?? null;
+  return (
+    channels.find((channel) => channel.ref === wanted) ??
+    channels.find((channel) => channel.id === wanted) ??
+    channels.find((channel) => channel.id === wanted.replace(/^v/, "")) ??
+    channels[0] ??
+    null
+  );
 }

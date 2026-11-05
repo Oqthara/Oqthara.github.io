@@ -1,35 +1,34 @@
 import { createElement as h } from "react";
 import {
-  buildComponents,
   extractHeadings,
-  rehypePlugins,
-  remarkPlugins,
   renderMarkdownElement,
   tocFromHeadings,
 } from "../markdown-pipeline.js";
 
-// The only Markdown component in the site. Every page that shows repository text renders
-// through this file, so the sanitizer, the link resolver and the heading ids cannot drift
-// between the documentation, the changelog and the standard library reference. The actual
-// element construction lives in `markdown-pipeline.js` so the tests can render it in Node
-// without a JSX transform; the plugin order there is:
+// The only Markdown component in the site.
+//
+// Every page that shows repository text renders through this file, so the sanitizer, the link
+// resolver and the heading ids cannot drift between documentation, changelog, status and
+// philosophy. The element construction lives in `markdown-pipeline.js` so the tests can render
+// it in plain Node without a JSX transform. The plugin order there is:
 //
 //   remarkGfm -> rehypeRaw -> rehypeSanitize(schema) -> rehypeSlug
 //
-// `rehypeRaw` runs before the sanitizer, so embedded HTML is cleaned rather than trusted.
+// `rehypeRaw` runs before the sanitizer, so embedded HTML is cleaned rather than trusted, and
+// the result is React elements, never an HTML string, so `dangerouslySetInnerHTML` is unused.
 
-export { buildComponents, extractHeadings, rehypePlugins, remarkPlugins, tocFromHeadings };
+export { extractHeadings, tocFromHeadings };
 
 export function Markdown({ markdown = "", path = "", ref = "main", className = "doc" }) {
-  return h("article", { className }, renderMarkdownElement({ markdown, path, ref }));
+  return h("div", { className }, renderMarkdownElement({ markdown, path, ref }));
 }
 
-/** The rendered document plus its table of contents. */
+/** The rendered document plus an on-page table of contents. */
 export function MarkdownWithToc({ markdown = "", path = "", ref = "main" }) {
   const toc = tocFromHeadings(extractHeadings(markdown));
   return h(
     "div",
-    { className: toc.length ? "doc-layout" : null },
+    { className: toc.length ? "doc-with-toc" : null },
     toc.length
       ? h(
           "nav",
@@ -48,6 +47,6 @@ export function MarkdownWithToc({ markdown = "", path = "", ref = "main" }) {
           ),
         )
       : null,
-    h(Markdown, { markdown, path, ref }),
+    h("div", { className: "doc doc-article" }, renderMarkdownElement({ markdown, path, ref })),
   );
 }

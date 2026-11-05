@@ -1,32 +1,111 @@
-import { createElement as h } from "react";
-import { BASE_PATH, NAV, VERSION } from "../data/meta.js";
+import { createElement as h, useEffect, useState } from "react";
+import { BASE_PATH, NAV } from "../data/meta.js";
 import { Search } from "./Search.jsx";
 
 /**
- * Page links are root-relative in the nav data so the routes read clearly. On GitHub Pages
- * the site lives under a subpath, so they are prefixed with Vite's base at render time.
+ * Site links are written root-relative so the routes read clearly. The site is served from the
+ * domain root, so the base is `/`; keeping the join in one place means a future move to a
+ * subpath is a single change.
  */
 export function hrefFor(path) {
   if (path === "/") return BASE_PATH;
   return BASE_PATH.replace(/\/$/, "") + path;
 }
 
-/** Shared page chrome: skip link, header, nav, main landmark and footer. */
+/** Reads the stored appearance, falling back to the operating system preference. */
+function initialTheme() {
+  if (typeof window === "undefined") return "auto";
+  try {
+    const stored = window.localStorage.getItem("oq-theme");
+    return stored === "light" || stored === "dark" ? stored : "auto";
+  } catch {
+    // Private browsing can throw on localStorage access; the OS preference still works.
+    return "auto";
+  }
+}
+
+function applyTheme(theme) {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  if (theme === "auto") root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", theme);
+}
+
+/** Light / dark / system appearance. The choice survives a reload. */
+function ThemeToggle() {
+  const [theme, setTheme] = useState(initialTheme);
+
+  useEffect(() => {
+    applyTheme(theme);
+    try {
+      if (theme === "auto") window.localStorage.removeItem("oq-theme");
+      else window.localStorage.setItem("oq-theme", theme);
+    } catch {
+      // Persisting is a convenience, not a requirement.
+    }
+  }, [theme]);
+
+  const next = theme === "auto" ? "light" : theme === "light" ? "dark" : "auto";
+  const label =
+    theme === "auto" ? "Appearance: follow system" : theme === "light" ? "Appearance: light" : "Appearance: dark";
+
+  return h(
+    "button",
+    {
+      type: "button",
+      className: "icon-button",
+      onClick: () => setTheme(next),
+      title: `${label}. Switch to ${next}.`,
+      "aria-label": `${label}. Switch appearance.`,
+      "data-theme-state": theme,
+    },
+    theme === "dark" ? "◑" : theme === "light" ? "◐" : "◒",
+  );
+}
+
+/** Shared page chrome: skip link, header, navigation, main landmark and footer. */
 export function Layout({ current, children }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Close the mobile menu on navigation and on Escape, so it never traps the reader.
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [current]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (event) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
   return h(
     "div",
     { className: "site-root" },
     h("a", { className: "skip-link", href: "#main" }, "Skip to content"),
     h(
       "header",
-      { className: "site" },
+      { className: "site-header" },
       h(
         "div",
-        { className: "wrap" },
-        h("a", { className: "brand", href: hrefFor("/") }, "oq", h("span", null, "thara")),
+        { className: "content site-header-inner" },
+        h(
+          "a",
+          { className: "brand", href: hrefFor("/"), "aria-label": "Oqthara home" },
+          h("span", { className: "brand-mark" }, "oq"),
+          "thara",
+          h("span", { className: "brand-tag" }, "a small language for the JVM"),
+        ),
         h(
           "nav",
-          { className: "site", "aria-label": "Main" },
+          {
+            className: "site-nav",
+            "aria-label": "Main",
+            id: "site-nav",
+            "data-open": menuOpen ? "true" : "false",
+          },
           NAV.map((item) =>
             h(
               "a",
@@ -39,22 +118,40 @@ export function Layout({ current, children }) {
             ),
           ),
         ),
-        h(Search, null),
+        h(
+          "div",
+          { className: "header-actions" },
+          h(Search, null),
+          h(ThemeToggle, null),
+          h(
+            "button",
+            {
+              type: "button",
+              className: "icon-button nav-toggle",
+              onClick: () => setMenuOpen((open) => !open),
+              "aria-expanded": menuOpen ? "true" : "false",
+              "aria-controls": "site-nav",
+              "aria-label": menuOpen ? "Close navigation" : "Open navigation",
+            },
+            menuOpen ? "✕" : "☰",
+          ),
+        ),
       ),
     ),
-    h("main", { id: "main" }, h("div", { className: "wrap" }, children)),
+    h("main", { id: "main" }, children),
     h(
       "footer",
-      { className: "site" },
+      { className: "site-footer" },
       h(
         "div",
-        { className: "wrap" },
-        h("span", null, `Oqthara ${VERSION} · MIT · built on the JVM`),
+        { className: "content site-footer-inner" },
+        h("span", null, "Oqthara · MIT · built on the JVM"),
         h(
           "span",
-          null,
+          { className: "footer-links" },
+          h("a", { href: hrefFor("/philosophy.html") }, "Philosophy"),
+          h("a", { href: hrefFor("/docs.html") }, "Documentation"),
           h("a", { href: "https://github.com/Oqthara/oqthara" }, "GitHub"),
-          " · ",
           h("a", { href: "https://github.com/Oqthara/oqthara/releases" }, "Releases"),
         ),
       ),
@@ -63,38 +160,56 @@ export function Layout({ current, children }) {
 }
 
 /** Consistent page header: eyebrow, headline and lead paragraph. */
-export function PageHead({ eyebrow, title, lead }) {
+export function PageHead({ eyebrow, title, lead, children }) {
   return h(
     "section",
     { className: "page-head" },
     eyebrow ? h("p", { className: "eyebrow" }, eyebrow) : null,
     h("h1", null, title),
     lead ? h("p", { className: "lead" }, lead) : null,
+    children,
   );
 }
 
+/** A bordered remark that supports a claim rather than decorating the page. */
 export function Note({ children }) {
   return h("div", { className: "note" }, children);
 }
 
-export function Card({ title, children }) {
-  return h("div", { className: "card" }, h("h3", null, title), h("p", null, children));
+/** A card. `href` makes the whole card a link. */
+export function Card({ title, kicker, href, children }) {
+  const body = [
+    kicker ? h("p", { className: "card-kicker", key: "k" }, kicker) : null,
+    h("h3", { key: "t" }, title),
+    children ? h("p", { key: "c" }, children) : null,
+  ];
+  return href ? h("a", { className: "card", href }, body) : h("div", { className: "card" }, body);
 }
 
-export function Grid({ children }) {
-  return h("div", { className: "grid" }, children);
+export function Grid({ children, two = false }) {
+  return h("div", { className: two ? "grid grid-2" : "grid" }, children);
 }
 
-/** A two-column table. Rows are [left, right] pairs rendered as text or nodes. */
+/** A responsive data table. Wide content scrolls instead of breaking the layout. */
 export function Table({ head, rows }) {
   return h(
-    "table",
-    null,
-    h("thead", null, h("tr", null, head.map((cell, i) => h("th", { key: i }, cell)))),
+    "div",
+    { className: "table-wrap" },
     h(
-      "tbody",
+      "table",
       null,
-      rows.map((row, r) => h("tr", { key: r }, row.map((cell, c) => h("td", { key: c }, cell)))),
+      h("thead", null, h("tr", null, head.map((cell, index) => h("th", { key: index, scope: "col" }, cell)))),
+      h(
+        "tbody",
+        null,
+        rows.map((row, rowIndex) =>
+          h(
+            "tr",
+            { key: rowIndex },
+            row.map((cell, cellIndex) => h("td", { key: cellIndex }, cell)),
+          ),
+        ),
+      ),
     ),
   );
 }

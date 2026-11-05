@@ -1,65 +1,85 @@
 import { createElement as h } from "react";
-import { Note, PageHead, Table } from "../components/Layout.jsx";
+import { hrefFor } from "../components/Layout.jsx";
+import { ChannelBar } from "../components/ChannelSelect.jsx";
+import { Markdown } from "../components/Markdown.jsx";
+import { useChannels, useDocument, resolveChannel } from "../use-docs.js";
+import { DEFAULT_REF } from "../source.js";
 
-const WORKS = [
-  ["Lexer, parser, interpreter", "Complete for the documented language"],
-  ["Diagnostics", "File, line, column, caret and a hint on every user error"],
-  ["Collections and text", "Rich method surface; no streams or builders"],
-  ["Modules", "use \"oq:name\", loaded once, cycle-safe"],
-  ["Concurrency", "spawn, await, par_map on virtual threads"],
-  ["Java interop", "Constructors, instance and static methods"],
-  ["CLI", "run, check, repl, fmt, test, new, doc, build"],
-  ["Compiled jars", "Real class files; real bytecode for functions, arithmetic, variables and control flow"],
-  ["Fuzzing", "Seven Jazzer targets, about four million cases per run"],
-  ["CI", "Linux, Windows and macOS × JDK 21 and 25, plus fuzzing"],
-];
+// Status, read from the canonical backend document.
+//
+// The previous page hard-coded capability claims ("does not support X yet") which drifted from
+// the implementation the moment the compiler changed. Anything the site states about the backend
+// is now the repository's own documented boundary, rendered from its source of truth.
 
-const GAPS = [
-  ["Bytecode for closures", "Functions that read an enclosing variable, lambdas and callbacks fall back to the launcher jar"],
-  ["Bytecode for collections", "Lists, maps, sets and data types fall back to the launcher jar"],
-  ["Pattern matching", "Not implemented"],
-  ["Type annotations", "Not implemented; inference only"],
-  ["Language server", "Not started"],
-  ["In-browser execution", "The playground copies programs; it does not run them"],
-];
+const BACKEND_PATH = "docs/spec/backend.md";
 
-export function StatusPage() {
+function Failure({ error, onRetry, ref }) {
   return h(
     "div",
-    null,
-    h(PageHead, {
-      eyebrow: "Status",
-      title: "Where Oqthara stands",
-      lead: "Honest status, including what does not work yet. The project is pre-1.0 and the compiler backend is incomplete by design.",
-    }),
-
-    h("h2", null, "What works"),
-    h(Table, { head: ["Area", "State"], rows: WORKS }),
-
-    h("h2", null, "What does not work yet"),
-    h(Table, { head: ["Gap", "Detail"], rows: GAPS }),
-
+    { className: "status-block", "data-tone": "error", role: "alert" },
     h(
-      Note,
+      "div",
       null,
-      "Oqthara is ",
-      h("strong", null, "pre-1.0"),
-      ". The language surface may change between minor versions, and the compiled backend is explicitly a work in progress. Do not treat this site as a promise of API stability.",
+      h("h2", null, "The status document could not be loaded"),
+      h("p", null, error?.message ?? "GitHub could not be reached."),
+      h(
+        "div",
+        { className: "status-block-actions" },
+        h("a", { href: error?.url ?? `https://github.com/Oqthara/oqthara/blob/${ref}/${BACKEND_PATH}` }, "Read it on GitHub"),
+        h("button", { type: "button", className: "retry", onClick: onRetry }, "Try again"),
+      ),
+    ),
+  );
+}
+
+export function StatusPage({ query = {} }) {
+  const { channels } = useChannels();
+  const channel = resolveChannel(channels, query.ref);
+  const { status, data, error, retry } = useDocument(channel.ref, BACKEND_PATH);
+
+  return h(
+    "div",
+    { className: "content content-narrow" },
+    h(
+      "section",
+      { className: "page-head" },
+      h("p", { className: "eyebrow" }, "Status"),
+      h("h1", null, "What works, stated plainly"),
+      h(
+        "p",
+        { className: "lead" },
+        "This page does not keep its own list of capabilities. It renders the backend document from the repository, which is the boundary the compiler is tested against.",
+      ),
     ),
 
-    h("h2", null, "Release policy"),
-    h(
-      "p",
-      null,
-      "Pre-releases are tagged ",
-      h("code", null, "alpha"),
-      ", ",
-      h("code", null, "beta"),
-      " or ",
-      h("code", null, "rc"),
-      ". A stable release requires green CI on every OS and JDK, 100% conformance on both backends, no open P0 or P1 bugs, updated docs and verified artifacts. The bytecode backend is not yet at that bar, so no stable release exists.",
-    ),
+    h(ChannelBar, { channels, channel, label: "Status version" }),
 
-    h("p", null, h("a", { href: "https://github.com/Oqthara/oqthara/releases" }, "Releases on GitHub →")),
+    status === "loading"
+      ? h(
+          "div",
+          { className: "status-block", role: "status", "aria-live": "polite" },
+          h("div", null, h("p", null, "Reading the backend document from GitHub…"), h("div", { className: "skeleton" })),
+        )
+      : null,
+
+    status === "error" && !data ? h(Failure, { error, onRetry: retry, ref: channel.ref }) : null,
+
+    data ? h(Markdown, { markdown: data.markdown, path: BACKEND_PATH, ref: channel.ref }) : null,
+
+    status === "ready" && error
+      ? h("p", { className: "stale-note", role: "status" }, "Showing the last loaded copy. The refresh failed: ", error.message)
+      : null,
+
+    data
+      ? h(
+          "p",
+          { className: "doc-source" },
+          h("span", null, "Source:"),
+          h("a", { href: data.sourceUrl }, h("code", null, BACKEND_PATH)),
+          h("span", null, "at"),
+          h("code", null, channel.ref),
+          h("a", { href: hrefFor("/docs.html") }, "All documentation"),
+        )
+      : null,
   );
 }

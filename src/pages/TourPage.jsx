@@ -1,6 +1,6 @@
 import { createElement as h } from "react";
 import { hrefFor, PageHead } from "../components/Layout.jsx";
-import { Code } from "../components/Code.jsx";
+import { Code } from "../components/Code.js";
 
 const SECTIONS = [
   {

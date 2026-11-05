@@ -1,140 +1,200 @@
-import { createElement as h, useEffect, useRef, useState } from "react";
-import { BASE_PATH } from "../data/meta.js";
+import { createElement as h, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeOptionId, keyAction, optionId, rankEntries } from "../search.js";
-import "../search.css";
 
-// The index is a static file written by prerender.mjs from the pages that were just
-// rendered. Fetching it on first use keeps the initial page small and means the search
-// needs no server and no runtime crawling.
-const INDEX_URL = `${BASE_PATH}search-index.json`;
+import { loadCatalog, loadExamples } from "../github-docs.js";
+import { DEFAULT_REF, documentRoute, exampleRoute, sectionForPath } from "../source.js";
+
+// Site search over dynamically discovered content.
+//
+// The index is not a build artefact and is not a list of pages: it is built at request time
+// from the same discovery the documentation and examples pages use. A document or example
+// added to the repository is therefore searchable without a site change.
+//
+// The index is built on first use, not on page load, so a reader who never searches pays
+// nothing for it. It is built once per session and shared by every Search instance.
+
+let indexPromise = null;
+
+function buildIndex(ref = DEFAULT_REF) {
+  return Promise.all([
+    loadCatalog(ref).catch(() => []),
+    loadExamples(ref).catch(() => []),
+  ]).then(([docs, examples]) => {
+    const entries = [];
+    for (const doc of docs) {
+      entries.push({
+        title: doc.title,
+        text: `${sectionForPath(doc.path)} ${doc.path}`,
+        url: documentRoute(doc.path, ref),
+        kind: "Documentation",
+      });
+    }
+    for (const example of examples) {
+      entries.push({
+        title: `${example.name}.oq`,
+        text: `${example.category} example ${example.path}`,
+        url: exampleRoute(example.path, ref),
+        kind: "Example",
+      });
+    }
+    return entries;
+  });
+}
+
+function ensureIndex(ref) {
+  if (!indexPromise) {
+    indexPromise = buildIndex(ref).catch((error) => {
+      // Let a later attempt try again instead of caching the failure forever.
+      indexPromise = null;
+      throw error;
+    });
+  }
+  return indexPromise;
+}
+
+/** Test seam: forget the shared index. */
+export function __resetSearchIndexForTests() {
+  indexPromise = null;
+}
 
 export function Search() {
   const [entries, setEntries] = useState(null);
-  const [failed, setFailed] = useState(false);
+  const [error, setError] = useState(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const requested = useRef(false);
   const options = useRef(null);
+  const container = useRef(null);
 
-  const results = entries === null ? [] : rankEntries(entries, query);
+  const results = entries ? rankEntries(entries, query) : [];
   const expanded = open && query.trim() !== "";
 
-  // Keep the highlighted option visible when the list scrolls, which arrow keys alone
-  // would not do once there are more results than fit in the popover.
   useEffect(() => {
     if (!expanded || active < 0 || !options.current) return;
     const node = options.current.querySelector(`#${optionId(active)}`);
     if (node && typeof node.scrollIntoView === "function") node.scrollIntoView({ block: "nearest" });
   }, [expanded, active]);
 
-  function ensureIndex() {
-    if (entries !== null || requested.current || failed) return;
-    requested.current = true;
-    fetch(INDEX_URL)
-      .then((response) => {
-        if (!response.ok) throw new Error(`search index returned ${response.status}`);
-        return response.json();
-      })
-      .then((data) => {
-        if (!Array.isArray(data)) throw new Error("search index is not an array");
-        setEntries(data);
-      })
-      .catch(() => setFailed(true));
-  }
+  // Close on an outside click so the panel does not cover the page while reading.
+  useEffect(() => {
+    if (!expanded) return;
+    const onDown = (event) => {
+      if (container.current && !container.current.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [expanded]);
 
-  function onKeyDown(event) {
-    const action = keyAction(event.key, { expanded, active, count: results.length });
-    if (!action) return;
-    event.preventDefault();
-    if (action.type === "close") {
+  const ensure = useCallback(() => {
+    if (entries || requested.current) return;
+    requested.current = true;
+    setError(null);
+    ensureIndex(DEFAULT_REF)
+      .then(setEntries)
+      .catch((cause) => {
+        requested.current = false;
+        setError(cause?.message ?? "Search is unavailable right now.");
+      });
+  }, [entries]);
+
+  const onKeyDown = (event) => {
+    const action = keyAction(event.key);
+    if (action === "close") {
       setOpen(false);
       setActive(-1);
-    } else if (action.type === "move") {
-      setActive(action.index);
-    } else if (action.type === "open") {
-      window.location.assign(results[action.index].url);
+      return;
     }
-  }
+    if (action === "previous" || action === "next") {
+      event.preventDefault();
+      setActive((current) => {
+        if (!results.length) return -1;
+        if (action === "next") return (current + 1) % results.length;
+        return current <= 0 ? results.length - 1 : current - 1;
+      });
+      return;
+    }
+    if (action === "open" && results[active]) {
+      event.preventDefault();
+      window.location.href = results[active].url;
+    }
+  };
 
-  const status = !expanded
-    ? null
-    : failed
-      ? "Search is unavailable."
-      : entries === null
-        ? "Loading search..."
-        : results.length === 0
-          ? "No matches."
-          : null;
+  const status = useMemo(() => {
+    if (error) return error;
+    if (entries === null) return "Loading the search index…";
+    if (!query.trim()) return `${entries.length} entries`;
+    if (!results.length) return `No matches for “${query.trim()}”`;
+    return `${results.length} of ${entries.length} entries`;
+  }, [error, entries, query, results.length]);
 
   return h(
     "div",
-    {
-      className: "site-search",
-      role: "search",
-      onBlur: (event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) {
-          setOpen(false);
-          setActive(-1);
-        }
-      },
-    },
-    h("label", { htmlFor: "site-search-input", className: "visually-hidden" }, "Search the site"),
+    { className: "search", ref: container },
+    h(
+      "label",
+      { className: "visually-hidden", htmlFor: "site-search" },
+      "Search documentation and examples",
+    ),
     h("input", {
-      id: "site-search-input",
+      id: "site-search",
       type: "search",
-      role: "combobox",
-      placeholder: "Search",
+      className: "search-input",
+      placeholder: "Search…",
+      autoComplete: "off",
       value: query,
       "aria-expanded": expanded ? "true" : "false",
       "aria-controls": "site-search-results",
       "aria-autocomplete": "list",
-      "aria-activedescendant": activeOptionId(expanded, active),
+      role: "combobox",
       onFocus: () => {
-        ensureIndex();
-        if (query.trim() !== "") setOpen(true);
+        ensure();
+        setOpen(true);
       },
       onChange: (event) => {
-        ensureIndex();
+        ensure();
         setQuery(event.target.value);
         setOpen(true);
         setActive(-1);
       },
       onKeyDown,
     }),
-    h(
-      "div",
-      { className: "site-search-panel", hidden: expanded ? undefined : true },
-      h(
-        "div",
-        {
-          id: "site-search-results",
-          role: expanded ? "listbox" : undefined,
-          "aria-label": expanded ? "Search results" : undefined,
-          ref: options,
-        },
-        results.map((entry, index) =>
-          h(
-            "a",
-            {
-              key: `${index}-${entry.url}`,
-              id: optionId(index),
-              className: "search-result",
-              role: "option",
-              "aria-selected": index === active ? "true" : "false",
-              href: entry.url,
-              tabIndex: -1,
-              // Keeping focus on the input lets Enter continue to work and stops the
-              // pointer from closing the popover before the click reaches the link.
-              onMouseDown: (event) => event.preventDefault(),
-              onClick: () => setOpen(false),
-            },
-            h("span", { className: "search-title" }, entry.title),
-            entry.page && entry.page !== entry.title ? h("span", { className: "search-page" }, entry.page) : null,
-          ),
-        ),
-      ),
-      status ? h("p", { className: "search-status", role: "status" }, status) : null,
-    ),
+    expanded
+      ? h(
+          "div",
+          { className: "search-panel" },
+          h("p", { className: "search-status", role: "status", "aria-live": "polite" }, status),
+          error
+            ? null
+            : h(
+                "ul",
+                { className: "search-results", id: "site-search-results", role: "listbox", ref: options },
+                results.map((entry, index) =>
+                  h(
+                    "li",
+                    {
+                      key: entry.url,
+                      id: optionId(index),
+                      role: "option",
+                      "aria-selected": index === active ? "true" : "false",
+                    },
+                    h(
+                      "a",
+                      {
+                        href: entry.url,
+                        onMouseEnter: () => setActive(index),
+                        tabIndex: -1,
+                      },
+                      h("strong", null, entry.title),
+                      h("span", null, `${entry.kind} · ${entry.text}`),
+                    ),
+                  ),
+                ),
+              ),
+        )
+      : null,
+    expanded && active >= 0
+      ? h("span", { className: "visually-hidden", "aria-live": "polite" }, activeOptionId(active))
+      : null,
   );
 }
