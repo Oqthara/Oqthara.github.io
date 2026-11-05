@@ -1,0 +1,12 @@
+[
+  {
+    "id": "main",
+    "label": "Development (main)",
+    "ref": "main"
+  },
+  {
+    "id": "0.1.0-alpha.1",
+    "label": "v0.1.0-alpha.1",
+    "ref": "v0.1.0-alpha.1"
+  }
+]

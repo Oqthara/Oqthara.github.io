@@ -1,45 +1,82 @@
 import { createElement as h } from "react";
 import { hrefFor } from "../components/Layout.jsx";
-import { CHANGELOG_SOURCE } from "../changelog.js";
+import { ChannelSelect } from "../components/ChannelSelect.jsx";
+import { Markdown } from "../components/Markdown.jsx";
+import { channelById } from "../source.js";
+import { useText } from "../use-docs.js";
 
-// The changelog is rendered from a checked-in snapshot of the language repository's
-// CHANGELOG.md. A future stage fetches it from GitHub at runtime; for now CI refreshes the
-// snapshot, and the page says so rather than presenting it as live data.
+// The changelog page renders CHANGELOG.md from the language repository at request time.
 //
-// The Markdown already supplies the page's h1 ("Changelog"), so this component adds no
-// second heading of its own.
+// There is no checked-in copy: a release entry appears here as soon as it is merged, and a
+// release channel shows the changelog exactly as it was tagged.
 
-export function ChangelogPage({ changes }) {
+const CHANGELOG_PATH = "CHANGELOG.md";
+
+export function ChangelogPage({ query = {} }) {
+  const channel = channelById(query.ref);
+  const { status, data, error, retry } = useText(channel.ref, CHANGELOG_PATH);
+
   return h(
     "div",
     null,
     h("p", { className: "eyebrow" }, "Project history"),
-    h(
-      "p",
-      { className: "note" },
-      "Snapshot: this page is rendered from a checked-in copy of ",
-      h(
-        "a",
-        { href: "https://github.com/Oqthara/oqthara/blob/main/CHANGELOG.md" },
-        "CHANGELOG.md",
-      ),
-      " in Oqthara/oqthara, refreshed by the website build. Newer entries may not appear here yet; the repository file is authoritative.",
-    ),
-    changes?.html
-      ? h("article", {
-          className: "doc",
-          dangerouslySetInnerHTML: { __html: changes.html },
-        })
-      : h("p", null, "The changelog snapshot is missing."),
-    h(
-      "p",
-      { className: "doc-source" },
-      "Snapshot: ",
-      h("code", null, CHANGELOG_SOURCE),
-      " · ",
-      h("a", { href: hrefFor("/status.html") }, "Status"),
-      " · ",
-      h("a", { href: "https://github.com/Oqthara/oqthara/releases" }, "Releases"),
-    ),
+    h(ChannelSelect, { ref: channel.ref, path: "/changelog.html" }),
+
+    status === "loading" && !data
+      ? h(
+          "div",
+          { className: "doc-status", role: "status", "aria-live": "polite" },
+          h("p", null, "Fetching the changelog from GitHub…"),
+          h("div", { className: "skeleton", "aria-hidden": "true" }),
+        )
+      : null,
+
+    status === "error" && !data
+      ? h(
+          "div",
+          { className: "doc-status doc-status-error", role: "alert" },
+          h("h2", null, "The changelog could not be loaded"),
+          h("p", null, error?.message ?? "GitHub could not be reached."),
+          h(
+            "p",
+            null,
+            h(
+              "a",
+              {
+                href:
+                  error?.url ??
+                  "https://github.com/Oqthara/oqthara/blob/main/CHANGELOG.md",
+              },
+              "Read CHANGELOG.md on GitHub",
+            ),
+            " · ",
+            h("button", { type: "button", className: "retry", onClick: retry }, "Try again"),
+          ),
+        )
+      : null,
+
+    data
+      ? h(
+          "div",
+          null,
+          h(Markdown, { markdown: data, path: CHANGELOG_PATH, ref: channel.ref }),
+          h(
+            "p",
+            { className: "doc-source" },
+            "Rendered from ",
+            h(
+              "a",
+              {
+                href: `https://github.com/Oqthara/oqthara/blob/${channel.ref}/${CHANGELOG_PATH}`,
+              },
+              h("code", null, CHANGELOG_PATH),
+            ),
+            " at ",
+            h("code", null, channel.ref),
+            " · ",
+            h("a", { href: hrefFor("/status.html") }, "Status"),
+          ),
+        )
+      : null,
   );
 }

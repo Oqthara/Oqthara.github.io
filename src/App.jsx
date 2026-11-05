@@ -8,37 +8,51 @@ import { ExamplesPage } from "./pages/ExamplesPage.jsx";
 import { StdlibPage } from "./pages/StdlibPage.jsx";
 import { StatusPage } from "./pages/StatusPage.jsx";
 import { ChangelogPage } from "./pages/ChangelogPage.jsx";
-import { docForPath } from "./docs.js";
-import { CHANGELOG_FILE, CHANGELOG_ROUTE } from "./changelog.js";
+import { NotFoundPage } from "./pages/NotFoundPage.jsx";
+import { docPathFromRoute, isDocRoute } from "./source.js";
 
-// Routes are keyed by path, and every one of them is also emitted as a real HTML file by
-// prerender.mjs, so GitHub Pages serves working content before any JavaScript runs.
-// Documentation pages are derived from `docs/` at build time, not listed here.
+// The static routes. Each is emitted as a real HTML file by prerender.mjs, so GitHub Pages
+// serves working content before any JavaScript runs.
+//
+// Documentation pages are NOT listed: `/docs/**.html` is matched below and the Markdown is
+// fetched from GitHub when the page opens. Nothing is copied or prerendered from `docs/`,
+// which is why a documentation change needs no site rebuild.
 export const ROUTES = [
   { path: "/", file: "index.html", component: HomePage },
   { path: "/tour.html", file: "tour.html", component: TourPage },
   { path: "/docs.html", file: "docs.html", component: DocsPage },
   { path: "/examples.html", file: "examples.html", component: ExamplesPage },
   { path: "/stdlib.html", file: "stdlib.html", component: StdlibPage },
-  { path: CHANGELOG_ROUTE, file: CHANGELOG_FILE, component: ChangelogPage },
+  { path: "/changelog.html", file: "changelog.html", component: ChangelogPage },
   { path: "/status.html", file: "status.html", component: StatusPage },
 ];
 
-export function App({ path, reference, versions = [], latest = null, docs = [], changes = null }) {
+/** Reads the only query parameter this site uses: which documentation channel. */
+export function queryFrom(search = "") {
+  const params = new URLSearchParams(String(search ?? ""));
+  const ref = params.get("ref");
+  return ref ? { ref } : {};
+}
+
+export function App({ path, search = "" }) {
   const route = ROUTES.find((candidate) => candidate.path === path);
+  const query = queryFrom(search);
   if (route) {
     const Page = route.component;
-    return h(Layout, { current: route.path }, h(Page, { reference, versions, latest, docs, changes }));
+    return h(Layout, { current: route.path }, h(Page, { query }));
   }
 
-  const doc = docForPath(path, docs);
-  if (doc) {
-    return h(
-      Layout,
-      { current: "/docs.html" },
-      h(DocPage, { doc, versions, latest }),
-    );
+  // `/docs/**.html` is a real route; the Markdown is fetched after hydration.
+  if (isDocRoute(path)) {
+    const docPath = docPathFromRoute(path);
+    if (docPath) {
+      return h(
+        Layout,
+        { current: "/docs.html" },
+        h(DocPage, { path: docPath, query }),
+      );
+    }
   }
 
-  return h(Layout, { current: "/" }, h(HomePage, { versions, latest, docs }));
+  return h(Layout, { current: "/" }, h(NotFoundPage, { path }));
 }

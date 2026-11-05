@@ -1,154 +1,145 @@
-// Unit tests for the in-repo Markdown renderer used to turn docs/*.md into site pages.
-//
-// The site has no Markdown dependency on purpose, so this renderer is the only thing
-// standing between a documentation file and the published HTML. These tests pin the
-// constructs the docs actually use: headings, fenced code, tables and links.
-
-import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractReferences, parseMarkdown, plainInline, renderMarkdown, slugify } from "../src/markdown.js";
+import test from "node:test";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createElement as h } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import {
+  extractHeadings,
+  renderMarkdownElement,
+  tocFromHeadings,
+} from "../src/markdown-pipeline.js";
 
-const render = (source, options) => renderMarkdown(source, options).html;
+const here = dirname(fileURLToPath(import.meta.url));
+const src = join(here, "..", "src");
 
-test("headings become anchored h1-h6 with stable ids", () => {
-  const { html, headings } = renderMarkdown("# Title\n\n## Getting started\n\n### `oq build`\n");
-  assert.match(html, /<h1 id="title">Title<\/h1>/);
-  assert.match(html, /<h2 id="getting-started">Getting started<\/h2>/);
-  assert.match(html, /<h3 id="oq-build"><code>oq build<\/code><\/h3>/);
+const render = (markdown, path = "docs/spec/language.md", ref = "main") =>
+  renderToStaticMarkup(renderMarkdownElement({ markdown, path, ref }));
+
+test("renders GFM tables", () => {
+  const html = render("| a | b |\n| --- | --- |\n| 1 | 2 |\n");
+  assert.match(html, /<table>/);
+  assert.match(html, /<th>a<\/th>/);
+  assert.match(html, /<td>1<\/td>/);
+});
+
+test("renders fenced code with a language class", () => {
+  const html = render("```oq\nprint 1\n```\n");
+  assert.match(html, /<pre><code class="language-oq">/);
+  assert.match(html, /print 1/);
+});
+
+test("renders lists and headings with anchors", () => {
+  const html = render("## Two words\n\n- one\n- two\n");
+  assert.match(html, /<h2 id="two-words">/);
+  assert.match(html, /<ul>/);
+  assert.match(html, /<li>one<\/li>/);
+});
+
+test("resolves relative document links against the source path", () => {
+  const html = render("See [the spec](../spec/language.md#syntax).", "docs/adr/0009-x.md");
+  assert.match(html, /href="\/docs\/spec\/language\.html#syntax"/);
+});
+
+test("resolves relative images to the raw GitHub path", () => {
+  const html = render("![diagram](images/flow.png)", "docs/spec/design.md");
+  assert.match(
+    html,
+    /src="https:\/\/raw\.githubusercontent\.com\/Oqthara\/oqthara\/main\/docs\/spec\/images\/flow\.png"/,
+  );
+});
+
+test("leaves absolute URLs alone and marks them external", () => {
+  const html = render("[Oqthara](https://oqthara.github.io/)");
+  assert.match(html, /href="https:\/\/oqthara\.github\.io\/"/);
+  assert.match(html, /rel="noreferrer noopener"/);
+});
+
+test("drops javascript: links", () => {
+  const html = render("[x](javascript:alert(1))");
+  assert.ok(!/javascript:/i.test(html), html);
+});
+
+test("drops javascript: links with mixed case", () => {
+  const html = render("[x](JaVaScRiPt:alert(1))");
+  assert.ok(!/javascript:/i.test(html), html);
+});
+
+test("drops data: links", () => {
+  const html = render("[x](data:text/html;base64,PHNjcmlwdD4=)");
+  assert.ok(!/data:/i.test(html), html);
+});
+
+test("drops vbscript: links", () => {
+  const html = render("[x](vbscript:msgbox)");
+  assert.ok(!/vbscript:/i.test(html), html);
+});
+
+test("sanitizes embedded script tags", () => {
+  const html = render("before\n\n<script>alert(1)</script>\n\nafter\n");
+  assert.ok(!html.includes("<script"), html);
+  assert.ok(!html.includes("alert(1)"), html);
+});
+
+test("sanitizes inline event handlers", () => {
+  const html = render('<img src="x" onerror="alert(1)">');
+  assert.ok(!/onerror/i.test(html), html);
+});
+
+test("sanitizes iframes and style attributes", () => {
+  const html = render('<iframe src="https://evil.example"></iframe>\n\n<p style="color:red">x</p>');
+  assert.ok(!html.includes("<iframe"), html);
+  assert.ok(!/style="/.test(html), html);
+});
+
+test("never uses dangerouslySetInnerHTML anywhere in src", () => {
+  const offenders = [];
+  const pattern = /dangerouslySetInnerHTML\s*[:=]/;
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory)) {
+      const path = join(directory, entry);
+      if (statSync(path).isDirectory()) {
+        walk(path);
+        continue;
+      }
+      if (!/\.(jsx|js)$/.test(entry)) continue;
+      if (pattern.test(readFileSync(path, "utf8"))) offenders.push(path);
+    }
+  };
+  walk(src);
+  assert.deepEqual(offenders, []);
+});
+
+test("extractHeadings skips fenced code and keeps the ids rehype-slug assigns", () => {
+  const headings = extractHeadings("# Title\n\n## First\n\n```\n## not a heading\n```\n\n### Second\n");
   assert.deepEqual(
-    headings.map((heading) => [heading.level, heading.id, heading.text]),
+    headings.map((heading) => [heading.level, heading.id]),
     [
-      [1, "title", "Title"],
-      [2, "getting-started", "Getting started"],
-      [3, "oq-build", "oq build"],
+      [1, "title"],
+      [2, "first"],
+      [3, "second"],
     ],
   );
-  assert.equal(slugify("ADR-0003 — Bytecode backend strategy"), "adr-0003-bytecode-backend-strategy");
-});
-
-test("duplicate headings get distinct ids so every anchor resolves", () => {
-  const { html, headings } = renderMarkdown("## Notes\n\n## Notes\n\n## Notes\n");
-  assert.deepEqual(headings.map((heading) => heading.id), ["notes", "notes-1", "notes-2"]);
-  assert.equal((html.match(/id="notes/g) || []).length, 3);
-});
-
-test("fenced code blocks keep their content and escape markup", () => {
-  const html = render("```bash\noq run hi.oq # <tag> & \"quotes\"\n```\n");
-  assert.equal(html, '<pre><code class="language-bash">oq run hi.oq # &lt;tag&gt; &amp; "quotes"</code></pre>');
-});
-
-test("code fences may omit the language and keep blank lines", () => {
-  const html = render("```\na\n\nb\n```\n");
-  assert.equal(html, '<pre><code>a\n\nb</code></pre>');
-});
-
-test("code spans are not parsed as emphasis or links", () => {
-  const html = render("Use `a * b` and `[x](y)` literally, but **bold** and [real](https://example.com).\n");
-  assert.match(html, /<code>a \* b<\/code>/);
-  assert.match(html, /<code>\[x\]\(y\)<\/code>/);
-  assert.match(html, /<strong>bold<\/strong>/);
-  assert.match(html, /<a href="https:\/\/example.com">real<\/a>/);
-});
-
-test("pipe tables become thead/tbody, including pipes inside code spans", () => {
-  const html = render(
-    "| Command | Meaning |\n|---|---|\n| `x \\| y` | bitwise or |\n| `a` | plain |\n",
-  );
-  assert.match(html, /<table>\n<thead><tr><th>Command<\/th><th>Meaning<\/th><\/tr><\/thead>/);
-  assert.match(html, /<tbody>\n<tr><td><code>x \| y<\/code><\/td><td>bitwise or<\/td><\/tr>/);
-  assert.match(html, /<tr><td><code>a<\/code><\/td><td>plain<\/td><\/tr>\n<\/tbody>/);
-});
-
-test("tables end at a blank line and do not swallow the next paragraph", () => {
-  const html = render("| A | B |\n|---|---|\n| 1 | 2 |\n\nAfter.\n");
-  assert.match(html, /<\/table>\n<p>After\.<\/p>/);
-});
-
-test("ordered, unordered and nested lists are semantic", () => {
-  const html = render("1. first\n2. second\n   - nested\n   - also\n\n- top\n- top two\n");
-  assert.match(html, /<ol>\n<li>first<\/li>/);
-  assert.match(html, /<li><p>second<\/p>\n<ul>\n<li>nested<\/li>\n<li>also<\/li>\n<\/ul><\/li>/);
-  assert.match(html, /<ul>\n<li>top<\/li>\n<li>top two<\/li>\n<\/ul>/);
-});
-
-test("blockquotes and horizontal rules render as elements", () => {
-  const html = render("> quoted **text**\n\n---\n");
-  assert.equal(html, "<blockquote>\n<p>quoted <strong>text</strong></p>\n</blockquote>\n<hr>");
-});
-
-test("relative Markdown links resolve through the provided callback", () => {
-  const seen = [];
-  const html = render("See [backend](backend.md) and [raw](other.md#part).\n", {
-    resolveHref: (href) => {
-      seen.push(href);
-      return `/site/${href}`;
-    },
-  });
-  assert.deepEqual(seen, ["backend.md", "other.md#part"]);
-  assert.match(html, /<a href="\/site\/backend\.md">backend<\/a>/);
-  assert.match(html, /<a href="\/site\/other\.md#part">raw<\/a>/);
-});
-
-test("links with parentheses in the URL survive", () => {
-  const html = render("[wiki](https://example.com/Foo_(bar)).\n");
-  assert.match(html, /href="https:\/\/example\.com\/Foo_\(bar\)"/);
-});
-
-test("plainInline strips formatting for summaries and titles", () => {
-  assert.equal(
-    plainInline("The **compiler** uses `oq build` and [docs](x.md)."),
-    "The compiler uses oq build and docs.",
-  );
-  assert.equal(plainInline("a * b"), "a * b");
-});
-
-test("paragraph text is joined across source line breaks", () => {
-  const blocks = parseMarkdown("one\ntwo\n\nthree\n");
   assert.deepEqual(
-    blocks.map((block) => block.text),
-    ["one two", "three"],
+    tocFromHeadings(headings).map((heading) => heading.id),
+    ["first", "second"],
   );
 });
 
-test("raw HTML in prose is escaped, never emitted", () => {
-  const html = render("<script>alert(1)</script>\n");
-  assert.equal(html, "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>");
+test("the Markdown component wraps the rendered document in an article", () => {
+  // Tested from source rather than by importing the .jsx file, which plain Node cannot
+  // load; the pipeline below is the part that has to be verifiable without a JSX loader.
+  const wrapper = readFileSync(join(src, "components", "Markdown.jsx"), "utf8");
+  assert.match(wrapper, /h\("article", \{ className \}/);
+  assert.match(render("# Hi\n"), /<h1 id="hi">/);
 });
 
-test("reference-style links resolve from definitions and keep their label", () => {
-  const source = [
-    "The format follows [Keep a Changelog], and [semver][sv] too.",
-    "",
-    "## [Unreleased]",
-    "",
-    "[keep a changelog]: https://keepachangelog.com/en/1.1.0/",
-    "[SV]: https://semver.org/spec/v2.0.0.html",
-    "[Unreleased]: https://github.com/Oqthara/oqthara/compare/v0.1.0-alpha.1...HEAD",
-  ].join("\n");
-  const { html, headings } = renderMarkdown(source);
-  assert.match(html, /<a href="https:\/\/keepachangelog\.com\/en\/1\.1\.0\/">Keep a Changelog<\/a>/);
-  assert.match(html, /<a href="https:\/\/semver\.org\/spec\/v2\.0\.0\.html">semver<\/a>/);
-  assert.match(html, /<h2 id="unreleased"><a href="https:\/\/github\.com\/Oqthara\/oqthara\/compare\/[^"]+">Unreleased<\/a><\/h2>/);
-  assert.deepEqual(headings.map((heading) => heading.text), ["Unreleased"]);
-  assert.ok(!html.includes("[keep a changelog]:") && !html.includes("[SV]:"), "definitions are not content");
-  assert.equal(extractReferences(source).size, 3);
-});
-
-test("unknown shortcut labels stay literal text", () => {
-  const html = render("Use `xs[i]` and [not a link].\n");
-  assert.match(html, /<code>xs\[i\]<\/code>/);
-  assert.match(html, /\[not a link\]/);
-  assert.ok(!html.includes("<a "), "nothing becomes a link without a target");
-});
-
-test("definitions inside code fences are not link targets", () => {
-  const source = "```\n[x]: https://example.com\n```\n\n[x]\n";
-  assert.equal(extractReferences(source).size, 0);
-  assert.ok(!renderMarkdown(source).html.includes("<a "));
-});
-
-test("heading ids begin with a letter, even for version numbers", () => {
-  const { html, headings } = renderMarkdown("## 0.1.0-alpha.1 - 2026-11-04\n");
-  assert.equal(headings[0].id, "section-010-alpha1-2026-11-04");
-  assert.match(html, /<h2 id="section-010-alpha1-2026-11-04">/);
+test("a compiled-document table and fenced block both render together", () => {
+  const html = render(
+    "## Compiled subset\n\n| Feature | Status |\n| --- | --- |\n| loops | yes |\n\n```oq\nfor n in 1 to 3\nend\n```\n",
+  );
+  assert.match(html, /<h2 id="compiled-subset">/);
+  assert.match(html, /<table>/);
+  assert.match(html, /<pre><code class="language-oq">/);
 });
