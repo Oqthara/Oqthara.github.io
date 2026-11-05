@@ -1,128 +1,285 @@
-import assert from "node:assert/strict";
 import test from "node:test";
+import assert from "node:assert/strict";
+
 import {
-  CHANNELS,
-  blobUrl,
-  channelById,
+  DEFAULT_REF,
+  documentRoute,
+  exampleRoute,
+  parseQuery,
+  normalizePath,
+  normalizeRepoPath,
+  isDocumentPath,
+  isExamplePath,
+  isRenderablePath,
   rawUrl,
-  resolveImage,
+  blobUrl,
+  treeUrl,
+  treeApiUrl,
+  releasesApiUrl,
+  sectionForPath,
+  sectionTitle,
+  titleFromPath,
+  titleFromMarkdown,
   resolveRelative,
-  routeForDocPath,
+  resolveImage,
   safeUrl,
+  legacyRouteToCanonical,
+  isLegacyContentRoute,
+  docsIndexUrl,
 } from "../src/source.js";
-import { CATALOG_PATH } from "../src/github-docs.js";
 
-test("the catalog path is repository-relative", () => {
-  assert.equal(CATALOG_PATH, "docs/catalog.json");
-});
-
-test("main resolves to the main branch", () => {
+test("documentRoute builds the canonical document URL with an encoded path and ref", () => {
   assert.equal(
-    rawUrl("docs/spec/language.md", "main"),
-    "https://raw.githubusercontent.com/Oqthara/oqthara/main/docs/spec/language.md",
+    documentRoute("docs/spec/language.md", "main"),
+    "/document.html?path=docs%2Fspec%2Flanguage.md&ref=main",
+  );
+  assert.equal(
+    documentRoute("docs/guides/a b.md", "v0.1.0-alpha.1"),
+    "/document.html?path=docs%2Fguides%2Fa%20b.md&ref=v0.1.0-alpha.1",
+  );
+  // A ref containing a slash must not escape the query parameter.
+  assert.equal(
+    documentRoute("docs/a.md", "feature/next"),
+    "/document.html?path=docs%2Fa.md&ref=feature%2Fnext",
   );
 });
 
-test("a release channel resolves to its tag, not to main", () => {
-  const release = channelById("0.1.0-alpha.1");
-  assert.equal(release.ref, "v0.1.0-alpha.1");
-  const url = rawUrl("docs/spec/language.md", release.ref);
-  assert.match(url, /\/v0\.1\.0-alpha\.1\//);
-  assert.ok(!url.includes("/main/"));
+test("exampleRoute builds the canonical example URL with an encoded path and ref", () => {
+  assert.equal(
+    exampleRoute("examples/basics/hello.oq", "main"),
+    "/example.html?path=examples%2Fbasics%2Fhello.oq&ref=main",
+  );
+  assert.equal(
+    exampleRoute("examples/a b.oq", "v1"),
+    "/example.html?path=examples%2Fa%20b.oq&ref=v1",
+  );
 });
 
-test("an unknown channel falls back to development", () => {
-  assert.equal(channelById("nope").id, "main");
+test("parseQuery round-trips a canonical route and defaults ref to main", () => {
+  const route = documentRoute("docs/adr/0003-bytecode.md", "v0.1.0-alpha.2");
+  const query = route.slice(route.indexOf("?"));
+  assert.deepEqual(parseQuery(query), {
+    path: "docs/adr/0003-bytecode.md",
+    ref: "v0.1.0-alpha.2",
+  });
+
+  assert.deepEqual(parseQuery("?path=docs/a.md"), { path: "docs/a.md", ref: DEFAULT_REF });
+  assert.deepEqual(parseQuery("path=docs/a.md&ref="), { path: "docs/a.md", ref: DEFAULT_REF });
 });
 
-test("every channel has a tag ref except main", () => {
-  for (const channel of CHANNELS) {
-    if (channel.id === "main") {
-      assert.equal(channel.ref, "main");
-    } else {
-      assert.match(channel.ref, /^v\d+\.\d+\.\d+/);
-    }
+test("parseQuery strips a leading ? and normalizes ./ and backslashes", () => {
+  assert.deepEqual(parseQuery("?path=./docs/a.md&ref=main"), { path: "docs/a.md", ref: "main" });
+  assert.deepEqual(parseQuery("?path=docs\\spec\\language.md&ref=main"), {
+    path: "docs/spec/language.md",
+    ref: "main",
+  });
+  assert.deepEqual(parseQuery("?path=./docs/a.md&ref=main"), { path: "docs/a.md", ref: "main" });
+  assert.deepEqual(parseQuery(""), { path: "", ref: "main" });
+});
+
+test("traversal cannot climb out of docs/", () => {
+  const parsed = parseQuery("?path=../../etc/passwd");
+  assert.equal(isDocumentPath(parsed.path), false);
+  assert.equal(isExamplePath(parsed.path), false);
+
+  // normalizePath drops leading `..` when there is nothing to pop.
+  assert.equal(normalizePath("docs/../../x"), "x");
+  assert.equal(normalizePath("../../etc/passwd"), "etc/passwd");
+  assert.equal(normalizePath("docs/a/../b.md"), "docs/b.md");
+
+  for (const candidate of ["../../etc/passwd", "docs/../../../etc/passwd", "/etc/passwd"]) {
+    assert.equal(isDocumentPath(candidate), false);
+    assert.equal(isRenderablePath(candidate), false);
   }
 });
 
-test("blob URLs point at GitHub", () => {
+test("isDocumentPath accepts only docs/**/*.md", () => {
+  assert.equal(isDocumentPath("docs/a.md"), true);
+  assert.equal(isDocumentPath("docs/x/y/z.md"), true);
+  assert.equal(isDocumentPath("docs/a.MD"), true); // case-insensitive extension
+  assert.equal(isDocumentPath("docs/a.txt"), false);
+  assert.equal(isDocumentPath("README.md"), false);
+  assert.equal(isDocumentPath("docs/../x.md"), false);
+  assert.equal(isDocumentPath(""), false);
+  assert.equal(isDocumentPath("examples/a.md"), false);
+});
+
+test("isExamplePath accepts only examples/**/*.oq", () => {
+  assert.equal(isExamplePath("examples/a.oq"), true);
+  assert.equal(isExamplePath("examples/sub/a.oq"), true);
+  assert.equal(isExamplePath("docs/a.oq"), false);
+  assert.equal(isExamplePath("examples/a.md"), false);
+  assert.equal(isExamplePath("examples/a.txt"), false);
+  assert.equal(isExamplePath(""), false);
+});
+
+test("rawUrl, blobUrl, treeUrl and the API URLs encode refs and paths", () => {
   assert.equal(
-    blobUrl("CHANGELOG.md", "main"),
-    "https://github.com/Oqthara/oqthara/blob/main/CHANGELOG.md",
+    rawUrl("docs/a b.md", "v1.0/rc"),
+    "https://raw.githubusercontent.com/Oqthara/oqthara/v1.0%2Frc/docs/a%20b.md",
+  );
+  assert.equal(
+    blobUrl("docs/a#b.md", "main"),
+    "https://github.com/Oqthara/oqthara/blob/main/docs/a%23b.md",
+  );
+  assert.equal(
+    treeUrl("docs/spec", "v1"),
+    "https://github.com/Oqthara/oqthara/tree/v1/docs/spec",
+  );
+  assert.equal(
+    treeApiUrl("v0.1.0-alpha.1"),
+    "https://api.github.com/repos/Oqthara/oqthara/git/trees/v0.1.0-alpha.1?recursive=1",
+  );
+  assert.match(treeApiUrl("main"), /\/git\/trees\/main\?recursive=1$/);
+  assert.equal(releasesApiUrl(10), "https://api.github.com/repos/Oqthara/oqthara/releases?per_page=10");
+  assert.equal(docsIndexUrl("main"), "https://github.com/Oqthara/oqthara/tree/main/docs");
+});
+
+test("sectionForPath derives sections without a per-file table", () => {
+  assert.equal(sectionForPath("docs/README.md"), "Overview");
+  assert.equal(sectionForPath("docs/spec/language.md"), "Specification");
+  assert.equal(sectionForPath("docs/adr/x.md"), "Decision records");
+  assert.equal(sectionForPath("docs/reference/cli.md"), "Reference");
+  assert.equal(sectionForPath("docs/my-guides/a.md"), "My guides");
+  assert.equal(sectionForPath("README.md"), "Other");
+  assert.equal(sectionTitle("stdlib"), "Standard library");
+  assert.equal(sectionTitle("unknown"), "Unknown");
+});
+
+test("titleFromPath gives a readable name before Markdown is read", () => {
+  assert.equal(titleFromPath("docs/adr/0003-bytecode.md"), "Bytecode");
+  assert.equal(titleFromPath("README.md"), "Overview");
+  assert.equal(titleFromPath("docs/README.md"), "Docs overview");
+  assert.equal(titleFromPath("docs/spec/README.md"), "Specification overview");
+  assert.equal(titleFromPath("examples/anagrams.oq"), "Anagrams");
+  assert.equal(titleFromPath("docs/spec/language-reference.md"), "Language reference");
+});
+
+test("titleFromMarkdown finds the first h1 and ignores headings inside fences", () => {
+  const markdown = [
+    "```md",
+    "# Not the title",
+    "```",
+    "",
+    "# The Real Title",
+    "",
+    "## A section",
+  ].join("\n");
+  assert.equal(titleFromMarkdown(markdown), "The Real Title");
+  assert.equal(titleFromMarkdown("no heading here"), "");
+  assert.equal(titleFromMarkdown("~~~\n# fenced\n~~~\n# After"), "After");
+  assert.equal(titleFromMarkdown("## second level only"), "");
+});
+
+test("resolveRelative builds canonical document routes and preserves the ref", () => {
+  assert.equal(
+    resolveRelative("docs/adr/0001-x.md", "../spec/language.md", "v0.1.0-alpha.2"),
+    "/document.html?path=docs%2Fspec%2Flanguage.md&ref=v0.1.0-alpha.2",
+  );
+  assert.equal(
+    resolveRelative("docs/spec/language.md", "../../docs/adr/0003-bytecode.md", "main"),
+    "/document.html?path=docs%2Fadr%2F0003-bytecode.md&ref=main",
+  );
+  assert.equal(
+    resolveRelative("docs/adr/x.md", "../spec/language.md#grammar", "main"),
+    "/document.html?path=docs%2Fspec%2Flanguage.md&ref=main#grammar",
   );
 });
 
-test("routes replace .md with .html", () => {
-  assert.equal(routeForDocPath("docs/spec/language.md"), "/docs/spec/language.html");
-});
-
-test("relative links resolve against the containing document", () => {
+test("resolveRelative handles changelog, examples, unrendered files and external URLs", () => {
+  assert.equal(resolveRelative("README.md", "CHANGELOG.md", "v1"), "/changelog.html");
+  assert.equal(resolveRelative("docs/a.md", "../CHANGELOG.md#v010", "main"), "/changelog.html#v010");
   assert.equal(
-    resolveRelative("docs/adr/0009-x.md", "../spec/language.md", "main"),
-    "/docs/spec/language.html",
+    resolveRelative("README.md", "./examples/basics/hello.oq", "v2"),
+    "/example.html?path=examples%2Fbasics%2Fhello.oq&ref=v2",
   );
   assert.equal(
-    resolveRelative("docs/spec/language.md", "backend.md", "main"),
-    "/docs/spec/backend.html",
+    resolveRelative("docs/a.md", "LICENSE", "main"),
+    "https://github.com/Oqthara/oqthara/blob/main/docs/LICENSE",
   );
+  assert.equal(resolveRelative("docs/a.md", "https://example.com/x", "main"), "https://example.com/x");
+  assert.equal(resolveRelative("docs/a.md", "#local", "main"), "#local");
+  assert.equal(resolveRelative("docs/a.md", "javascript:alert(1)", "main"), null);
+  assert.equal(resolveRelative("docs/a.md", "?path=docs/a.md", "main"), "?path=docs/a.md");
 });
 
-test("relative links keep their fragment", () => {
+test("resolveImage sends relative images to the raw CDN and keeps absolute ones", () => {
   assert.equal(
-    resolveRelative("docs/spec/design.md", "language.md#types", "main"),
-    "/docs/spec/language.html#types",
+    resolveImage("docs/adr/0001-x.md", "../assets/diagram.png", "v1"),
+    "https://raw.githubusercontent.com/Oqthara/oqthara/v1/docs/assets/diagram.png",
   );
+  assert.equal(resolveImage("docs/a.md", "https://cdn.example/x.png", "main"), "https://cdn.example/x.png");
+  assert.equal(resolveImage("docs/a.md", "javascript:alert(1)", "main"), null);
+  assert.equal(resolveImage("docs/a.md", "mailto:x@y.z", "main"), null);
 });
 
-test("a relative non-Markdown file becomes a GitHub blob URL at the same ref", () => {
-  assert.equal(
-    resolveRelative("docs/spec/design.md", "diagram.svg", "v0.1.0-alpha.1"),
-    "https://github.com/Oqthara/oqthara/blob/v0.1.0-alpha.1/docs/spec/diagram.svg",
-  );
-});
-
-test("a relative Markdown link on a pinned channel keeps the channel", () => {
-  const target = resolveRelative("docs/spec/language.md", "backend.md", "v0.1.0-alpha.1");
-  assert.match(target, /^\/docs\/spec\/backend\.html/);
-  assert.match(target, /ref=v0\.1\.0-alpha\.1/);
-});
-
-test("in-page fragments pass through", () => {
-  assert.equal(resolveRelative("docs/spec/language.md", "#syntax"), "#syntax");
-});
-
-test("a site-absolute path is resolved against the document, not the site root", () => {
-  // A leading slash in a repository Markdown file means the repository root on GitHub, so
-  // it must not be reinterpreted as a site route.
-  assert.equal(
-    resolveRelative("docs/spec/language.md", "/docs.html"),
-    "https://github.com/Oqthara/oqthara/blob/main/docs/spec/docs.html",
-  );
-});
-
-test("unsafe schemes are rejected before they reach a link", () => {
-  for (const bad of [
+test("safeUrl rejects script-bearing schemes and accepts safe ones", () => {
+  for (const unsafe of [
     "javascript:alert(1)",
     "JaVaScRiPt:alert(1)",
     " javascript:alert(1)",
-    "data:text/html;base64,AAAA",
-    "vbscript:msgbox",
+    "data:text/html,<script>alert(1)</script>",
+    "vbscript:msgbox(1)",
+    "java\tscript:alert(1)",
+    "java\nscript:alert(1)",
+    "\u0000javascript:alert(1)",
   ]) {
-    assert.equal(safeUrl(bad), null, bad);
-    assert.equal(resolveRelative("docs/spec/language.md", bad), null, bad);
+    assert.equal(safeUrl(unsafe), null, `${JSON.stringify(unsafe)} must be rejected`);
+  }
+  for (const safe of [
+    "https://example.com",
+    "http://example.com",
+    "mailto:team@example.com",
+    "#anchor",
+    "?path=docs/a.md",
+    "docs/a.md",
+    "../a.md",
+    "",
+  ]) {
+    if (safe === "") assert.equal(safeUrl(safe), null);
+    else assert.equal(safeUrl(safe), safe);
   }
 });
 
-test("safe schemes are allowed", () => {
-  for (const good of ["https://oqthara.github.io/", "http://example.com", "mailto:a@b.c", "#x", "../a.md"]) {
-    assert.equal(safeUrl(good), good, good);
-  }
-});
-
-test("images resolve relative to the document and reject unsafe sources", () => {
+test("legacyRouteToCanonical preserves old links and their ref", () => {
   assert.equal(
-    resolveImage("docs/spec/design.md", "img/a.png", "main"),
-    "https://raw.githubusercontent.com/Oqthara/oqthara/main/docs/spec/img/a.png",
+    legacyRouteToCanonical("/docs/spec/language.html"),
+    "/document.html?path=docs%2Fspec%2Flanguage.md&ref=main",
   );
-  assert.equal(resolveImage("docs/spec/design.md", "javascript:alert(1)", "main"), null);
+  assert.equal(
+    legacyRouteToCanonical("/docs/spec/language.html", "?ref=v0.1.0-alpha.1"),
+    "/document.html?path=docs%2Fspec%2Flanguage.md&ref=v0.1.0-alpha.1",
+  );
+  assert.equal(
+    legacyRouteToCanonical("/docs/spec/language.html#grammar", "?ref=v0.1.0-alpha.1"),
+    "/document.html?path=docs%2Fspec%2Flanguage.md&ref=v0.1.0-alpha.1",
+  );
+  assert.equal(
+    legacyRouteToCanonical("/examples/anagrams.html", "?ref=v1"),
+    "/example.html?path=examples%2Fanagrams.oq&ref=v1",
+  );
+  // Encoded legacy paths are decoded before mapping.
+  assert.equal(
+    legacyRouteToCanonical("/docs/guides/a%20b.html"),
+    "/document.html?path=docs%2Fguides%2Fa%20b.md&ref=main",
+  );
+  for (const junk of ["/about.html", "/docs/", "/docs/a.txt", "/examples/a.md", "nonsense"]) {
+    assert.equal(legacyRouteToCanonical(junk), null, `${junk} should not map`);
+  }
+});
+
+test("isLegacyContentRoute recognises /docs/** and /examples/**", () => {
+  assert.equal(isLegacyContentRoute("/docs/spec/language.html"), true);
+  assert.equal(isLegacyContentRoute("/examples/anagrams.html"), true);
+  assert.equal(isLegacyContentRoute("/docs/a/b/c"), true);
+  assert.equal(isLegacyContentRoute("/document.html"), false);
+  assert.equal(isLegacyContentRoute("/docs"), false);
+  assert.equal(isLegacyContentRoute("/"), false);
+});
+
+test("normalizeRepoPath is conservative but predictable", () => {
+  assert.equal(normalizeRepoPath("/docs/a.md"), "docs/a.md");
+  assert.equal(normalizeRepoPath("./docs/a.md"), "docs/a.md");
+  assert.equal(normalizeRepoPath("docs\\a.md"), "docs/a.md");
+  assert.equal(normalizeRepoPath(null), "");
 });

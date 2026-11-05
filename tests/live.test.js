@@ -1,39 +1,109 @@
-// Real-source smoke test. Skipped unless OQ_LIVE_DOCS=1, so the normal suite stays
-// deterministic and offline. Run it before a release:
-//
-//   OQ_LIVE_DOCS=1 npm test
-//
-// It proves that the URLs this site builds actually serve the real documentation, which a
-// mocked test cannot.
-import assert from "node:assert/strict";
 import test from "node:test";
-import { rawUrl } from "../src/source.js";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+
+import {
+  __resetCacheForTests,
+  __setFetchForTests,
+  loadDocument,
+  loadReleases,
+  loadTree,
+} from "../src/github-docs.js";
+import { isDocumentPath, isExamplePath } from "../src/source.js";
 
 const live = process.env.OQ_LIVE_DOCS === "1";
 
-test("the real catalog lists documentation from main", { skip: !live }, async () => {
-  const response = await fetch(rawUrl("docs/catalog.json", "main"));
-  assert.equal(response.status, 200, "docs/catalog.json must be reachable from main");
-  const catalog = await response.json();
-  assert.ok(Array.isArray(catalog.docs), "catalog.docs must be an array");
-  assert.ok(catalog.docs.length > 5, `expected more than 5 documents, got ${catalog.docs.length}`);
-  for (const doc of catalog.docs) {
-    assert.match(doc.path, /^docs\/.+\.md$/, `unexpected catalog path ${doc.path}`);
-    assert.ok(doc.title && doc.title.length > 0, `${doc.path} has no title`);
+// The live suite talks to the real GitHub API. Unauthenticated callers share an hourly
+// quota of 60 requests per IP, which a CI runner or a busy machine can exhaust. When a
+// token is available in the environment, or from an already-authenticated `gh` CLI on a
+// developer machine, attach it to the real fetch so the suite tests GitHub rather than the
+// local quota. No token is ever read from a file, logged or committed; without one the
+// suite runs unauthenticated exactly as before.
+function localToken() {
+  if (process.env.OQ_GITHUB_TOKEN) return process.env.OQ_GITHUB_TOKEN;
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
+  try {
+    return String(
+      execFileSync("gh", ["auth", "token"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 3000,
+      }),
+    ).trim();
+  } catch {
+    return "";
   }
+}
+
+const token = live ? localToken() : "";
+if (live && token) {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (input, init = {}) =>
+    realFetch(input, { ...init, headers: { ...(init.headers ?? {}), Authorization: `Bearer ${token}` } });
+}
+
+test("live: main exposes at least 15 Markdown docs and 30 examples", { skip: !live }, async () => {
+  __resetCacheForTests();
+  __setFetchForTests(null);
+
+  const tree = await loadTree("main");
+  assert.ok(Array.isArray(tree));
+
+  const docs = tree.filter((entry) => isDocumentPath(entry.path));
+  const examples = tree.filter((entry) => isExamplePath(entry.path));
+
+  assert.ok(docs.length >= 15, `expected >= 15 docs, got ${docs.length}`);
+  assert.ok(examples.length >= 30, `expected >= 30 examples, got ${examples.length}`);
+  assert.ok(docs.every((entry) => entry.path.startsWith("docs/")));
+  assert.ok(examples.every((entry) => entry.path.startsWith("examples/")));
 });
 
-test("the real language specification renders as Markdown", { skip: !live }, async () => {
-  const response = await fetch(rawUrl("docs/spec/language.md", "main"));
-  assert.equal(response.status, 200, "docs/spec/language.md must be reachable from main");
-  const markdown = await response.text();
-  assert.match(markdown, /^# /m, "the specification must have an h1");
-  assert.match(markdown, /^\|/m, "the specification must contain a table");
+test("live: docs/spec/language.md at main has an h1 and a table", { skip: !live }, async () => {
+  __resetCacheForTests();
+  __setFetchForTests(null);
+
+  const document = await loadDocument("main", "docs/spec/language.md");
+  assert.ok(document.markdown.length > 0);
+  assert.match(document.markdown, /^#\s+\S/m, "the language spec must have a level-one heading");
+  assert.match(document.markdown, /^\|.*\|/m, "the language spec must contain a Markdown table");
+  assert.match(document.markdown, /^\|\s*-{3,}/m, "the table must have a delimiter row");
 });
 
-test("a released tag serves its own documentation, not main", { skip: !live }, async () => {
-  const response = await fetch(rawUrl("docs/spec/language.md", "v0.1.0-alpha.1"));
-  assert.equal(response.status, 200, "the alpha.1 tag must still serve its documentation");
-  const markdown = await response.text();
-  assert.ok(markdown.length > 1000, "the pinned document should not be empty");
+test("live: both pinned tags serve the spec and their bytes differ", { skip: !live }, async () => {
+  const tags = ["v0.1.0-alpha.1", "v0.1.0-alpha.2"];
+  const bodies = [];
+
+  __resetCacheForTests();
+  for (const tag of tags) {
+    // Exercises the real loader: it throws unless GitHub served the document with a 200.
+    const document = await loadDocument(tag, "docs/spec/language.md");
+    assert.equal(document.ref, tag);
+    assert.equal(document.path, "docs/spec/language.md");
+    assert.ok(document.markdown.length > 0, `${tag} document must not be empty`);
+    bodies.push(Buffer.from(document.markdown, "utf8"));
+  }
+
+  assert.notEqual(
+    bodies[0].length,
+    bodies[1].length,
+    "the spec must differ in byte length between v0.1.0-alpha.1 and v0.1.0-alpha.2",
+  );
+});
+
+test("live: the releases API has a non-draft v-prefixed tag", { skip: !live }, async () => {
+  __resetCacheForTests();
+  __setFetchForTests(null);
+
+  const channels = await loadReleases();
+  assert.ok(Array.isArray(channels));
+  assert.equal(channels[0].ref, "main", "development is always the first channel");
+
+  const releases = channels.slice(1);
+  assert.ok(releases.length >= 1, "expected at least one non-draft release");
+  assert.ok(
+    releases.some((channel) => channel.ref.startsWith("v")),
+    "expected a release whose tag_name starts with v",
+  );
+  assert.ok(releases.every((channel) => channel.ref.startsWith("v")));
+  assert.ok(releases.every((channel) => !/^v$/.test(channel.ref)));
 });

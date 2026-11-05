@@ -1,145 +1,258 @@
-import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createElement as h } from "react";
+
 import { renderToStaticMarkup } from "react-dom/server";
+import ReactMarkdown from "react-markdown";
+import { createElement as h } from "react";
+
 import {
   extractHeadings,
-  renderMarkdownElement,
   tocFromHeadings,
+  plainHeading,
+  renderMarkdownElement,
+  schema,
+  remarkPlugins,
+  rehypePlugins,
 } from "../src/markdown-pipeline.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const src = join(here, "..", "src");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SRC = join(HERE, "..", "src");
 
-const render = (markdown, path = "docs/spec/language.md", ref = "main") =>
-  renderToStaticMarkup(renderMarkdownElement({ markdown, path, ref }));
+function render(markdown, { path = "docs/guide.md", ref = "main" } = {}) {
+  return renderToStaticMarkup(renderMarkdownElement({ markdown, path, ref }));
+}
 
-test("renders GFM tables", () => {
-  const html = render("| a | b |\n| --- | --- |\n| 1 | 2 |\n");
+// A fixture that mirrors the shapes the real corpus uses: a table, a fenced `oq` block,
+// a nested list and headings. It is inline on purpose; live corpus checks live in live.test.js.
+const FIXTURE = [
+  "# Language Guide",
+  "",
+  "Intro paragraph with `inline code`.",
+  "",
+  "## Statements",
+  "",
+  "- one",
+  "  - nested",
+  "- two",
+  "",
+  "### Loop",
+  "",
+  "```oq",
+  "for n in 1 to 5",
+  "  print n",
+  "end",
+  "```",
+  "",
+  "| Keyword | Meaning |",
+  "| --- | --- |",
+  "| `to` | inclusive range |",
+  "| `end` | closes a block |",
+].join("\n");
+
+test("renders GFM tables with header and body cells", () => {
+  const html = render(FIXTURE);
   assert.match(html, /<table>/);
-  assert.match(html, /<th>a<\/th>/);
-  assert.match(html, /<td>1<\/td>/);
+  assert.match(html, /<thead>/);
+  assert.match(html, /<th>Keyword<\/th>/);
+  assert.match(html, /<td><code>to<\/code><\/td>/);
+  assert.match(html, /<td>inclusive range<\/td>/);
+  // The pipeline wraps tables so they can scroll on narrow screens.
+  assert.match(html, /class="table-wrap"/);
 });
 
-test("renders fenced code with a language class", () => {
-  const html = render("```oq\nprint 1\n```\n");
-  assert.match(html, /<pre><code class="language-oq">/);
-  assert.match(html, /print 1/);
-});
-
-test("renders lists and headings with anchors", () => {
-  const html = render("## Two words\n\n- one\n- two\n");
-  assert.match(html, /<h2 id="two-words">/);
-  assert.match(html, /<ul>/);
-  assert.match(html, /<li>one<\/li>/);
-});
-
-test("resolves relative document links against the source path", () => {
-  const html = render("See [the spec](../spec/language.md#syntax).", "docs/adr/0009-x.md");
-  assert.match(html, /href="\/docs\/spec\/language\.html#syntax"/);
-});
-
-test("resolves relative images to the raw GitHub path", () => {
-  const html = render("![diagram](images/flow.png)", "docs/spec/design.md");
-  assert.match(
-    html,
-    /src="https:\/\/raw\.githubusercontent\.com\/Oqthara\/oqthara\/main\/docs\/spec\/images\/flow\.png"/,
+test("fenced code carries a language class before the code component consumes it", () => {
+  // The same plugin set without the custom `pre` shows the class the pipeline produces and
+  // CodeBlock turns into the visible label.
+  const html = renderToStaticMarkup(
+    h(ReactMarkdown, {
+      remarkPlugins,
+      rehypePlugins,
+      children: "```oq\nprint 1\n```",
+    }),
   );
+  assert.match(html, /<code class="language-oq">/);
 });
 
-test("leaves absolute URLs alone and marks them external", () => {
-  const html = render("[Oqthara](https://oqthara.github.io/)");
-  assert.match(html, /href="https:\/\/oqthara\.github\.io\/"/);
-  assert.match(html, /rel="noreferrer noopener"/);
+test("renders fenced code with its language label and the real source", () => {
+  const html = render(FIXTURE);
+  // CodeBlock turns the fenced language into the visible label and keeps the text verbatim.
+  assert.match(html, /<div class="code-label"><span>oq<\/span>/);
+  assert.match(html, /for n in 1 to 5/);
+  assert.match(html, /<div class="code-block/);
+  assert.match(html, /class="copy-button"/);
+  // The raw fence markers must not leak into the output.
+  assert.doesNotMatch(html, /```/);
 });
 
-test("drops javascript: links", () => {
-  const html = render("[x](javascript:alert(1))");
-  assert.ok(!/javascript:/i.test(html), html);
+test("renders nested lists", () => {
+  const html = render(FIXTURE);
+  assert.match(html, /<ul>/);
+  assert.match(html, /<li>one\s*<ul>/);
+  assert.match(html, /<li>nested<\/li>/);
 });
 
-test("drops javascript: links with mixed case", () => {
-  const html = render("[x](JaVaScRiPt:alert(1))");
-  assert.ok(!/javascript:/i.test(html), html);
-});
-
-test("drops data: links", () => {
-  const html = render("[x](data:text/html;base64,PHNjcmlwdD4=)");
-  assert.ok(!/data:/i.test(html), html);
-});
-
-test("drops vbscript: links", () => {
-  const html = render("[x](vbscript:msgbox)");
-  assert.ok(!/vbscript:/i.test(html), html);
-});
-
-test("sanitizes embedded script tags", () => {
-  const html = render("before\n\n<script>alert(1)</script>\n\nafter\n");
-  assert.ok(!html.includes("<script"), html);
-  assert.ok(!html.includes("alert(1)"), html);
-});
-
-test("sanitizes inline event handlers", () => {
-  const html = render('<img src="x" onerror="alert(1)">');
-  assert.ok(!/onerror/i.test(html), html);
-});
-
-test("sanitizes iframes and style attributes", () => {
-  const html = render('<iframe src="https://evil.example"></iframe>\n\n<p style="color:red">x</p>');
-  assert.ok(!html.includes("<iframe"), html);
-  assert.ok(!/style="/.test(html), html);
-});
-
-test("never uses dangerouslySetInnerHTML anywhere in src", () => {
-  const offenders = [];
-  const pattern = /dangerouslySetInnerHTML\s*[:=]/;
-  const walk = (directory) => {
-    for (const entry of readdirSync(directory)) {
-      const path = join(directory, entry);
-      if (statSync(path).isDirectory()) {
-        walk(path);
-        continue;
-      }
-      if (!/\.(jsx|js)$/.test(entry)) continue;
-      if (pattern.test(readFileSync(path, "utf8"))) offenders.push(path);
-    }
-  };
-  walk(src);
-  assert.deepEqual(offenders, []);
-});
-
-test("extractHeadings skips fenced code and keeps the ids rehype-slug assigns", () => {
-  const headings = extractHeadings("# Title\n\n## First\n\n```\n## not a heading\n```\n\n### Second\n");
+test("adds the same heading ids that extractHeadings reports", () => {
+  const html = render(FIXTURE);
+  const headings = extractHeadings(FIXTURE);
   assert.deepEqual(
-    headings.map((heading) => [heading.level, heading.id]),
+    headings.map((heading) => [heading.level, heading.text, heading.id]),
     [
-      [1, "title"],
-      [2, "first"],
-      [3, "second"],
+      [1, "Language Guide", "language-guide"],
+      [2, "Statements", "statements"],
+      [3, "Loop", "loop"],
     ],
   );
+  for (const heading of headings) {
+    assert.match(html, new RegExp(`id="${heading.id}"`));
+  }
+  // h2/h3 get an anchor link to their own id.
+  assert.match(html, /<a class="heading-anchor" href="#statements"/);
+});
+
+test("sanitization removes script-bearing links and elements", () => {
+  const inputs = [
+    "[x](javascript:alert(1))",
+    "[x](JaVaScRiPt:alert(1))",
+    "[x]( javascript:alert(1))",
+    "[x](data:text/html,<script>alert(1)</script>)",
+    "[x](vbscript:msgbox(1))",
+    "[x](java\tscript:alert(1))",
+    "<script>alert(1)</script>",
+    "<img src=x onerror=alert(1)>",
+    "<iframe src=\"https://evil.example\"></iframe>",
+    "<span style=\"color:red\">styled</span>",
+    "<a href=\"javascript:alert(1)\">raw link</a>",
+  ];
+  for (const input of inputs) {
+    const html = render(input);
+    const lowered = html.toLowerCase();
+    assert.doesNotMatch(lowered, /javascript:/, `unsafe javascript: survived: ${input}`);
+    assert.doesNotMatch(lowered, /vbscript:/, `unsafe vbscript: survived: ${input}`);
+    assert.doesNotMatch(lowered, /data:text\/html/, `unsafe data: survived: ${input}`);
+    assert.doesNotMatch(lowered, /<script/, `script element survived: ${input}`);
+    assert.doesNotMatch(lowered, /<iframe/, `iframe survived: ${input}`);
+    assert.doesNotMatch(lowered, /onerror/, `event handler survived: ${input}`);
+    assert.doesNotMatch(lowered, /style=/, `style attribute survived: ${input}`);
+  }
+});
+
+test("dangerouslySetInnerHTML is never really used under src/", () => {
+  // Comments that name it are fine; an assignment or JSX prop is not.
+  const offenders = [];
+  const pattern = /dangerouslySetInnerHTML\s*[:=]/;
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(jsx?|mjs)$/.test(entry.name)) {
+        const text = readFileSync(full, "utf8");
+        if (pattern.test(text)) offenders.push(full);
+      }
+    }
+  };
+  walk(SRC);
+  assert.deepEqual(offenders, [], "untrusted HTML must never be injected");
+});
+
+test("relative Markdown links resolve to canonical routes for a document in docs/adr/", () => {
+  const markdown = [
+    "[spec](../spec/language.md#grammar)",
+    "",
+    "[sibling](./0002-runtime.md)",
+    "",
+    "[example](../../examples/basics/hello.oq)",
+    "",
+    "[changelog](../../CHANGELOG.md)",
+    "",
+    "[license](../../LICENSE)",
+  ].join("\n");
+  const html = render(markdown, { path: "docs/adr/0003-bytecode.md", ref: "v0.1.0-alpha.2" });
+  assert.match(
+    html,
+    /href="\/document\.html\?path=docs%2Fspec%2Flanguage\.md&amp;ref=v0\.1\.0-alpha\.2#grammar"/,
+  );
+  assert.match(
+    html,
+    /href="\/document\.html\?path=docs%2Fadr%2F0002-runtime\.md&amp;ref=v0\.1\.0-alpha\.2"/,
+  );
+  assert.match(
+    html,
+    /href="\/example\.html\?path=examples%2Fbasics%2Fhello\.oq&amp;ref=v0\.1\.0-alpha\.2"/,
+  );
+  assert.match(html, /href="\/changelog\.html"/);
+  assert.match(html, /href="https:\/\/github\.com\/Oqthara\/oqthara\/blob\/v0\.1\.0-alpha\.2\/LICENSE"/);
+});
+
+test("relative images resolve to raw.githubusercontent.com and unsafe sources are dropped", () => {
+  const markdown = ["![diagram](../assets/diagram.png)", "", "![bad](javascript:alert(1))"].join("\n");
+  const html = render(markdown, { path: "docs/adr/0001-x.md", ref: "v1" });
+  assert.match(
+    html,
+    /src="https:\/\/raw\.githubusercontent\.com\/Oqthara\/oqthara\/v1\/docs\/assets\/diagram\.png"/,
+  );
+  assert.match(html, /alt="diagram"/);
+  assert.doesNotMatch(html.toLowerCase(), /javascript:/);
+});
+
+test("external links get noreferrer/noopener and open in a new tab", () => {
+  const html = render("[GitHub](https://github.com/Oqthara/oqthara)");
+  assert.match(html, /href="https:\/\/github\.com\/Oqthara\/oqthara"/);
+  assert.match(html, /rel="noreferrer noopener"/);
+  assert.match(html, /target="_blank"/);
+});
+
+test("extractHeadings skips fenced code and dedupes repeated slugs", () => {
+  const markdown = [
+    "# Top",
+    "",
+    "```md",
+    "# Not A Heading",
+    "## Also Not",
+    "```",
+    "",
+    "## Install",
+    "",
+    "## Install",
+  ].join("\n");
+  const headings = extractHeadings(markdown);
   assert.deepEqual(
-    tocFromHeadings(headings).map((heading) => heading.id),
-    ["first", "second"],
+    headings.map((heading) => heading.id),
+    ["top", "install", "install-1"],
   );
+  assert.equal(headings.some((heading) => heading.text === "Not A Heading"), false);
 });
 
-test("the Markdown component wraps the rendered document in an article", () => {
-  // Tested from source rather than by importing the .jsx file, which plain Node cannot
-  // load; the pipeline below is the part that has to be verifiable without a JSX loader.
-  const wrapper = readFileSync(join(src, "components", "Markdown.jsx"), "utf8");
-  assert.match(wrapper, /h\("article", \{ className \}/);
-  assert.match(render("# Hi\n"), /<h1 id="hi">/);
+test("extractHeadings strips inline Markdown so ids match rehype-slug", () => {
+  const markdown = "## [The `oq` CLI](#cli)\n";
+  const [heading] = extractHeadings(markdown);
+  assert.equal(heading.text, "The oq CLI");
+  assert.equal(heading.id, "the-oq-cli");
+  assert.equal(plainHeading("**bold** and _em_"), "bold and em");
 });
 
-test("a compiled-document table and fenced block both render together", () => {
-  const html = render(
-    "## Compiled subset\n\n| Feature | Status |\n| --- | --- |\n| loops | yes |\n\n```oq\nfor n in 1 to 3\nend\n```\n",
+test("tocFromHeadings keeps only h2 and h3", () => {
+  const headings = extractHeadings("# H1\n\n## H2\n\n### H3\n\n#### H4\n");
+  assert.deepEqual(
+    tocFromHeadings(headings).map((heading) => heading.level),
+    [2, 3],
   );
-  assert.match(html, /<h2 id="compiled-subset">/);
-  assert.match(html, /<table>/);
-  assert.match(html, /<pre><code class="language-oq">/);
+  assert.deepEqual(tocFromHeadings([]), []);
+});
+
+test("the plugin order parses raw HTML before sanitizing", async () => {
+  const { default: rehypeRaw } = await import("rehype-raw");
+  const { default: rehypeSanitize } = await import("rehype-sanitize");
+  const { default: rehypeSlug } = await import("rehype-slug");
+  assert.deepEqual(remarkPlugins.map((plugin) => plugin.name), ["remarkGfm"]);
+  assert.equal(rehypePlugins.length, 3);
+  assert.equal(rehypePlugins[0], rehypeRaw);
+  assert.equal(rehypePlugins[1][0], rehypeSanitize);
+  assert.equal(rehypePlugins[2], rehypeSlug);
+  // Schema allows the class names the docs use and no clobber prefix.
+  assert.equal(schema.clobberPrefix, "");
+  assert.ok(schema.attributes.code.includes("className"));
+  assert.deepEqual(schema.protocols.href, ["http", "https", "mailto"]);
 });
