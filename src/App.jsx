@@ -1,4 +1,4 @@
-import { createElement as h, useEffect, useState } from "react";
+import { createElement as h, useCallback, useEffect, useState } from "react";
 import { Layout } from "./components/Layout.jsx";
 import { HomePage } from "./pages/HomePage.jsx";
 import { PhilosophyPage } from "./pages/PhilosophyPage.jsx";
@@ -12,6 +12,7 @@ import { StatusPage } from "./pages/StatusPage.jsx";
 import { ChangelogPage } from "./pages/ChangelogPage.jsx";
 import { NotFoundPage } from "./pages/NotFoundPage.jsx";
 import { DEFAULT_REF, parseQuery } from "./source.js";
+import { currentLocation, onNavigate } from "./navigation.js";
 
 // The static routes. Each is one real file written by prerender.mjs, so GitHub Pages serves
 // working HTML before any JavaScript runs.
@@ -56,9 +57,13 @@ export function refFromSearch(search) {
  */
 function useDeferredQuery(search) {
   const [query, setQuery] = useState(() => parseQuery(""));
+  const sync = useCallback(() => setQuery(parseQuery(currentLocation().search)), []);
   useEffect(() => {
     setQuery(parseQuery(search));
   }, [search]);
+  // An in-app channel switch keeps this component mounted, so it has to re-read the query
+  // itself rather than rely on a new `search` prop arriving from a reload.
+  useEffect(() => onNavigate(sync), [sync]);
   return query;
 }
 

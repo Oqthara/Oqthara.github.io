@@ -153,10 +153,10 @@ export function DocumentPage({ query }) {
             )
           : null,
 
-        document.status === "ready" && document.error
+        document.error && document.data
           ? h(
               "p",
-              { className: "stale-note", role: "status" },
+              { className: "stale-note", role: "alert" },
               "Showing the last loaded copy. The refresh failed: ",
               document.error.message,
             )

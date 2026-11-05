@@ -80,6 +80,102 @@ export function __resetCacheForTests() {
   cache.clear();
 }
 
+/**
+ * The API quota is 60 requests an hour for an unauthenticated browser, shared by everyone
+ * behind the same address, so the two discovery responses are also persisted in
+ * sessionStorage. A reload or a second tab then costs nothing, which is what keeps a normal
+ * reading session inside the limit.
+ *
+ * Only discovery and the release list are persisted: they are small and they are the expensive
+ * requests. File bodies come from the raw CDN, which has no quota, and stay in the memory
+ * cache. Nothing here is secret, so there is nothing to leak.
+ */
+const PERSIST_PREFIX = "oq-cache:";
+const PERSIST_TTL_MS = 30 * 60 * 1000;
+
+function readPersistedEntry(key) {
+  if (typeof window === "undefined" || !window.sessionStorage) return null;
+  try {
+    const raw = window.sessionStorage.getItem(PERSIST_PREFIX + key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.at !== "number") return null;
+    if (Date.now() - parsed.at > PERSIST_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function readPersisted(key) {
+  return readPersistedEntry(key)?.value ?? null;
+}
+
+/**
+ * A background revalidation that failed after a cached value was shown.
+ *
+ * The value on screen is still served, so the failure cannot be reported by rejecting the load
+ * that already resolved. Instead every failure is published here and the data hooks subscribe,
+ * which is what turns "this is the saved copy" into visible text instead of silence.
+ */
+const refreshErrorListeners = new Set();
+
+/**
+ * Registers a listener for failed background refreshes. Returns an unsubscribe function.
+ *
+ * A Set rather than one listener: a page can mount several hooks at once (a document and its
+ * sidebar catalogue, for instance), and with a single slot the last mount would silently
+ * replace the first and its failures would go unreported.
+ */
+export function setRefreshErrorListener(listener) {
+  refreshErrorListeners.add(listener);
+  return () => {
+    refreshErrorListeners.delete(listener);
+  };
+}
+
+/**
+ * Serves a persisted value immediately and starts a background refresh.
+ *
+ * A value restored from a previous page load is shown at once — that is the point — but it is
+ * also revalidated, so a source that has started failing produces a stale note instead of
+ * silently looking current. The refresh never replaces what is on screen; the next reader of
+ * the cache gets the newer value.
+ */
+function fromPersisted(key, load, { revalidate = true } = {}) {
+  const entry = readPersistedEntry(key);
+  if (!entry) return null;
+  const value = entry.value;
+  const immediate = Promise.resolve(value);
+  cache.set(key, { promise: immediate, at: entry.at, value });
+  if (revalidate) {
+    // Deferred by a microtask so a hook that mounts in the same tick can subscribe before the
+    // failure is published. Without this the very first reload after a failure reports nothing.
+    const refresh = Promise.resolve().then(load);
+    refresh.then(
+      (fresh) => {
+        cache.set(key, { promise: Promise.resolve(fresh), at: Date.now(), value: fresh });
+        writePersisted(key, fresh);
+      },
+      (error) => {
+        // Keep the persisted value and tell the UI the refresh failed.
+        cache.set(key, { promise: immediate, at: entry.at, value });
+        for (const listener of refreshErrorListeners) listener(error);
+      },
+    );
+  }
+  return immediate;
+}
+
+function writePersisted(key, value) {
+  if (typeof window === "undefined" || !window.sessionStorage) return;
+  try {
+    window.sessionStorage.setItem(PERSIST_PREFIX + key, JSON.stringify({ at: Date.now(), value }));
+  } catch {
+    // A full or disabled store is not a failure: the memory cache still works.
+  }
+}
+
 /** The fetch implementation, replaceable in tests without touching the cache. */
 let fetchImpl = (...args) => fetch(...args);
 
@@ -175,15 +271,24 @@ function cached(key, load) {
   return promise;
 }
 
-/** Reads a text file from the raw CDN. */
+/**
+ * Reads a text file from the raw CDN.
+ *
+ * A document the reader has already opened is also held in sessionStorage, so a reload renders
+ * the text immediately and a failed refresh shows the saved copy with a stale note instead of an
+ * error page. This is the "last good value survives" rule, applied across a page load.
+ */
 export function loadText(ref, path) {
   const repoPath = normalizePath(normalizeRepoPath(path));
   const key = `text:${ref}:${repoPath}`;
-  return cached(key, async () => {
+  const loadTextOnce = async () => {
     const url = rawUrl(repoPath, ref);
     const response = await get(url, { path: repoPath, ref, accept: "text/plain, */*" });
-    return response.text();
-  });
+    const text = await response.text();
+    writePersisted(key, text);
+    return text;
+  };
+  return fromPersisted(key, loadTextOnce) ?? cached(key, loadTextOnce);
 }
 
 /** Fetch helpers used only where a raw response body is required. */
@@ -223,7 +328,12 @@ export function validateTree(payload, { ref = DEFAULT_REF } = {}) {
 /** The recursive tree of a ref. Always an array. */
 export function loadTree(ref = DEFAULT_REF) {
   const key = `tree:${ref}`;
-  return cached(key, async () => validateTree(await getJson(treeApiUrl(ref), { ref, path: "docs" }), { ref }));
+  const loadTreeOnce = async () => {
+    const tree = validateTree(await getJson(treeApiUrl(ref), { ref, path: "docs" }), { ref });
+    writePersisted(key, tree);
+    return tree;
+  };
+  return fromPersisted(key, loadTreeOnce) ?? cached(key, loadTreeOnce);
 }
 
 /**
@@ -409,7 +519,13 @@ export function validateReleases(payload, { includeDev = true } = {}) {
 
 /** Published releases as channels. Always an array; development is always first. */
 export function loadReleases() {
-  return cached("releases", async () => validateReleases(await getJson(releasesApiUrl(), { path: "releases" })));
+  const key = "releases";
+  const loadReleasesOnce = async () => {
+    const channels = validateReleases(await getJson(releasesApiUrl(), { path: "releases" }));
+    writePersisted(key, channels);
+    return channels;
+  };
+  return fromPersisted(key, loadReleasesOnce) ?? cached(key, loadReleasesOnce);
 }
 
 /** Finds the channel a URL named. Accepts either the channel id or the git ref. */

@@ -127,10 +127,10 @@ export function DocsPage({ query = {} }) {
       : null,
 
     // A background refresh that failed is reported without removing what is on screen.
-    status === "ready" && error
+    error && data
       ? h(
           "p",
-          { className: "stale-note", role: "status" },
+          { className: "stale-note", role: "alert" },
           "Showing the last result. The refresh failed: ",
           error.message,
         )

@@ -154,8 +154,8 @@ export function PhilosophyPage({ query = {} }) {
           )
         : null,
 
-      status === "ready" && error
-        ? h("p", { className: "stale-note", role: "status" }, "Showing the last loaded copy. The refresh failed: ", error.message)
+      error && data
+        ? h("p", { className: "stale-note", role: "alert" }, "Showing the last loaded copy. The refresh failed: ", error.message)
         : null,
 
       data

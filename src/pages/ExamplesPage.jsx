@@ -97,8 +97,8 @@ export function ExamplesPage({ query = {} }) {
       ? h("div", { className: "empty-state" }, h("p", null, "The repository has no .oq files under examples at this ref."))
       : null,
 
-    status === "ready" && error
-      ? h("p", { className: "stale-note", role: "status" }, "Showing the last result. The refresh failed: ", error.message)
+    error && data
+      ? h("p", { className: "stale-note", role: "alert" }, "Showing the last result. The refresh failed: ", error.message)
       : null,
 
     h(

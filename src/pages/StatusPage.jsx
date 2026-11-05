@@ -66,8 +66,8 @@ export function StatusPage({ query = {} }) {
 
     data ? h(Markdown, { markdown: data.markdown, path: BACKEND_PATH, ref: channel.ref }) : null,
 
-    status === "ready" && error
-      ? h("p", { className: "stale-note", role: "status" }, "Showing the last loaded copy. The refresh failed: ", error.message)
+    error && data
+      ? h("p", { className: "stale-note", role: "alert" }, "Showing the last loaded copy. The refresh failed: ", error.message)
       : null,
 
     data

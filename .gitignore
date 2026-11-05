@@ -3,3 +3,9 @@ dist/
 _site/
 .ssr/
 versions.json
+
+# Playwright output
+test-results/
+playwright-report/
+blob-report/
+.playwright/

@@ -1,5 +1,6 @@
 import { createElement as h } from "react";
 import { DEFAULT_REF } from "../source.js";
+import { navigate } from "../navigation.js";
 
 // Documentation channel selector.
 //
@@ -37,7 +38,9 @@ export function ChannelSelect({ channels = [], channel, label = "Documentation v
         id: "channel-select",
         value: current,
         onChange: (event) => {
-          window.location.href = withRef(window.location.href, event.target.value);
+          // In-app navigation: the hooks stay mounted, so the previous content stays on screen
+          // while the new ref loads and a failed refresh can be reported without blanking it.
+          navigate(withRef(window.location.href, event.target.value));
         },
       },
       channels.map((entry) =>

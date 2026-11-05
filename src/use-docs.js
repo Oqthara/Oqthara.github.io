@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DEFAULT_REF, parseQuery } from "./source.js";
 import {
   findChannel,
+  setRefreshErrorListener,
   loadCatalog,
   loadChangelog,
   loadDocument,
@@ -33,6 +34,16 @@ function useAsync(load, deps) {
   const [state, setState] = useState({ status: "loading", data: null, error: null, refreshing: false });
   const [nonce, setNonce] = useState(0);
   const retry = useCallback(() => setNonce((value) => value + 1), []);
+
+  // A refresh that failed while cached content was on screen has no promise left to reject, so
+  // it is reported out of band. This is what makes the stale note appear.
+  useEffect(
+    () =>
+      setRefreshErrorListener((error) => {
+        setState((previous) => (previous.data ? { ...previous, error, status: "ready" } : previous));
+      }),
+    [],
+  );
 
   useEffect(() => {
     let live = true;
