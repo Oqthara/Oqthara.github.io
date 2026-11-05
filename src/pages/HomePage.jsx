@@ -1,6 +1,7 @@
 import { createElement as h } from "react";
 import { CodeBlock, INSTALL_COMMAND, INSTALL_COMMAND_WINDOWS } from "../components/Code.js";
-import { hrefFor, Grid, Note, PageHead, Card } from "../components/Layout.jsx";
+import { hrefFor, Grid, Note, Card } from "../components/Layout.jsx";
+import { documentRoute } from "../source.js";
 import { PRINCIPLES } from "./PhilosophyPage.jsx";
 
 // The homepage.
@@ -84,7 +85,7 @@ export function HomePage() {
         h(
           "p",
           { className: "meta-row", style: { marginTop: "var(--space-4)" } },
-          h("a", { href: hrefFor("/docs/reference/cli.html") }, "CLI reference"),
+          h("a", { href: documentRoute("docs/reference/cli.md") }, "CLI reference"),
           h("a", { href: "https://github.com/Oqthara/oqthara/releases" }, "All releases"),
         ),
       ),

@@ -30,7 +30,7 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Test
+      - name: Unit and integration tests
         run: npm test
 
       - name: Build
@@ -42,6 +42,15 @@ jobs:
       - name: Validate HTML
         run: npx --yes html-validate@9 --formatter stylish _site/*.html
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: npx playwright test
+
+      - name: Live source tests
+        run: npm run test:live
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
@@ -49,7 +58,7 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -67,9 +76,10 @@ jobs:
           set -euo pipefail
           echo "Base URL: $BASE_URL"
 
-          routes="/ /tour.html /docs.html /examples.html /stdlib.html /changelog.html /status.html /search-index.json"
+          # Every route the site publishes is one real file. Documentation and examples are
+          # served by a single route each and are exercised further down.
+          routes="/ /philosophy.html /tour.html /docs.html /document.html /examples.html /example.html /stdlib.html /changelog.html /status.html /404.html"
 
-          # Wait for the CDN to pick up the new deployment before failing on a status code.
           for attempt in 1 2 3 4 5 6; do
             root_status=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL")
             if [ "$root_status" = "200" ]; then break; fi
@@ -89,8 +99,6 @@ jobs:
           done
           if [ "$failed" -ne 0 ]; then exit 1; fi
 
-          # Content assertions. Each page is read once into a variable; piping curl into
-          # `grep -q` would exit 23 when grep closes the pipe early.
           check_contains() {
             local url="$1" needle="$2" body
             body=$(curl -sS --fail "$url")
@@ -102,18 +110,52 @@ jobs:
           }
 
           check_contains "${BASE_URL%/}/" "reads like"
+          check_contains "${BASE_URL%/}/philosophy.html" "What Oqthara is trying to be"
           check_contains "${BASE_URL%/}/tour.html" "Learn Oqthara in one sitting"
-          check_contains "${BASE_URL%/}/status.html" "what does not work yet"
-          # Documentation and the changelog are fetched from GitHub at request time, so
-          # their shells cannot contain the document text. Assert the shell instead: the
-          # page must identify itself and point at the canonical GitHub source.
-          check_contains "${BASE_URL%/}/stdlib.html" "Standard library"
           check_contains "${BASE_URL%/}/docs.html" "Documentation"
-          check_contains "${BASE_URL%/}/changelog.html" "Project history"
-          check_contains "${BASE_URL%/}/docs/spec/language.html" "github.com/Oqthara/oqthara/blob/main/docs/spec/language.md"
+          check_contains "${BASE_URL%/}/examples.html" "Examples"
+          check_contains "${BASE_URL%/}/document.html" "Opening the document"
+          check_contains "${BASE_URL%/}/example.html" "Opening the example"
+          check_contains "${BASE_URL%/}/stdlib.html" "Standard library"
+          check_contains "${BASE_URL%/}/changelog.html" "Changelog"
+          check_contains "${BASE_URL%/}/status.html" "stated plainly"
           check_contains "${BASE_URL%/}/404.html" "does not exist"
 
-          # A deep link must render the real page, not an empty React shell, on every request.
+          # The homepage must not ship a Playground again.
+          root_html=$(curl -sS --fail "${BASE_URL%/}/")
+          if printf '%s' "$root_html" | grep -Fiq 'playground'; then
+            echo "::error::the homepage still mentions a Playground"
+            exit 1
+          fi
+
+          # A document discovered from GitHub must open on the canonical route, and a legacy
+          # /docs/**.html address must still work through 404.html's redirect.
+          doc_url="${BASE_URL%/}/document.html?path=docs%2Fspec%2Flanguage.md&ref=main"
+          doc_status=$(curl -s -o /dev/null -w '%{http_code}' "$doc_url")
+          echo "$doc_status $doc_url"
+          if [ "$doc_status" != "200" ]; then
+            echo "::error::the canonical document route returned $doc_status"
+            exit 1
+          fi
+          check_contains "${BASE_URL%/}/document.html?path=docs%2Fadr%2F0003-bytecode.md&ref=main" "Opening the document"
+
+          legacy_status=$(curl -s -o /dev/null -w '%{http_code}' "${BASE_URL%/}/docs/spec/language.html")
+          echo "$legacy_status ${BASE_URL%/}/docs/spec/language.html (legacy path, 404.html handles it)"
+          if [ "$legacy_status" != "404" ]; then
+            echo "::error::a legacy document path should be served by 404.html, got $legacy_status"
+            exit 1
+          fi
+
+          # A pinned release must be reachable on its own ref.
+          pinned_url="${BASE_URL%/}/document.html?path=docs%2Fspec%2Flanguage.md&ref=v0.1.0-alpha.2"
+          pinned_status=$(curl -s -o /dev/null -w '%{http_code}' "$pinned_url")
+          echo "$pinned_status $pinned_url"
+          if [ "$pinned_status" != "200" ]; then
+            echo "::error::the pinned document route returned $pinned_status"
+            exit 1
+          fi
+
+          # A deep link must render real prerendered text, not an empty shell.
           for attempt in 1 2; do
             body=$(curl -sS --fail "${BASE_URL%/}/tour.html")
             if printf '%s' "$body" | grep -Fq '<div id="root"></div>'; then
@@ -127,13 +169,11 @@ jobs:
           done
           echo "deep link /tour.html served prerendered content twice"
 
-          # The retired project path must not be what this deployment serves.
-          legacy_status=$(curl -s -o /dev/null -w '%{http_code}' "https://oqthara.github.io/oqthara/")
-          echo "$legacy_status https://oqthara.github.io/oqthara/ (legacy project path)"
+          legacy_project=$(curl -s -o /dev/null -w '%{http_code}' "https://oqthara.github.io/oqthara/")
+          echo "$legacy_project https://oqthara.github.io/oqthara/ (retired project path)"
 
           # Assets referenced by the root page must resolve.
-          root=$(curl -sS --fail "${BASE_URL%/}/")
-          for asset in $(printf '%s' "$root" | grep -oE '/assets/[A-Za-z0-9._-]+\.(css|js)' | sort -u); do
+          for asset in $(printf '%s' "$root_html" | grep -oE '/assets/[A-Za-z0-9._-]+\.(css|js)' | sort -u); do
             asset_status=$(curl -s -o /dev/null -w '%{http_code}' "${BASE_URL%/}${asset}")
             echo "$asset_status $asset"
             if [ "$asset_status" != "200" ]; then

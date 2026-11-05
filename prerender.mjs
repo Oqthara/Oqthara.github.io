@@ -14,7 +14,7 @@
 // `/docs/**.html` or `/examples/**.html` address it redirects to the canonical route, which is
 // what keeps old links working without generating a file per document.
 
-import { readFileSync, writeFileSync, mkdirSync, cpSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, cpSync, existsSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -55,6 +55,12 @@ const assets = {
 const { renderAll, render404 } = await import(
   pathToFileURL(join(ssr, "prerender-entry.js")).href
 );
+
+// Start from an empty output directory. Without this a removed route or an old hashed bundle
+// survives from a previous build and gets published, which is exactly how the deleted
+// Playground would have stayed reachable.
+rmSync(out, { recursive: true, force: true });
+mkdirSync(out, { recursive: true });
 
 const pages = renderAll(assets);
 for (const page of pages) {
