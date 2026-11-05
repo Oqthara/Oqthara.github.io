@@ -1,0 +1,18 @@
+{
+  "extends": [
+    "html-validate:recommended"
+  ],
+  "rules": {
+    "void-style": "off",
+    "attribute-boolean-style": "off",
+    "attr-case": [
+      "error",
+      {
+        "style": [
+          "lowercase",
+          "camelcase"
+        ]
+      }
+    ]
+  }
+}

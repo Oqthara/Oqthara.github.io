@@ -1,0 +1,136 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build the static site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify the prerendered output
+        run: node verify.mjs
+
+      - name: Validate HTML
+        run: npx --yes html-validate@9 --formatter stylish _site/*.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Smoke test the deployed site
+        env:
+          BASE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+          echo "Base URL: $BASE_URL"
+
+          routes="/ /tour.html /docs.html /examples.html /stdlib.html /changelog.html /status.html /search-index.json"
+
+          # Wait for the CDN to pick up the new deployment before failing on a status code.
+          for attempt in 1 2 3 4 5 6; do
+            root_status=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL")
+            if [ "$root_status" = "200" ]; then break; fi
+            echo "root returned $root_status (attempt $attempt), retrying"
+            sleep 10
+          done
+
+          failed=0
+          for route in $routes; do
+            url="${BASE_URL%/}${route}"
+            status=$(curl -s -o /dev/null -w '%{http_code}' "$url")
+            echo "$status $url"
+            if [ "$status" != "200" ]; then
+              echo "::error::$url returned $status"
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then exit 1; fi
+
+          # Content assertions. Each page is read once into a variable; piping curl into
+          # `grep -q` would exit 23 when grep closes the pipe early.
+          check_contains() {
+            local url="$1" needle="$2" body
+            body=$(curl -sS --fail "$url")
+            if ! printf '%s' "$body" | grep -Fq "$needle"; then
+              echo "::error::$url does not contain: $needle"
+              exit 1
+            fi
+            echo "ok $url contains \"$needle\""
+          }
+
+          check_contains "${BASE_URL%/}/" "reads like"
+          check_contains "${BASE_URL%/}/tour.html" "Learn Oqthara in one sitting"
+          check_contains "${BASE_URL%/}/status.html" "what does not work yet"
+          check_contains "${BASE_URL%/}/stdlib.html" "Global functions"
+
+          # A deep link must render the real page, not an empty React shell, on every request.
+          for attempt in 1 2; do
+            body=$(curl -sS --fail "${BASE_URL%/}/tour.html")
+            if printf '%s' "$body" | grep -Fq '<div id="root"></div>'; then
+              echo "::error::/tour.html served an empty React shell on request $attempt"
+              exit 1
+            fi
+            if ! printf '%s' "$body" | grep -Fq "Learn Oqthara in one sitting"; then
+              echo "::error::/tour.html lost its prerendered text on request $attempt"
+              exit 1
+            fi
+          done
+          echo "deep link /tour.html served prerendered content twice"
+
+          # The retired project path must not be what this deployment serves.
+          legacy_status=$(curl -s -o /dev/null -w '%{http_code}' "https://oqthara.github.io/oqthara/")
+          echo "$legacy_status https://oqthara.github.io/oqthara/ (legacy project path)"
+
+          # Assets referenced by the root page must resolve.
+          root=$(curl -sS --fail "${BASE_URL%/}/")
+          for asset in $(printf '%s' "$root" | grep -oE '/assets/[A-Za-z0-9._-]+\.(css|js)' | sort -u); do
+            asset_status=$(curl -s -o /dev/null -w '%{http_code}' "${BASE_URL%/}${asset}")
+            echo "$asset_status $asset"
+            if [ "$asset_status" != "200" ]; then
+              echo "::error::$asset returned $asset_status"
+              exit 1
+            fi
+          done
