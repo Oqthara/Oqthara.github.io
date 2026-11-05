@@ -103,8 +103,8 @@
   --border-strong: #bcc8d6;
 
   --fg: #10161d;
-  --fg-muted: #4d5c6e;
-  --fg-subtle: #6b7a8c;
+  --fg-muted: #3f4d5e;
+  --fg-subtle: #55657a;
 
   --accent: #0f7b45;
   --accent-strong: #0b6b3a;
@@ -136,8 +136,8 @@
     --border-strong: #bcc8d6;
 
     --fg: #10161d;
-    --fg-muted: #4d5c6e;
-    --fg-subtle: #6b7a8c;
+    --fg-muted: #3f4d5e;
+    --fg-subtle: #55657a;
 
     --accent: #0f7b45;
     --accent-strong: #0b6b3a;
@@ -356,7 +356,7 @@ hr {
 .site-nav a {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
-  color: var(--fg-muted);
+  color: var(--fg);
   font-size: var(--step--1);
   font-weight: 550;
   text-decoration: none;
@@ -449,7 +449,8 @@ hr {
 }
 
 .site-footer a {
-  color: var(--fg-muted);
+  /* Small text, so it must clear 4.5:1 rather than sitting at the muted colour. */
+  color: var(--fg);
   text-decoration: none;
 }
 
