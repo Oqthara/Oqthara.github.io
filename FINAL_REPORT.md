@@ -467,8 +467,12 @@ under test, not a stale tree.
 | 12 | `npm audit` | 19 total: 0 critical, 4 high, 15 moderate |
 | 13 | `npx playwright install firefox` | completed; launch still fails (see §12) |
 
-**CI.** `Pages` run **`42294840427`** — **success** on `8fbcb0f`, 4 m 4 s. The tip is also green:
-run **`42301674528`** passed on `89bb31a`, which carries this report. Its log confirms
+**CI.** `Pages` run **`42294840427`** — **success** on `8fbcb0f`, 4 m 4 s. Every run after it has
+either passed (**`42306466545`**, **`42302214948`**, **`42301674528`**) or been cancelled by
+concurrency because a newer push superseded it. Earlier `Pages` failures (**`42261157735`** on
+`425ce0f`, **`42273100282`** on `e77d688`) share one cause, `firebase-tools no longer supports
+Java version before 21`, fixed once in `4cb37b7`. Three `alpha-release-sync` runs also failed
+before `4879677` and `58af3b6` corrected that workflow. Run `42301674528`'s log confirms
 `reading-modes.spec.js` executed, **182 passed / 4 skipped** for browser tests, and live source
 tests **0 skipped**.
 
