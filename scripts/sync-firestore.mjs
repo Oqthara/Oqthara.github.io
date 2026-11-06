@@ -56,6 +56,7 @@ import {
   releasesApiUrl,
   titleFromMarkdown,
   titleFromPath,
+  commitApiUrl,
   treeApiUrl,
 } from "../src/source.js";
 import {
@@ -148,12 +149,38 @@ export function buildDocumentRecord({ path, content, collection, now = new Date(
   };
 }
 
+/**
+ * The hash that decides whether a mirrored release still matches upstream.
+ *
+ * It covers **every field the record renders**, not just the body. A release whose title or
+ * notes are unchanged but whose `published_at`, `prerelease` flag or URL was edited upstream is a
+ * real change the site displays, and hashing only `tag\nname\nbody` made that edit invisible:
+ * the recorded hash still matched, the planner skipped the write, and the mirror kept the old
+ * metadata indefinitely. Order is fixed and fields are JSON-encoded so the digest is stable and
+ * unambiguous across delimiters.
+ */
+export function releaseHashOf({ ref, name, body, prerelease, publishedAt, url }) {
+  return contentHashOf(
+    JSON.stringify([
+      String(ref ?? ""),
+      String(name ?? ""),
+      String(body ?? ""),
+      Boolean(prerelease),
+      String(publishedAt ?? ""),
+      String(url ?? ""),
+    ]),
+  );
+}
+
 /** The release record written for a published GitHub release. */
 export function buildReleaseRecord(release, { now = new Date().toISOString() } = {}) {
   const ref = typeof release?.tag_name === "string" ? release.tag_name.trim() : "";
   if (!ref) return null;
   const name = typeof release.name === "string" && release.name.trim() ? release.name.trim() : ref;
   const body = typeof release.body === "string" ? release.body : "";
+  const prerelease = Boolean(release.prerelease);
+  const publishedAt = typeof release.published_at === "string" ? release.published_at : "";
+  const url = typeof release.html_url === "string" ? release.html_url : "";
   return {
     collection: COLLECTIONS.releases,
     id: releaseIdFor(ref),
@@ -163,14 +190,13 @@ export function buildReleaseRecord(release, { now = new Date().toISOString() } =
       [FIELDS.content]: body,
       [FIELDS.published]: true,
       [FIELDS.sourceRef]: MIRRORED_REF,
-      [FIELDS.contentHash]: contentHashOf(`${ref}\n${name}\n${body}`),
+      [FIELDS.contentHash]: releaseHashOf({ ref, name, body, prerelease, publishedAt, url }),
       [FIELDS.updatedAt]: now,
       [FIELDS.ref]: ref,
       [FIELDS.label]: name,
-      [FIELDS.prerelease]: Boolean(release.prerelease),
-      [FIELDS.publishedAt]:
-        typeof release.published_at === "string" ? release.published_at : "",
-      [FIELDS.url]: typeof release.html_url === "string" ? release.html_url : "",
+      [FIELDS.prerelease]: prerelease,
+      [FIELDS.publishedAt]: publishedAt,
+      [FIELDS.url]: url,
     },
   };
 }
@@ -315,36 +341,113 @@ function githubHeaders(token) {
   return headers;
 }
 
+/** Rejects as soon as `signal` aborts, so a deadline does not depend on the callee. */
+function abortRejection(signal) {
+  return new Promise((_, reject) => {
+    if (signal.aborted) {
+      reject(new Error("the request was aborted after exceeding its time limit"));
+      return;
+    }
+    signal.addEventListener(
+      "abort",
+      () => reject(new Error("the request was aborted after exceeding its time limit")),
+      { once: true },
+    );
+  });
+}
+
 /**
- * `fetch` with a bounded wait.
+ * `fetch` with a bounded wait that covers the response **body**, not just the headers.
  *
- * Without a timeout a stalled connection hangs the run until the job's own 6-hour limit, and the
- * mirror then holds whatever state the previous run left. `fetchImpl` stays injectable so tests
- * can drive the network paths without one.
+ * A timeout that is cleared once headers arrive only bounds the connection: a server that sends
+ * `200` and then stalls mid-body leaves `response.json()` pending forever. That is the failure
+ * this repository actually hit - the run hangs until the job's own limit and the mirror keeps
+ * whatever state the previous run left, with nothing in the log pointing at the fetch.
+ *
+ * The deadline is therefore cleared when the body is *consumed*, not when it is received. Body
+ * reads are additionally raced against the abort signal, so a `fetchImpl` that ignores its
+ * `signal` (a test double, or a polyfill) is still cut off instead of hanging.
+ *
+ * `fetchImpl` stays injectable so tests can drive the network paths without one.
  */
-async function fetchWithTimeout(url, { token, accept, fetchImpl = fetch } = {}) {
+export async function fetchWithTimeout(
+  url,
+  { token, accept, fetchImpl = fetch, timeoutMs = FETCH_TIMEOUT_MS } = {},
+) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // A pending deadline must not be the reason the process stays alive after work is done.
+  if (typeof timer.unref === "function") timer.unref();
+  const done = () => clearTimeout(timer);
+
+  let response;
   try {
-    const response = await fetchImpl(url, {
+    response = await fetchImpl(url, {
       signal: controller.signal,
       headers: { ...githubHeaders(token), Accept: accept ?? "application/vnd.github+json" },
     });
-    if (!response.ok) {
-      throw new Error(`GitHub returned ${response.status} for ${url}`);
-    }
-    return response;
-  } finally {
-    clearTimeout(timer);
+  } catch (error) {
+    done();
+    throw error;
   }
+  if (!response.ok) {
+    done();
+    throw new Error(`GitHub returned ${response.status} for ${url}`);
+  }
+
+  // Read the body with the deadline still armed. `read` is detached from the race so a body that
+  // resolves after the abort does not surface as an unhandled rejection.
+  const read = (consume) => {
+    let promise;
+    try {
+      promise = Promise.resolve(consume());
+    } catch (error) {
+      done();
+      return Promise.reject(error);
+    }
+    promise.catch(() => {});
+    return Promise.race([promise, abortRejection(controller.signal)]).finally(done);
+  };
+
+  return {
+    status: response.status,
+    ok: response.ok,
+    json: () => read(() => response.json()),
+    text: () => read(() => response.text()),
+  };
+}
+
+/**
+ * The commit object `ref` currently resolves to.
+ *
+ * Separate from the tree lookup on purpose. `GET /git/trees/:ref` answers with the tree's own
+ * `sha`, which is a different object from the commit that contains it - recording it as
+ * provenance yields a hash that no `git show` accepts, and that never matches the commit a
+ * release points at. Fails closed: a mirror document whose provenance cannot be resolved is
+ * worse than a run that stopped and said so.
+ */
+export async function resolveCommit({ ref = MIRRORED_REF, token = "", fetchImpl = fetch } = {}) {
+  const response = await fetchWithTimeout(commitApiUrl(ref), { token, fetchImpl });
+  if (!response.ok) throw new Error(`GitHub commit request returned ${response.status}`);
+  const payload = await response.json();
+  const sha = String(payload?.sha ?? "").trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error(`GitHub did not resolve ${ref} to a commit SHA; refusing to record an unusable ref`);
+  }
+  // When the endpoint was given a tag, `sha` is the commit the tag points at. An annotated tag
+  // object would carry its own sha in `tag.sha`; `commit.sha` is the one the content came from.
+  const commitSha = String(payload?.commit?.sha ?? sha).trim().toLowerCase();
+  const resolved = /^[0-9a-f]{40}$/.test(commitSha) ? commitSha : sha;
+  return { commit: resolved, tree: String(payload?.commit?.tree?.sha ?? "").trim().toLowerCase() };
 }
 
 /**
  * The recursive tree for `ref`, filtered to the paths this mirror cares about.
  *
- * Returns the commit sha the tree was resolved from as well as the paths. Without it a mirror
- * record says "this is `main`" and never which `main`, so a mirrored document and an upstream
- * document cannot be compared to decide whether the mirror is behind.
+ * Returns the commit sha as well as the paths. Without it a mirror record says "this is `main`"
+ * and never which `main`, so a mirrored document and an upstream document cannot be compared to
+ * decide whether the mirror is behind. The commit is resolved through `resolveCommit`; the
+ * tree's own `sha` is deliberately not used, because it is not a commit.
  */
 export async function listSourceFiles({ ref = MIRRORED_REF, token = "", fetchImpl = fetch } = {}) {
   const response = await fetchWithTimeout(treeApiUrl(ref), { token, fetchImpl });
@@ -360,7 +463,11 @@ export async function listSourceFiles({ ref = MIRRORED_REF, token = "", fetchImp
     .filter((entry) => entry && entry.type === "blob" && typeof entry.path === "string")
     .map((entry) => normalizePath(normalizeRepoPath(entry.path)))
     .filter((path) => classifyPath(path) !== null);
-  return { paths, commit: typeof payload.sha === "string" ? payload.sha : "" };
+
+  // The tree sha is kept for diagnosis only. It must never be written as `sourceCommit`.
+  const treeSha = typeof payload.sha === "string" ? payload.sha.trim().toLowerCase() : "";
+  const { commit } = await resolveCommit({ ref, token, fetchImpl });
+  return { paths, commit, tree: treeSha };
 }
 
 /** Raw file text. raw.githubusercontent.com has no API quota. */

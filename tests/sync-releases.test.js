@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { listReleases, planSync } from "../scripts/sync-firestore.mjs";
+import * as syncModule from "../scripts/sync-firestore.mjs";
+import {
+  buildReleaseRecord,
+  fetchWithTimeout,
+  listReleases,
+  listSourceFiles,
+  planSync,
+  resolveCommit,
+  USAGE,
+} from "../scripts/sync-firestore.mjs";
 import { COLLECTIONS, FIELDS, syncIdFor } from "../src/firebase/collections.js";
 
 // Two failure modes that only appear once the canonical repository is large enough.
@@ -213,4 +222,276 @@ test("a dry run from a non-default ref is allowed, for reviewing a tag", async (
 
   assert.equal(code, EXIT.ok);
   assert.ok(lines.some((line) => /read 0 source records/.test(line)));
+});
+
+// --- request deadlines ---------------------------------------------------------------------
+
+test("a body that never finishes is aborted, not awaited forever", async () => {
+  // The defect: the deadline was cleared as soon as headers arrived, so `response.json()` had no
+  // bound at all. A server that answers 200 and then stalls mid-body hung the run until the job's
+  // own limit, leaving the mirror on the previous run's state with nothing in the log to explain it.
+  let aborted = false;
+  const hangs = () => new Promise(() => {});
+  const fetchImpl = (url, { signal }) => {
+    signal.addEventListener("abort", () => { aborted = true; });
+    return Promise.resolve({ ok: true, status: 200, json: hangs, text: hangs });
+  };
+
+  await assert.rejects(
+    () => fetchWithTimeout("https://api.github.com/x", { fetchImpl, timeoutMs: 25 }).then((r) => r.json()),
+    /aborted|time limit/,
+  );
+  assert.equal(aborted, true, "the request must be aborted, not merely abandoned");
+});
+
+test("the deadline survives until the body is consumed, and is cleared afterwards", async () => {
+  // A body that finishes inside the deadline must resolve normally, and the timer must not be left
+  // armed: a leaked timer keeps the process alive and eventually aborts an unrelated request.
+  const cleared = [];
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const timers = [];
+  globalThis.setTimeout = (fn, ms) => {
+    const id = realSetTimeout(fn, ms);
+    timers.push(id);
+    return id;
+  };
+  globalThis.clearTimeout = (id) => {
+    cleared.push(id);
+    return realClearTimeout(id);
+  };
+  try {
+    const fetchImpl = async () => jsonResponse({ sha: "abc" });
+    const response = await fetchWithTimeout("https://api.github.com/x", { fetchImpl, timeoutMs: 5_000 });
+    // Headers alone must not release the deadline, or the body is unbounded again.
+    assert.equal(cleared.length, 0, "the deadline was cleared before the body was read");
+    assert.deepEqual(await response.json(), { sha: "abc" });
+    assert.equal(cleared.length, timers.length, "the deadline was not cleared after the body");
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
+test("text bodies get the same deadline as json bodies", async () => {
+  const fetchImpl = (url, { signal }) => {
+    signal.addEventListener("abort", () => {});
+    return Promise.resolve({ ok: true, status: 200, text: () => new Promise(() => {}), json: () => new Promise(() => {}) });
+  };
+  await assert.rejects(
+    () => fetchWithTimeout("https://api.github.com/x", { fetchImpl, timeoutMs: 20 }).then((r) => r.text()),
+    /aborted|time limit/,
+  );
+});
+
+test("a non-ok response still throws, as it did before, and leaks no deadline", async () => {
+  // Unchanged behaviour worth pinning: the status is reported here rather than by each caller, and
+  // the error names the URL. Turning this into a returned response would leave every caller's
+  // `!response.ok` check unreachable and let a 404 look like an empty result.
+  let cleared = 0;
+  const realClearTimeout = globalThis.clearTimeout;
+  globalThis.clearTimeout = (id) => {
+    cleared += 1;
+    return realClearTimeout(id);
+  };
+  try {
+    await assert.rejects(
+      () => fetchWithTimeout("https://api.github.com/x", {
+        fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({}), text: async () => "" }),
+        timeoutMs: 5_000,
+      }),
+      /GitHub returned 404/,
+    );
+    assert.equal(cleared, 1, "a failed response must not leak its deadline");
+  } finally {
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
+test("an unreachable host surfaces the transport error and leaks no deadline", async () => {
+  let cleared = 0;
+  const realClearTimeout = globalThis.clearTimeout;
+  globalThis.clearTimeout = (id) => {
+    cleared += 1;
+    return realClearTimeout(id);
+  };
+  try {
+    await assert.rejects(
+      () => fetchWithTimeout("https://api.github.com/x", {
+        fetchImpl: async () => { throw new Error("ECONNREFUSED"); },
+        timeoutMs: 5_000,
+      }),
+      /ECONNREFUSED/,
+    );
+    assert.equal(cleared, 1, "a transport failure must not leak its deadline");
+  } finally {
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
+test("a fetcher that ignores its abort signal is still cut off", async () => {
+  // Test doubles and some polyfills do not implement `signal`. Racing the body against the abort
+  // event keeps the bound in that case instead of relying on cooperation.
+  const fetchImpl = async () => ({ ok: true, status: 200, json: () => new Promise(() => {}), text: () => new Promise(() => {}) });
+  await assert.rejects(
+    () => fetchWithTimeout("https://api.github.com/x", { fetchImpl, timeoutMs: 20 }).then((r) => r.json()),
+    /aborted|time limit/,
+  );
+});
+
+// --- provenance ----------------------------------------------------------------------------
+
+const TREE_SHA = "7e1b3c5a9d2f4e6b8c0a1d3f5e7b9c2a4d6f8e0b";
+const COMMIT_SHA = "1a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3d4";
+
+test("listSourceFiles records a commit, not the tree object's own sha", async () => {
+  // GET /git/trees/:ref returns the *tree* sha. It is a different hash for the same content, so
+  // writing it as `sourceCommit` produced a value that no commit lookup accepts, that never
+  // matched the commit a release points at, and that made "is the mirror behind?" unanswerable.
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    if (url.includes("/git/trees/")) {
+      return jsonResponse({ sha: TREE_SHA, truncated: false, tree: [{ type: "blob", path: "docs/spec/language.md" }] });
+    }
+    if (url.includes("/commits/")) {
+      return jsonResponse({ sha: COMMIT_SHA, commit: { sha: COMMIT_SHA, tree: { sha: TREE_SHA } } });
+    }
+    throw new Error(`unexpected request ${url}`);
+  };
+
+  const listing = await listSourceFiles({ fetchImpl });
+  assert.equal(listing.commit, COMMIT_SHA, "the recorded provenance must be the commit");
+  assert.notEqual(listing.commit, TREE_SHA, "the tree sha must never be recorded as the commit");
+  assert.equal(listing.tree, TREE_SHA);
+  assert.deepEqual(listing.paths, ["docs/spec/language.md"]);
+  assert.ok(calls.some((url) => url.includes("/commits/")), "the commit must actually be resolved");
+});
+
+test("an unresolvable commit fails closed instead of recording an unusable ref", async () => {
+  // A mirror document whose provenance cannot be resolved is worse than a run that stopped:
+  // the wrong hash is written to production and looks authoritative afterwards.
+  const fetchImpl = async (url) => {
+    if (url.includes("/git/trees/")) return jsonResponse({ sha: "abc", truncated: false, tree: [] });
+    if (url.includes("/commits/")) return jsonResponse({ sha: "not-a-sha" });
+    throw new Error(`unexpected request ${url}`);
+  };
+  await assert.rejects(() => listSourceFiles({ fetchImpl }), /did not resolve .* to a commit SHA/);
+});
+
+test("resolveCommit rejects a malformed payload rather than passing it through", async () => {
+  await assert.rejects(
+    () => resolveCommit({ fetchImpl: async () => jsonResponse({}) }),
+    /did not resolve/,
+  );
+  await assert.rejects(
+    () => resolveCommit({ fetchImpl: async () => jsonResponse({ sha: COMMIT_SHA.toUpperCase() + "x" }) }),
+    /did not resolve/,
+  );
+});
+
+test("resolveCommit prefers the commit an annotated tag points at", async () => {
+  const TAG_OBJECT_SHA = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
+  const payload = { sha: TAG_OBJECT_SHA, commit: { sha: COMMIT_SHA, tree: { sha: TREE_SHA } } };
+  const resolved = await resolveCommit({ fetchImpl: async () => jsonResponse(payload) });
+  assert.equal(resolved.commit, COMMIT_SHA, "the tag object is not the content's commit");
+});
+
+// --- release metadata changes --------------------------------------------------------------
+
+const baseRelease = {
+  tag_name: "v0.1.0-alpha.2",
+  name: "Oqthara 0.1.0-alpha.2",
+  body: "Notes.",
+  draft: false,
+  prerelease: true,
+  published_at: "2026-01-02T03:04:05Z",
+  html_url: "https://github.com/Oqthara/oqthara/releases/tag/v0.1.0-alpha.2",
+};
+
+const hashOf = (overrides = {}) => buildReleaseRecord({ ...baseRelease, ...overrides }).data[FIELDS.contentHash];
+
+test("a metadata-only edit changes the release hash", () => {
+  // The defect: the hash covered tag/name/body only. Changing the publication time, flipping
+  // `prerelease`, or re-pointing the URL left the hash identical, so planSync skipped the write
+  // and the site kept rendering stale metadata with no way to notice.
+  const baseline = hashOf();
+  for (const [label, overrides] of [
+    ["published_at", { published_at: "2026-02-03T04:05:06Z" }],
+    ["prerelease", { prerelease: false }],
+    ["html_url", { html_url: "https://example.invalid/releases/tag/v0.1.0-alpha.2" }],
+  ]) {
+    assert.notEqual(hashOf(overrides), baseline, `changing ${label} must change the hash`);
+  }
+});
+
+test("the release hash is deterministic and order-independent of the input object", () => {
+  assert.equal(hashOf(), hashOf(), "the same release must hash the same way twice");
+  const reordered = { html_url: baseRelease.html_url, body: baseRelease.body, published_at: baseRelease.published_at,
+    prerelease: baseRelease.prerelease, draft: false, name: baseRelease.name, tag_name: baseRelease.tag_name };
+  assert.equal(buildReleaseRecord(reordered).data[FIELDS.contentHash], hashOf(),
+    "key order in the input object must not affect the hash");
+});
+
+test("the hash is unambiguous across field boundaries", () => {
+  // JSON-encoding the tuple keeps "ab"+"c" distinct from "a"+"bc"; a plain join would collide.
+  assert.notEqual(hashOf({ name: "ab", body: "c" }), hashOf({ name: "a", body: "bc" }));
+});
+
+test("a metadata-only change produces a write, not a skip", () => {
+  // End to end through the planner: this is the behaviour the site depends on.
+  const before = buildReleaseRecord({ ...baseRelease });
+  const after = buildReleaseRecord({ ...baseRelease, prerelease: false });
+  const existing = new Map([[before.id, {
+    collection: before.collection,
+    path: before.data[FIELDS.path],
+    status: "published",
+    contentHash: before.data[FIELDS.contentHash],
+  }]]);
+  const plan = planSync({ desired: [after], existing });
+  assert.equal(plan.unchanged.length, 0, "the change must not be treated as unchanged");
+  assert.equal(plan.writes.length, 1, "the change must be written");
+});
+
+test("an out-of-band edit is invisible incrementally and repaired by a full reconciliation", () => {
+  // This is the case `--full` exists for, and the case the old workflow could not reach: a
+  // document edited directly in Firestore still matches its recorded hash, because the hash
+  // describes the *source*, not the stored bytes. An incremental run therefore skips the damaged
+  // document forever. Only a full reconciliation rewrites it.
+  const { buildDocumentRecord } = syncModule;
+  const source = buildDocumentRecord({
+    path: "docs/spec/language.md",
+    content: "# Language\n\nThe specification.",
+    collection: "docs",
+    now: "2026-11-06T00:00:00.000Z",
+  });
+
+  // The bookkeeping record is untouched: this is what an out-of-band edit looks like.
+  const existing = new Map([[syncIdFor(source.collection, source.data[FIELDS.path]), {
+    collection: source.collection,
+    path: source.data[FIELDS.path],
+    status: "published",
+    contentHash: source.data[FIELDS.contentHash],
+  }]]);
+
+  const incremental = planSync({ desired: [source], existing });
+  assert.equal(incremental.writes.length, 0, "the hash still matches, so nothing is rewritten");
+  assert.equal(incremental.unchanged.length, 1, "the damaged document is treated as current");
+
+  const full = planSync({ desired: [source], existing, full: true });
+  assert.equal(full.writes.length, 1, "a full reconciliation must rewrite it");
+  assert.equal(full.writes[0].data[FIELDS.content], "# Language\n\nThe specification.");
+});
+
+test("the CLI accepts --full and reports the mode it is about to run", async () => {
+  // The workflow passes `--full`; if the argument were ignored the forced run would silently be
+  // incremental, which is the defect this whole path exists to fix.
+  const { parseArgs, formatPlan } = syncModule;
+  assert.equal(parseArgs(["--full"]).options.full, true);
+  assert.equal(parseArgs([]).options.full, false);
+  assert.match(USAGE, /--full/);
+
+  const emptyPlan = { writes: [], unchanged: [], unpublish: [], oversized: [] };
+  assert.match(formatPlan(emptyPlan, { full: true }).split("\n")[0], /full reconciliation/);
+  assert.match(formatPlan(emptyPlan, { full: false }).split("\n")[0], /incremental/);
 });

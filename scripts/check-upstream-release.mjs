@@ -67,6 +67,18 @@ const FETCH_TIMEOUT_MS = 30 * 1000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 
 /**
+ * How many releases to read before refusing to choose.
+ *
+ * The API caps a page at 100, so one request sees at most the hundred newest by creation. A
+ * repository past that line would have an older-but-newer-by-publication release invisible, and
+ * the detector would then either miss a release entirely or - worse - record a superseded one as
+ * current. Reading every page is the fix; the bound exists so a misbehaving server cannot spin
+ * this loop forever, and reaching it is a refusal rather than a silent partial answer.
+ */
+const RELEASE_PAGE_SIZE = 100;
+const MAX_RELEASE_PAGES = 20;
+
+/**
  * The characters a release tag may contain.
  *
  * A tag is untrusted input: it is chosen by whoever can write to the upstream repository, and
@@ -97,6 +109,30 @@ async function fetchJson(url, { token = "", fetchImpl = fetch, timeoutMs = FETCH
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Every published release, read across all pages.
+ *
+ * Fails closed in both directions: a non-array payload and a full final page both throw, because
+ * either way this process cannot prove it has seen the complete set - and "I did not see it" is
+ * how the recorded state decides a release was never published.
+ */
+export async function listAllReleases({ token = "", fetchImpl = fetch, pageSize = RELEASE_PAGE_SIZE } = {}) {
+  const releases = [];
+  for (let page = 1; page <= MAX_RELEASE_PAGES; page += 1) {
+    const payload = await fetchJson(releasesApiUrl(pageSize, page), { token, fetchImpl });
+    if (!Array.isArray(payload)) {
+      throw new Error("GitHub returned a release list this script could not read");
+    }
+    releases.push(...payload);
+    // A short page is the only proof that there is no next page.
+    if (payload.length < pageSize) return releases;
+  }
+  throw new Error(
+    `GitHub returned at least ${MAX_RELEASE_PAGES * RELEASE_PAGE_SIZE} releases; ` +
+      "the list is not provably complete, so no release can be chosen",
+  );
 }
 
 function publishedTime(release) {
@@ -365,7 +401,7 @@ export async function main(
     log = (...args) => console.log(...args),
     error = (...args) => console.error(...args),
     output = outputWriter(env),
-    listReleases = ({ token }) => fetchJson(releasesApiUrl(100), { token }),
+    listReleases = ({ token }) => listAllReleases({ token }),
     resolveCommit = resolveTagCommit,
     compare = isAncestorOfBranch,
     credentials = loadCredentials,

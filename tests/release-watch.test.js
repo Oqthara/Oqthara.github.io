@@ -15,6 +15,7 @@ import {
   decideSync,
   formatOutputs,
   isAncestorOfBranch,
+  listAllReleases,
   main,
   parseArgs,
   releaseHashOf,
@@ -451,4 +452,109 @@ test("GITHUB_OUTPUT values cannot terminate their block early", () => {
   assert.equal(parsed.changed, "true", "an injected value overwrote a real output");
   assert.equal(parsed.reason, hostile, "a value did not survive the round trip");
   assert.equal(parsed.tag, "v1.0.0");
+});
+
+// --- reading the release list --------------------------------------------------------------
+
+test("every page is read, so a release past the hundredth still counts", async () => {
+  // The defect: one request, `per_page=100`. GitHub returns the hundred newest *by creation*, so
+  // on a repository past that line an older-but-newer-by-publication release was invisible and the
+  // detector would record a superseded release as current - or report no change at all.
+  const pages = [
+    Array.from({ length: 100 }, (_, i) => release({ id: i + 1, tag_name: `v1.0.${i}` })),
+    [release({ id: 999, tag_name: "v2.0.0", published_at: "2027-01-01T00:00:00Z" })],
+  ];
+  const requested = [];
+  const fetchImpl = async (url) => {
+    requested.push(url);
+    const page = Number(new URL(url).searchParams.get("page") ?? 1);
+    return { ok: true, json: async () => pages[page - 1] ?? [] };
+  };
+
+  const releases = await listAllReleases({ fetchImpl });
+  assert.equal(releases.length, 101, "the second page must be included");
+  assert.ok(releases.some((r) => r.tag_name === "v2.0.0"));
+  assert.equal(requested.length, 2, "a full page must be followed by another request");
+
+  const latest = selectLatestRelease(releases);
+  assert.equal(latest.tag_name, "v2.0.0", "publication time decides, not page position");
+});
+
+test("a short page ends the read without an extra request", async () => {
+  const requested = [];
+  const fetchImpl = async (url) => {
+    requested.push(url);
+    return { ok: true, json: async () => [release()] };
+  };
+  assert.equal((await listAllReleases({ fetchImpl })).length, 1);
+  assert.equal(requested.length, 1, "a short page proves there is no next page");
+});
+
+test("an endless list is a refusal, not a partial answer", async () => {
+  // Reaching the bound means the set is not provably complete, and an incomplete set is how the
+  // recorded state concludes a release was never published - which unpublishes mirrored content.
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return { ok: true, json: async () => Array.from({ length: 100 }, () => release()) };
+  };
+  await assert.rejects(() => listAllReleases({ fetchImpl }), /not provably complete/);
+  assert.equal(calls, 20, "the bound must be what stops the loop");
+});
+
+test("a malformed release list is refused", async () => {
+  await assert.rejects(
+    () => listAllReleases({ fetchImpl: async () => ({ ok: true, json: async () => ({ releases: [] }) }) }),
+    /could not read/,
+  );
+});
+
+test("drafts and malformed entries never win, whatever their timestamp", () => {
+  const newest = release({ id: 9, tag_name: "v3.0.0", published_at: "2027-06-01T00:00:00Z" });
+  const chosen = selectLatestRelease([
+    release({ id: 1, published_at: "2026-01-01T00:00:00Z" }),
+    { ...newest, draft: true },
+    { ...newest, id: 10, tag_name: "" },
+    { ...newest, id: 11, published_at: "not a date" },
+    { ...newest, id: 12, tag_name: "v2.5.0" },
+  ]);
+  assert.equal(chosen.tag_name, "v2.5.0", "a draft or an unusable entry must not be selected");
+});
+
+test("the default release reader is the paginated one, not a single request", async () => {
+  // The earlier tests drive `listAllReleases` directly, so they would still pass if `main`
+  // defaulted back to `fetchJson(releasesApiUrl(100))` - which is exactly the defect. Drive the
+  // real default path with a stubbed global fetch and assert the second page is requested.
+  const requests = [];
+  const pages = [
+    Array.from({ length: 100 }, (_, i) => release({ id: i + 1, tag_name: `v1.0.${i}` })),
+    [release({ id: 500, tag_name: "v9.9.9", published_at: "2027-01-01T00:00:00Z" })],
+  ];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    requests.push(String(url));
+    const page = Number(new URL(url).searchParams.get("page") ?? 1);
+    return { ok: true, status: 200, json: async () => pages[page - 1] ?? [] };
+  };
+  try {
+    // `listReleases` is deliberately NOT overridden: the default is the thing under test.
+    const db = fakeDb();
+    const code = await main([], {
+      env: { GITHUB_TOKEN: "test" },
+      log: () => {},
+      error: () => {},
+      output: () => {},
+      resolveCommit: async () => SHA_A,
+      compare: async () => ({ ancestor: true, status: "ahead" }),
+      credentials: fakeCredentials(),
+      openDb: async () => db,
+      now: "2026-11-06T00:00:00.000Z",
+    });
+    assert.equal(code, EXIT.ok);
+    assert.ok(requests.length >= 2, "the run must page past the first response");
+    assert.equal(db.documents.get(STATE_DOC_ID)?.observed?.tag, "v9.9.9",
+      "a release on the second page must be able to become the observed release");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

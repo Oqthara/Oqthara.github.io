@@ -112,6 +112,18 @@ export function treeApiUrl(ref = DEFAULT_REF) {
   return `https://api.github.com/repos/${REPO}/git/trees/${encodeRef(ref)}?recursive=1`;
 }
 
+/**
+ * The commit a branch or tag currently points at.
+ *
+ * `treeApiUrl` accepts a branch name directly, but the `sha` it returns identifies the **tree**
+ * object, not the commit. Those are different hashes for the same content, so storing the tree
+ * sha as a document's provenance records something that does not correspond to any commit: it
+ * cannot be looked up with `git show`, and it will never equal the commit a release points at.
+ */
+export function commitApiUrl(ref = DEFAULT_REF) {
+  return `https://api.github.com/repos/${REPO}/commits/${encodeRef(ref)}`;
+}
+
 /** Published releases, drafts included in the raw response and filtered by the caller. */
 export function releasesApiUrl(perPage = 30, page = 1) {
   const base = `https://api.github.com/repos/${REPO}/releases?per_page=${perPage}`;
