@@ -58,8 +58,8 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          # Node 22, not 24: superstatic (a firebase-tools dependency) declares
-          # "18 || 20 || 22" and warns EBADENGINE on 24. The rest of CI already runs 22.
+          # Node 22 across every workflow. superstatic 10 (a firebase-tools dependency) now
+          # accepts "20 || 22 || 24", so this is consistency rather than a constraint.
           node-version: 22
           cache: npm
 
