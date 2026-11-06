@@ -19,3 +19,13 @@ blob-report/
 # Firestore emulator output
 firebase-debug.log
 firestore-debug.log
+
+# Service account keys. The Firebase console hands these out as
+# `<project>-firebase-adminsdk-xxxxx.json`, and they grant full project access.
+*firebase-adminsdk*.json
+service-account*.json
+*-credentials.json
+.gcloud/
+.env
+.env.local
+.env.*.local

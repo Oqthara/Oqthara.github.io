@@ -224,3 +224,19 @@ describe("third-party code is pinned, not floating", () => {
     }
   });
 });
+
+describe("repository hygiene", () => {
+  // A service-account key is the one accidental commit that would matter most: it grants full
+  // project access, and removing it from history does not un-leak it. The rule is cheap, so it
+  // is pinned rather than trusted to memory.
+  it(".gitignore refuses every service-account key and dotenv file the console produces", async () => {
+    const text = await readFile(new URL(".gitignore", ROOT), "utf8");
+    const rules = new Set(text.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#")));
+
+    for (const pattern of ["*firebase-adminsdk*.json", "service-account*.json", "*-credentials.json", ".env", ".env.local"]) {
+      assert.ok(rules.has(pattern), `.gitignore does not ignore ${pattern}`);
+    }
+    // `.env.example` documents the variables and must stay committable.
+    assert.ok(!rules.has(".env.*"), ".env.example would be ignored");
+  });
+});
