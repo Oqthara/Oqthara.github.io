@@ -4,7 +4,9 @@
 //
 //   1. Nothing initializes or imports the Firebase SDK at module load. The site is prerendered
 //      in Node, and a prerender must never open a socket. Every SDK touch goes through
-//      `sdk()`, which dynamically imports `firebase/app` and `firebase/firestore` on first use.
+//      `sdk()`, which dynamically imports `firebase/firestore` on first use. `firebase/app` is
+//      imported statically by `config.js`, so it lives in the main chunk and must not be
+//      imported dynamically here: Rollup cannot split it a second time and warns.
 //   2. A read never throws into React. `readDocs` / `readDoc` resolve to a typed result, so a
 //      caller can tell "unavailable" (fall back to GitHub) from "permission-denied" (the rules
 //      say no) from "timeout" without parsing an exception message.
@@ -17,6 +19,7 @@ import {
   firebaseConfigStatus,
   getFirebaseApp,
   isBrowserRuntime,
+  readEmulatorHost,
 } from "./config.js";
 
 /** Successful reads are reused for five minutes, matching the GitHub layer. */
@@ -141,13 +144,7 @@ export function __resetCacheForTests() {
 async function sdk() {
   if (testSdk) return testSdk;
   if (!sdkPromise) {
-    sdkPromise = (async () => {
-      const [app, firestore] = await Promise.all([
-        import("firebase/app"),
-        import("firebase/firestore"),
-      ]);
-      return { ...firestore, _getFirebaseApp: app.getApps ? getFirebaseApp : getFirebaseApp };
-    })().catch((error) => {
+    sdkPromise = import("firebase/firestore").catch((error) => {
       sdkPromise = null;
       throw error;
     });
@@ -160,6 +157,10 @@ let dbInstance = null;
 /**
  * The Firestore database singleton. Lazy: the SDK and the app are created on the first read,
  * never at import time, so prerendering in Node touches nothing.
+ *
+ * When `VITE_FIREBASE_EMULATOR_HOST` is set the connection is redirected to that emulator
+ * before the first request. That variable is absent from every production build, so this is a
+ * verification path, not a deployment mode.
  */
 export async function getDb() {
   if (testSdk) return { __fake: true };
@@ -167,7 +168,23 @@ export async function getDb() {
   const module = await sdk();
   const app = getFirebaseApp();
   dbInstance = module.getFirestore(app);
+  redirectToEmulator(module, dbInstance, readEmulatorHost());
   return dbInstance;
+}
+
+/**
+ * Points `db` at an emulator when `host` is a `hostname:port` pair.
+ *
+ * Split out so the redirect is testable without a project or a running emulator. A malformed
+ * value is ignored rather than thrown: a verification build that names a bad emulator should
+ * fail on the request, not on startup.
+ */
+export function redirectToEmulator(module, db, host) {
+  if (!host) return db;
+  const [hostname, port] = String(host).split(":");
+  if (!hostname || !port) return db;
+  module.connectFirestoreEmulator(db, hostname, Number(port));
+  return db;
 }
 
 /** Test seam: forget the database singleton. */
@@ -323,7 +340,14 @@ export async function readDocs(name, buildQuery = null, options = {}) {
   );
 }
 
-/** Reads one document by id. A missing document is `ok` with `data: null`. */
+/**
+ * Reads one document by id. A missing document is `ok` with `data: null`.
+ *
+ * `data` is the document payload, not an `{ id, data }` wrapper: the id is the caller's own
+ * argument, so every repository validates `result.data` directly. Returning the wrapper here
+ * made each validator reject a well-formed record as "missing or empty path", which turned
+ * every single-document read into a silent GitHub fallback.
+ */
 export async function readDoc(name, id, options = {}) {
   const {
     cacheKey = "",
@@ -353,7 +377,7 @@ export async function readDoc(name, id, options = {}) {
           timeoutMs,
         );
         if (!snapshot || snapshot.exists?.() === false) return firestoreOk(null);
-        return firestoreOk(snapshotToPlain(snapshot));
+        return firestoreOk(snapshotToPlain(snapshot).data);
       } catch (error) {
         const typed =
           error?.code === FIRESTORE_ERROR_CODES.timeout ? error : classifyFirestoreError(error);

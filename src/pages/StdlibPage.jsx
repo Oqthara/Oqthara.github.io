@@ -1,6 +1,7 @@
 import { createElement as h } from "react";
 import { hrefFor } from "../components/Layout.jsx";
 import { ChannelBar } from "../components/ChannelSelect.jsx";
+import { SourceNote } from "../components/SourceNote.jsx";
 import { MarkdownWithToc } from "../components/Markdown.jsx";
 import { useChannels, useDocument, resolveChannel } from "../use-docs.js";
 
@@ -20,7 +21,7 @@ function Failure({ error, onRetry, ref }) {
       "div",
       null,
       h("h2", null, "The standard library reference could not be loaded"),
-      h("p", null, error?.message ?? "GitHub could not be reached."),
+      h("p", null, error?.message ?? "Neither the content mirror nor GitHub could be reached."),
       h(
         "div",
         { className: "status-block-actions" },
@@ -34,7 +35,7 @@ function Failure({ error, onRetry, ref }) {
 export function StdlibPage({ query = {} }) {
   const { channels } = useChannels();
   const channel = resolveChannel(channels, query.ref);
-  const { status, data, error, retry } = useDocument(channel.ref, STDLIB_PATH);
+  const { status, data, source, error, retry } = useDocument(channel.ref, STDLIB_PATH);
 
   return h(
     "div",
@@ -57,23 +58,13 @@ export function StdlibPage({ query = {} }) {
       ? h(
           "div",
           { className: "status-block", role: "status", "aria-live": "polite" },
-          h("div", null, h("p", null, "Reading the generated reference from GitHub…"), h("div", { className: "skeleton" })),
+          h("div", null, h("p", null, "Reading the generated reference…"), h("div", { className: "skeleton" })),
         )
       : null,
 
     status === "error" && !data ? h(Failure, { error, onRetry: retry, ref: channel.ref }) : null,
 
-    data
-      ? h(
-          "div",
-          { className: "doc-with-toc" },
-          h(
-            "div",
-            { className: "doc-article" },
-            h(MarkdownWithToc, { markdown: data.markdown, path: STDLIB_PATH, ref: channel.ref }),
-          ),
-        )
-      : null,
+    data ? h(MarkdownWithToc, { markdown: data.markdown, path: STDLIB_PATH, ref: channel.ref }) : null,
 
     error && data
       ? h("p", { className: "stale-note", role: "alert" }, "Showing the last loaded copy. The refresh failed: ", error.message)
@@ -87,6 +78,7 @@ export function StdlibPage({ query = {} }) {
           h("a", { href: data.sourceUrl }, h("code", null, STDLIB_PATH)),
           h("span", null, "at"),
           h("code", null, channel.ref),
+          h(SourceNote, { source }),
           h("a", { href: hrefFor("/docs.html") }, "All documentation"),
         )
       : null,

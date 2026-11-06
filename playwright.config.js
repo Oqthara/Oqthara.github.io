@@ -25,9 +25,11 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "python3 -m http.server 8811 -d _site",
+    command: "node scripts/serve-site-cli.mjs _site 8811",
     url: "http://127.0.0.1:8811/",
-    reuseExistingServer: true,
+    // Never attach to whatever happens to hold the port locally: a plain static server has no
+    // 404.html fallback, so the 404 assertions would be testing the wrong document.
+    reuseExistingServer: false,
     timeout: 30000,
   },
 });

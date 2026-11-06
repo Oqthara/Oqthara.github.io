@@ -5,16 +5,21 @@
   "type": "module",
   "description": "The Oqthara website: a React application prerendered to static HTML.",
   "scripts": {
-    "dev": "vite",
     "build": "npm run build:app",
     "build:app": "vite build && vite build --ssr src/prerender-entry.jsx --outDir .ssr && node prerender.mjs",
+    "dev": "vite",
     "preview": "vite preview",
     "test": "node --test tests/*.test.js",
-    "verify": "node verify.mjs",
+    "test:browser": "playwright test",
     "test:live": "OQ_LIVE_DOCS=1 node --test tests/live.test.js",
-    "test:browser": "playwright test"
+    "test:rules": "npx --yes firebase-tools@13 emulators:exec --only firestore --project oqthara-rules-test \"node scripts/test-firestore-rules.mjs\"",
+    "verify": "node verify.mjs",
+    "screenshots": "node scripts/capture-screenshots.mjs",
+    "audit:visual": "node scripts/audit-visual.mjs",
+    "serve": "node scripts/serve-site-cli.mjs _site 8811"
   },
   "dependencies": {
+    "firebase": "^13.2.0",
     "github-slugger": "2.0.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -29,7 +34,6 @@
   "devDependencies": {
     "@playwright/test": "^1.65.0",
     "@vitejs/plugin-react": "5.2.0",
-    "firebase": "^13.2.0",
     "firebase-admin": "^14.5.0",
     "vite": "8.3.5"
   }

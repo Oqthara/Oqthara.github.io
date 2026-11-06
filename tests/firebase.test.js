@@ -12,8 +12,10 @@ import {
   REQUIRED_FIREBASE_KEYS,
   FirebaseConfigError,
   assertFirebaseConfig,
+  firebaseAppConfig,
   firebaseConfigStatus,
   getFirebaseApp,
+  readEmulatorHost,
   readFirebaseEnv,
   resolveFirebaseConfig,
 } from "../src/firebase/config.js";
@@ -26,6 +28,7 @@ import {
   classifyFirestoreError,
   readDoc,
   readDocs,
+  redirectToEmulator,
 } from "../src/firebase/firestore.js";
 import {
   COLLECTIONS,
@@ -144,6 +147,29 @@ test("the app is never initialized during a Node prerender", () => {
   assert.throws(() => getFirebaseApp(), /prerendering in Node/);
 });
 
+test("the object passed to initializeApp carries the resolved config, not the status", () => {
+  const config = firebaseAppConfig({ VITE_FIREBASE_PROJECT_ID: "preview-project" });
+  assert.equal(config.projectId, "preview-project");
+  assert.equal(config.apiKey, PUBLIC_FIREBASE_CONFIG.apiKey);
+  assert.equal(config.appId, PUBLIC_FIREBASE_CONFIG.appId);
+  assert.equal(config.authDomain, PUBLIC_FIREBASE_CONFIG.authDomain);
+  assert.equal(config.configured, undefined, "a status field must not leak into the SDK config");
+  assert.equal(config.missing, undefined, "a status field must not leak into the SDK config");
+});
+
+test("initializeApp never receives a config without options", () => {
+  // Regression: `getFirebaseApp` used to pass `firebaseConfigStatus()`, which has no `config`
+  // key, so `initializeApp(undefined)` threw `app/no-options` and every read fell back to
+  // GitHub - in production as well as under the emulator.
+  for (const env of [{}, { VITE_FIREBASE_PROJECT_ID: "p" }, { VITE_FIREBASE_DISABLE_DEFAULTS: "1" }]) {
+    const config = env.VITE_FIREBASE_DISABLE_DEFAULTS
+      ? null
+      : firebaseAppConfig(env);
+    if (config) assert.ok(Object.keys(config).length > 0);
+  }
+  assert.throws(() => firebaseAppConfig({ VITE_FIREBASE_DISABLE_DEFAULTS: "1" }), /Missing required key/);
+});
+
 // ---------------------------------------------------------------------------
 // Typed errors
 // ---------------------------------------------------------------------------
@@ -247,6 +273,26 @@ test("a failure is not cached, so the next read retries", async () => {
 
 test("the cache TTL is the documented five minutes", () => {
   assert.equal(CACHE_TTL_MS, 5 * 60 * 1000);
+});
+
+test("readDoc resolves to the document payload, not an id/data wrapper", async () => {
+  // Regression: `readDoc` used to resolve to `{ id, data }`. Every repository passed
+  // `result.data` into a validator that expects the payload, so a valid record was rejected as
+  // "missing or empty path" and every single-document page silently fell back to GitHub.
+  __resetCacheForTests();
+  __resetDbForTests();
+  const payload = { path: "docs/spec/language.md", title: "Reference", published: true };
+  const fake = fakeSdk({
+    getDoc: async (ref) => ({ id: ref.id, exists: () => true, data: () => payload }),
+  });
+  __setFirestoreForTests(fake.module);
+
+  const result = await readDoc(COLLECTIONS.documentation, docIdFor("docs/spec/language.md"));
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, payload);
+  assert.equal(result.data.path, "docs/spec/language.md");
+  __setFirestoreForTests(null);
+  __resetCacheForTests();
 });
 
 // ---------------------------------------------------------------------------
@@ -628,4 +674,30 @@ test("a write run without a credential exits 2 and says why", async () => {
   });
   assert.equal(code, 2);
   assert.match(lines.join("\n"), /No Admin credential/);
+});
+
+// ---------------------------------------------------------------------------
+// Emulator redirect
+// ---------------------------------------------------------------------------
+
+test("readEmulatorHost accepts host:port and ignores anything else", () => {
+  assert.equal(readEmulatorHost({ VITE_FIREBASE_EMULATOR_HOST: "127.0.0.1:8080" }), "127.0.0.1:8080");
+  assert.equal(readEmulatorHost({ VITE_FIREBASE_EMULATOR_HOST: "  127.0.0.1:8080  " }), "127.0.0.1:8080");
+  assert.equal(readEmulatorHost({ VITE_FIREBASE_EMULATOR_HOST: "" }), null);
+  assert.equal(readEmulatorHost({}), null);
+  assert.equal(readEmulatorHost(undefined), null);
+});
+
+test("redirectToEmulator connects only for a well-formed host", () => {
+  const calls = [];
+  const module = { connectFirestoreEmulator: (db, host, port) => calls.push([db, host, port]) };
+  const db = { name: "db" };
+
+  assert.equal(redirectToEmulator(module, db, null), db);
+  assert.equal(redirectToEmulator(module, db, "127.0.0.1"), db);
+  assert.equal(redirectToEmulator(module, db, ":8080"), db);
+  assert.deepEqual(calls, []);
+
+  assert.equal(redirectToEmulator(module, db, "127.0.0.1:8080"), db);
+  assert.deepEqual(calls, [[db, "127.0.0.1", 8080]]);
 });

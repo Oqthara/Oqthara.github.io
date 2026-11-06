@@ -1,5 +1,4 @@
 import { test, expect } from "@playwright/test";
-import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 // Browser tests against the real built site and the real Oqthara repository.
@@ -12,8 +11,6 @@ const DOC = (path, ref = "main") =>
   `/document.html?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`;
 const EXAMPLE = (path, ref = "main") =>
   `/example.html?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`;
-
-const built404 = readFileSync(new URL("../_site/404.html", import.meta.url), "utf8");
 
 /**
  * An optional credential for GitHub's API. The site fetches api.github.com unauthenticated,
@@ -44,14 +41,6 @@ test.beforeEach(async ({ page }) => {
     return route.continue({ headers });
   });
 });
-
-/** The local Python server has no custom 404 handler, so serve the built 404 page for
- *  unknown paths exactly as GitHub Pages does. The page itself is the shipped artifact. */
-async function serveBuilt404(page, pattern) {
-  await page.route(pattern, (route) =>
-    route.fulfill({ status: 404, contentType: "text/html; charset=utf-8", body: built404 }),
-  );
-}
 
 /** The prose container. A document page nests `.doc-with-toc > .doc-article > .doc`, so the
  *  inner `.doc` is the element that actually holds the rendered Markdown. */
@@ -250,10 +239,15 @@ test.describe("site", () => {
     expect(hrefs.some((href) => href.includes("/document.html"))).toBe(true);
   });
 
-  test("18. unknown routes render NotFound", async ({ page }) => {
-    await serveBuilt404(page, "**/this-does-not-exist.html");
-    await page.goto("/this-does-not-exist.html");
+  test("18. unknown routes serve the built 404 page with a 404 status", async ({ page }) => {
+    // GitHub Pages answers unknown paths with 404.html, so the response status and the page
+    // body must both be the real ones — not a fallback injected by the test.
+    const response = await page.goto("/this-does-not-exist.html");
+    expect(response.status()).toBe(404);
     await expect(page.locator("main h1").first()).toHaveText(/does not exist|not found/i);
+    await expect(page.locator("main")).toBeVisible();
+    await expect(page.locator("footer")).toBeVisible();
+    await expect(page).toHaveTitle(/Oqthara/);
   });
 
   test("19. a valid documentation URL never renders NotFound", async ({ page }) => {
@@ -345,7 +339,6 @@ test.describe("site", () => {
   });
 
   test("24. legacy document URLs redirect to the canonical route", async ({ page }) => {
-    await serveBuilt404(page, "**/docs/spec/language.html");
     await page.goto("/docs/spec/language.html");
     await expect(page).toHaveURL(/\/document\.html\?path=docs%2Fspec%2Flanguage\.md/);
     await waitForArticle(page);

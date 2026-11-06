@@ -1,6 +1,7 @@
 import { createElement as h } from "react";
 import { hrefFor, PageHead } from "../components/Layout.jsx";
 import { ChannelBar } from "../components/ChannelSelect.jsx";
+import { SourceNote } from "../components/SourceNote.jsx";
 import { useChannels, useExamples, resolveChannel } from "../use-docs.js";
 import { DEFAULT_REF, treeUrl } from "../source.js";
 
@@ -18,7 +19,7 @@ function Failure({ error, onRetry, ref }) {
       "div",
       null,
       h("h2", null, "Could not load the examples"),
-      h("p", null, error?.message ?? "GitHub could not be reached."),
+      h("p", null, error?.message ?? "Neither the content mirror nor GitHub could be reached."),
       h(
         "div",
         { className: "status-block-actions" },
@@ -43,7 +44,7 @@ export function groupExamples(examples) {
 export function ExamplesPage({ query = {} }) {
   const { channels } = useChannels();
   const channel = resolveChannel(channels, query.ref);
-  const { status, data, error, retry } = useExamples(channel.ref);
+  const { status, data, source, error, retry } = useExamples(channel.ref);
   const groups = data ? groupExamples(data) : [];
 
   return h(
@@ -61,7 +62,7 @@ export function ExamplesPage({ query = {} }) {
       ? h(
           "div",
           { className: "status-block", role: "status", "aria-live": "polite" },
-          h("div", null, h("p", null, "Discovering examples from GitHub…"), h("div", { className: "skeleton" })),
+          h("div", null, h("p", null, "Discovering examples…"), h("div", { className: "skeleton" })),
         )
       : null,
 
@@ -107,6 +108,7 @@ export function ExamplesPage({ query = {} }) {
       h("a", { href: hrefFor("/docs.html") }, "Documentation"),
       h("a", { href: hrefFor("/tour.html") }, "Guided tour"),
       h("a", { href: treeUrl("examples", channel.ref === DEFAULT_REF ? "main" : channel.ref) }, "Browse on GitHub"),
+      h(SourceNote, { source }),
     ),
   );
 }

@@ -2,6 +2,7 @@ import { createElement as h } from "react";
 import { hrefFor } from "../components/Layout.jsx";
 import { ChannelBar } from "../components/ChannelSelect.jsx";
 import { MarkdownWithToc } from "../components/Markdown.jsx";
+import { SourceNote } from "../components/SourceNote.jsx";
 import { useCatalog, useChannels, useDocument, resolveChannel } from "../use-docs.js";
 import { DEFAULT_REF, docsIndexUrl, isDocumentPath, sectionForPath, sectionTitle } from "../source.js";
 import { groupDocuments } from "../lib/sections.js";
@@ -61,7 +62,7 @@ function Loading({ path }) {
   return h(
     "div",
     { className: "status-block", role: "status", "aria-live": "polite" },
-    h("div", null, h("p", null, "Loading ", h("code", null, path), " from GitHub…"), h("div", { className: "skeleton" })),
+    h("div", null, h("p", null, "Loading ", h("code", null, path), "…"), h("div", { className: "skeleton" })),
   );
 }
 
@@ -73,7 +74,7 @@ function Failure({ error, path, onRetry, ref }) {
       "div",
       null,
       h("h2", null, "This document could not be loaded"),
-      h("p", null, error?.message ?? "GitHub could not be reached."),
+      h("p", null, error?.message ?? "Neither the content mirror nor GitHub could be reached."),
       h("p", { className: "meta-row" }, h("code", null, path)),
       h(
         "div",
@@ -186,6 +187,7 @@ export function DocumentPage({ query }) {
               h("a", { href: document.data.sourceUrl }, h("code", null, document.data.path)),
               h("span", null, "at"),
               h("code", null, channel.ref),
+              h(SourceNote, { source: document.source }),
               h("a", { href: document.data.sourceUrl.replace("/blob/", "/raw/") }, "raw"),
             )
           : null,

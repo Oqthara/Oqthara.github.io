@@ -5,17 +5,27 @@
 // `artifacts/visual-audit/`. Every file it produces is a real browser screenshot: nothing is
 // mocked, stubbed or drawn.
 //
+//   npm run build
 //   node scripts/capture-screenshots.mjs
 //
-// Run `npm run build` and start the Pages-like server first (see README).
+// The script starts its own Pages-like server on a free port. Set OQ_AUDIT_BASE to drive a
+// server you started yourself instead.
 
 import { chromium } from "playwright";
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { serveSite } from "./lib/serve-site.mjs";
 
-const BASE = process.env.OQ_AUDIT_BASE || "http://127.0.0.1:8899";
+const here = dirname(fileURLToPath(import.meta.url));
+const siteDir = join(here, "..", "_site");
+
+// The not-found screenshot is only valid if the server answers unknown paths with the site's
+// own 404.html, so the default is a server that does exactly that.
+const externalBase = process.env.OQ_AUDIT_BASE;
+const site = externalBase ? null : await serveSite({ siteDir });
+const BASE = externalBase || site.origin;
 
 /**
  * An optional GitHub token, used only by this audit script.
@@ -36,7 +46,6 @@ function githubToken() {
 }
 
 const TOKEN = githubToken();
-const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, "..", "artifacts", "visual-audit");
 
 const DESKTOP = { width: 1440, height: 1000 };
@@ -85,12 +94,36 @@ const SHOTS = [
   { file: "example-desktop.png", route: "/example.html?path=examples%2Fanagrams.oq&ref=main", viewport: DESKTOP },
 ];
 
+/**
+ * The Firestore-backed capture, appended only when the build under test was pointed at the
+ * emulator (`scripts/seed-emulator.mjs` + `VITE_FIREBASE_EMULATOR_HOST`).
+ *
+ * It is opt-in because the ordinary build has no emulator to read from: asking for
+ * `[data-source="firestore"]` there would wait forever and fail a run that is otherwise green.
+ * The `ready` selector is the proof itself — the screenshot only exists when a page rendered
+ * content whose provenance the app reports as Cloud Firestore.
+ */
+if (process.env.OQ_AUDIT_FIREBASE === "1") {
+  SHOTS.push({
+    file: "firebase-content-loaded.png",
+    route: doc("docs/spec/language.md"),
+    viewport: DESKTOP,
+    ready: '[data-source="firestore"]',
+  });
+}
+
 mkdirSync(out, { recursive: true });
+
+// `OQ_AUDIT_ONLY` limits a run to the shots whose filename contains the value. It exists so the
+// Firebase capture, which needs a special build, can be produced on its own without overwriting
+// the ordinary screenshots with output from that build.
+const ONLY = (process.env.OQ_AUDIT_ONLY || "").trim();
+const selected = ONLY ? SHOTS.filter((shot) => shot.file.includes(ONLY)) : SHOTS;
 
 const browser = await chromium.launch();
 let failures = 0;
 
-for (const shot of SHOTS) {
+for (const shot of selected) {
   const context = await browser.newContext({
     viewport: shot.viewport,
     deviceScaleFactor: 2,
@@ -113,7 +146,10 @@ for (const shot of SHOTS) {
   });
 
   try {
-    const response = await page.goto(BASE + shot.route, { waitUntil: "networkidle", timeout: 60000 });
+    const response = await page.goto(BASE + shot.route, { waitUntil: "domcontentloaded", timeout: 60000 });
+    // A Firestore build holds a permanent listen channel, so "networkidle" never fires there.
+    // Settling is best effort: the page-specific `ready` selector below is the real gate.
+    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
     // 404.html is served with status 404 on purpose; that page is a valid capture.
     const expected = shot.route === "/no-such-page.html" ? 404 : 200;
     if (response && response.status() !== expected) {
@@ -153,9 +189,10 @@ for (const shot of SHOTS) {
 }
 
 await browser.close();
+if (site) await site.close();
 
 if (failures) {
   console.error(`${failures} screenshot(s) failed`);
   process.exit(1);
 }
-console.log(`captured ${SHOTS.length} screenshots into ${out}`);
+console.log(`captured ${selected.length} screenshots into ${out}`);

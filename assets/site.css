@@ -1338,6 +1338,11 @@ input:focus-visible {
 }
 
 .toc a {
+  /* A table-of-contents entry is a tap target on phones, so it needs a full 24px row
+     rather than the 16px line box the text alone produces. */
+  display: block;
+  min-height: 24px;
+  padding-block: 2px;
   color: var(--fg-muted);
   text-decoration: none;
 }

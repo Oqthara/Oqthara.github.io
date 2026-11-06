@@ -15,18 +15,17 @@
 // `gh auth token` succeeds) the token is attached to api.github.com and
 // raw.githubusercontent.com requests at the browser level. It is never written to disk.
 
-import { createReadStream, existsSync, mkdirSync } from "node:fs";
-import { stat } from "node:fs/promises";
-import { createServer } from "node:http";
-import { extname, join, normalize, resolve } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { chromium } from "playwright";
+import { serveSite } from "./lib/serve-site.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SITE = join(ROOT, "_site");
 const OUT = join(ROOT, "artifacts", "visual-audit");
-const PORT = 8878;
-const ORIGIN = `http://127.0.0.1:${PORT}`;
+// The Pages-like server picks a free port, so parallel audit runs never collide.
+let ORIGIN = "";
 
 const ROUTES = [
   { path: "/", name: "home" },
@@ -63,44 +62,6 @@ const SHOTS = [
   { route: "/no-such-page", viewport: 1440, file: "not-found-desktop.png" },
   { route: "/tour.html", viewport: 1440, file: "tour-desktop.png" },
 ];
-
-const TYPES = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".ico": "image/x-icon",
-  ".woff2": "font/woff2",
-  ".txt": "text/plain; charset=utf-8",
-};
-
-/** A static file server that behaves like GitHub Pages, including its 404.html fallback. */
-function serveSite() {
-  const server = createServer(async (req, res) => {
-    const url = new URL(req.url, ORIGIN);
-    let pathname = decodeURIComponent(url.pathname);
-    if (pathname.endsWith("/")) pathname += "index.html";
-    const file = join(SITE, normalize(pathname));
-    if (!file.startsWith(SITE)) {
-      res.writeHead(403).end("Forbidden");
-      return;
-    }
-    try {
-      const info = await stat(file);
-      if (!info.isFile()) throw new Error("not a file");
-      res.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream" });
-      createReadStream(file).pipe(res);
-    } catch {
-      const fallback = join(SITE, "404.html");
-      res.writeHead(404, { "content-type": TYPES[".html"] });
-      createReadStream(fallback).pipe(res);
-    }
-  });
-  return new Promise((done) => server.listen(PORT, "127.0.0.1", () => done(server)));
-}
 
 /** The GitHub token, from the environment or the authenticated gh CLI. Never persisted. */
 function githubToken() {
@@ -203,7 +164,8 @@ async function run() {
   const token = githubToken();
   if (!token) console.warn("! GH_TOKEN not set and gh is not authenticated: GitHub routes may hit the rate limit.");
 
-  const server = await serveSite();
+  const server = await serveSite({ siteDir: SITE });
+  ORIGIN = server.origin;
   const browser = await chromium.launch();
   const results = [];
   const failures = [];
@@ -309,7 +271,7 @@ async function run() {
   }
 
   await browser.close();
-  server.close();
+  await server.close();
 
   // ---------------------------------------------------------------- report
 

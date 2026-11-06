@@ -1,7 +1,7 @@
 // The Markdown pipeline shared by every page that displays repository text.
 //
 // `react-markdown` renders to React elements, so the site never assembles an HTML string
-// from untrusted input and `dangerouslySetInnerHTML` is not needed anywhere. The plugin
+// from untrusted input and no raw-HTML injection point is needed. The plugin
 // order matters: `rehype-raw` parses embedded HTML first, then `rehype-sanitize` removes
 // everything not on the allowlist, then `rehype-slug` adds stable heading ids.
 

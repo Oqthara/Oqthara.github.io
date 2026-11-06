@@ -121,6 +121,26 @@ function article(page) {
   return page.locator(".doc-article .doc").first();
 }
 
+/**
+ * Backdates every persisted content entry so the next read counts as stale.
+ *
+ * The cache serves a fresh entry without revalidating it, which is what stops a reading session
+ * from burning the unauthenticated quota. A test about stale-content behaviour has to start
+ * from an aged entry, otherwise the refresh it expects never happens. The age is past the
+ * five-minute freshness window but inside the thirty-minute persistence window, so the entry is
+ * still restored and then revalidated.
+ */
+async function agePersistedCache(page) {
+  await page.evaluate(() => {
+    const aged = Date.now() - 10 * 60 * 1000;
+    for (const key of Object.keys(window.sessionStorage)) {
+      if (!key.startsWith("oq-cache:")) continue;
+      const entry = JSON.parse(window.sessionStorage.getItem(key));
+      window.sessionStorage.setItem(key, JSON.stringify({ ...entry, at: aged }));
+    }
+  });
+}
+
 test.describe("mocked GitHub discovery", () => {
   test("a brand-new directory becomes a section without a site change", async ({ page }) => {
     await mockGithub(page);
@@ -135,6 +155,16 @@ test.describe("mocked GitHub discovery", () => {
     await expect(article(page)).toContainText("This body came from a mocked raw file.");
     // The document heading is an h2: the page owns the only h1.
     await expect(article(page).locator("h2").first()).toHaveText(/Brand new guide/i);
+  });
+
+  test("a document states where its content came from", async ({ page }) => {
+    await mockGithub(page);
+    await page.goto(DOC("docs/guides/new.md"));
+    await expect(article(page)).toBeVisible();
+    // The provenance badge renders from the same state the page reads. With Firestore
+    // unavailable this build falls back to GitHub, and the badge has to say so rather than
+    // leaving a reader to guess which backend answered.
+    await expect(page.locator('.content-source[data-source="github"]')).toBeVisible();
   });
 
   test("releases hide drafts, include prereleases and stable, newest first", async ({ page }) => {
@@ -206,12 +236,16 @@ test.describe("mocked GitHub discovery", () => {
 
   // A document already read is kept in sessionStorage, so a reload after the source starts
   // failing still renders the saved text and says the refresh failed.
+  //
+  // The saved entry is aged past `CACHE_TTL_MS` first: a fresh entry is served without any
+  // request at all, so there would be nothing to fail and no note to render.
   test("a cached document stays visible when a later refresh fails", async ({ page }) => {
     const state = {};
     await mockGithub(page, state);
     await page.goto(DOC("docs/guides/new.md"));
     await expect(article(page)).toContainText("This body came from a mocked raw file.");
 
+    await agePersistedCache(page);
     state.settings.rawStatus = 500;
     await page.reload();
     await expect(article(page)).toContainText("This body came from a mocked raw file.");

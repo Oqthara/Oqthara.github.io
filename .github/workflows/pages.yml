@@ -33,6 +33,9 @@ jobs:
       - name: Unit and integration tests
         run: npm test
 
+      - name: Firestore security rules
+        run: npm run test:rules
+
       - name: Build
         run: npm run build
 

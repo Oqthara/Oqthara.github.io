@@ -39,6 +39,20 @@ export const FIREBASE_ENV_KEYS = Object.freeze({
   measurementId: "VITE_FIREBASE_MEASUREMENT_ID",
 });
 
+/**
+ * Variable that points the SDK at the local Firestore emulator, e.g. `127.0.0.1:8080`.
+ *
+ * This exists so the read path and the security rules can be proven end to end in a real
+ * browser without touching the production project or holding an administrative credential.
+ * It is empty in every normal build: when unset nothing connects anywhere new.
+ */
+export const FIREBASE_EMULATOR_ENV_KEY = "VITE_FIREBASE_EMULATOR_HOST";
+
+/** The emulator `host:port` from an env object, or `null` when it is unset or empty. */
+export function readEmulatorHost(env = import.meta.env ?? {}) {
+  return nonEmpty(env?.[FIREBASE_EMULATOR_ENV_KEY]) || null;
+}
+
 /** A configuration failure the caller can explain without leaking values. */
 export class FirebaseConfigError extends Error {
   constructor(message, { missing = [] } = {}) {
@@ -123,6 +137,19 @@ export function firebaseConfigStatus(env = import.meta.env ?? {}, options = {}) 
   });
 }
 
+/**
+ * The exact object handed to `initializeApp`.
+ *
+ * Kept separate from `firebaseConfigStatus()` because the status is a diagnostic shape
+ * (which keys are missing, which project) while this is the full config. Passing the status
+ * to `initializeApp` yields `app/no-options` at runtime, which fails every read.
+ */
+export function firebaseAppConfig(env = import.meta.env ?? {}, options = {}) {
+  const resolved = resolveFirebaseConfig(env, options);
+  assertFirebaseConfig(resolved);
+  return resolved.config;
+}
+
 /** Throws a descriptive error listing the missing keys. No credential values are printed. */
 export function assertFirebaseConfig(status) {
   if (status?.configured) return status;
@@ -158,7 +185,7 @@ export function getFirebaseApp() {
   assertFirebaseConfig(status);
 
   const existing = getApps()[0];
-  appInstance = existing ?? initializeApp(status.config);
+  appInstance = existing ?? initializeApp(firebaseAppConfig());
   return appInstance;
 }
 

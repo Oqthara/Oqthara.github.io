@@ -44,10 +44,24 @@ export const OQ_KEYWORDS = [
 /** Range operators, which read as words but are not keywords. */
 export const OQ_RANGE_OPERATORS = ["to", "until"];
 
-/** Built-in functions are highlighted like calls, but are not keywords. */
+/**
+ * Built-in functions that are always called with parentheses.
+ *
+ * Taken from the generated standard library reference (`docs/stdlib/reference.md`, produced by
+ * `oq doc` from the implementation), not from memory. Methods such as `.upper()` are not listed:
+ * `upper` is not a global function, and colouring it as one would be a lie.
+ */
 export const OQ_BUILTINS = [
-  "abs", "ceil", "clamp", "floor", "max", "min", "pow", "random", "round", "sqrt",
-  "sum", "len", "type", "str", "num",
+  "abs", "append", "args", "assert", "await", "ceil", "clamp", "clone", "contains",
+  "cpu_count", "cwd", "datetime", "delete", "done", "env", "error", "exists", "exit",
+  "file_size", "filter", "floor", "format", "http_get", "http_post", "input", "is_nothing",
+  "is_number", "is_text", "join", "json", "json_parse", "json_pretty", "json_write", "keys",
+  "length", "list", "list_files", "lower", "make_dir", "map", "matches", "max", "memory_mb",
+  "min", "now", "number", "par_map", "path_join", "path_name", "path_parent", "pop", "pow",
+  "random", "random_item", "range", "range_list", "read", "read_lines", "regex", "replace",
+  "repr", "reverse", "round", "run_command", "save", "set", "sleep", "sort", "sort_by",
+  "spawn", "split", "sqrt", "sum", "text", "timestamp", "today", "trim", "type_of", "unique",
+  "upper", "values", "write", "write_text", "zip",
 ];
 
 /**
@@ -62,7 +76,17 @@ export const OQ_STATEMENT_BUILTINS = ["print", "input"];
 const LITERALS = ["true", "false", "nothing"];
 const KEYWORD = new RegExp(`\\b(?:${OQ_KEYWORDS.join("|")})\\b`);
 const LITERAL = new RegExp(`\\b(?:${LITERALS.join("|")})\\b`);
-const RANGE_OPERATOR = new RegExp(`\\b(?:${OQ_RANGE_OPERATORS.join("|")})\\b`);
+// `to` and `until` are contextual, so they are operators only between two expressions on the
+// same line. `fun count(from, until)` keeps `until` as a parameter name, and the second
+// `until` in `for n in from until until` stays a variable while the first is the operator.
+//
+// The left operand is captured instead of asserted with a lookbehind. Prism slices the source
+// before it matches an `inside` grammar, so a JavaScript lookbehind looks at the slice's own
+// start, not at the code before it, and silently never matches. Prism's `lookbehind: true`
+// drops the captured whitespace from the token, which is the mechanism that survives slicing.
+const RANGE_OPERATOR = new RegExp(
+  `(\\s+)(?:${OQ_RANGE_OPERATORS.join("|")})(?=[ \\t]+[-\\w(\\["'])`,
+);
 const BUILTIN = new RegExp(`\\b(?:${OQ_BUILTINS.join("|")})\\b(?=\\s*\\()`);
 const STATEMENT_BUILTIN = new RegExp(`\\b(?:${OQ_STATEMENT_BUILTINS.join("|")})\\b`);
 
@@ -79,20 +103,35 @@ export function oqtharaGrammar(Prism) {
       greedy: true,
     },
 
-    // `"..."` and `'...'` with escapes. The `interpolation` inside is handled below.
+    // Triple-quoted multi-line text, then `"..."` and `'...'` with escapes. The multi-line
+    // form must come first: the single-quote alternative would otherwise match the first two
+    // quotes and leave the body uncoloured. `interpolation` inside is handled below.
     string: {
-      pattern: /"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/,
+      pattern: /"""[\s\S]*?"""|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/,
       greedy: true,
       inside: {
+        // `{{` and `}}` are literal braces and must be consumed before `interpolation`, or
+        // `"{{like this}}"` would colour `{like this}` as an expression.
+        "escaped-brace": {
+          pattern: /\{\{|\}\}/,
+        },
         interpolation: {
-          // `{expression}` is interpolated; `{{` is a literal brace.
-          pattern: /\{(?!\{)[^{}]*\}/,
+          // `{expression}` is interpolated. The lexer only treats a brace as interpolation
+          // when its contents parse as an expression, and it explicitly rejects a `:` (JSON
+          // or map-like text), so a colon-bearing brace stays plain.
+          pattern: /\{(?!\{)(?![^{}]*:)[^{}]*\}/,
           inside: {
             punctuation: /\{|\}/,
             keyword: KEYWORD,
             boolean: LITERAL,
             number: /\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/,
-            operator: /[+\-*/%<>=!]+/,
+            "range-operator": {
+              pattern: RANGE_OPERATOR,
+              lookbehind: true,
+              greedy: true,
+              alias: "operator",
+            },
+            operator: /\*\*|->|[-+*/%=<>!|]=?/,
             "function-call": { pattern: /[a-zA-Z_]\w*(?=\s*\()/, greedy: true },
             variable: /\b[a-zA-Z_]\w*\b/,
           },
@@ -138,6 +177,11 @@ export function oqtharaGrammar(Prism) {
 
     "range-operator": {
       pattern: RANGE_OPERATOR,
+      // `greedy` is required with `lookbehind`: without it Prism matches against the current
+      // string node only, which is already split around the operands, so the captured
+      // whitespace and the operator end up in different nodes and the pattern never fires.
+      lookbehind: true,
+      greedy: true,
       alias: "operator",
     },
 
@@ -154,7 +198,8 @@ export function oqtharaGrammar(Prism) {
 
     variable: /\b[a-zA-Z_]\w*\b/,
 
-    operator: /[-+*/%=<>!]=?|\*\*|->|\.\./,
+    // Longest first, or `**` is read as two `*` tokens and `->` as `-` then `>`.
+    operator: /\*\*|->|\.\.|[-+*/%=<>!|]=?/,
     punctuation: /[{}[\];,.:()]/,
   };
 }

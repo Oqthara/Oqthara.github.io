@@ -1,6 +1,7 @@
 import { createElement as h } from "react";
 import { hrefFor, PageHead } from "../components/Layout.jsx";
 import { ChannelBar } from "../components/ChannelSelect.jsx";
+import { SourceNote } from "../components/SourceNote.jsx";
 import { useCatalog, useChannels, resolveChannel } from "../use-docs.js";
 import { DEFAULT_REF, docsIndexUrl } from "../source.js";
 import { groupDocuments } from "../lib/sections.js";
@@ -18,7 +19,7 @@ function Loading({ what }) {
   return h(
     "div",
     { className: "status-block", role: "status", "aria-live": "polite" },
-    h("div", null, h("p", null, `Discovering ${what} from GitHub…`), h("div", { className: "skeleton" })),
+    h("div", null, h("p", null, `Discovering ${what}…`), h("div", { className: "skeleton" })),
   );
 }
 
@@ -30,7 +31,7 @@ function Failure({ error, what, onRetry, ref }) {
       "div",
       null,
       h("h2", null, `Could not load ${what}`),
-      h("p", null, error?.message ?? "GitHub could not be reached."),
+      h("p", null, error?.message ?? "Neither the content mirror nor GitHub could be reached."),
       h(
         "div",
         { className: "status-block-actions" },
@@ -75,7 +76,7 @@ function DocumentIndex({ docs }) {
 export function DocsPage({ query = {} }) {
   const { channels, status: channelStatus } = useChannels();
   const channel = resolveChannel(channels, query.ref);
-  const { status, data, error, retry } = useCatalog(channel.ref);
+  const { status, data, source, error, retry } = useCatalog(channel.ref);
 
   return h(
     "div",
@@ -123,6 +124,7 @@ export function DocsPage({ query = {} }) {
       h("a", { href: hrefFor("/status.html") }, "Backend status"),
       h("a", { href: hrefFor("/changelog.html") }, "Changelog"),
       h("code", null, channel.ref === DEFAULT_REF ? "main" : channel.ref),
+      h(SourceNote, { source }),
     ),
   );
 }

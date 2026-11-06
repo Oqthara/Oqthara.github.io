@@ -1,8 +1,12 @@
-// React data hooks for every piece of GitHub-backed content.
+// React data hooks for every piece of content the site reads.
 //
-// One hook, one request shape. Nothing fetches during server rendering: the prerenderer emits
-// a loading shell, the browser hydrates exactly that shell, and an effect then asks GitHub for
-// content. That is what keeps hydration deterministic.
+// One hook, one request shape. Each hook answers `{ status, data, source, error, retry }`, where
+// `source` is `firestore` (the content mirror), `cache` (a TTL-cached mirror read) or `github`
+// (the fallback), so a page can report which backend answered.
+//
+// Nothing fetches during server rendering: the prerenderer emits a loading shell, the browser
+// hydrates exactly that shell, and an effect then asks for content. That is what keeps
+// hydration deterministic.
 //
 // Two rules are enforced here rather than in each page:
 //
@@ -27,28 +31,33 @@ import {
 } from "./services/content.service.js";
 
 /**
- * Unwraps a service result into the value the hooks return.
+ * Unwraps a service result into the pair the hooks keep: the value and where it came from.
  *
  * The service never throws; it answers `{ data, source, stale, error }` because a page needs to
- * know whether it is reading the mirror or the fallback. The hooks predate that and return the
- * value itself, so the boundary is here: keep the value, and rethrow only when there is nothing
- * to show, which is what puts a page into its error state. Content that arrived is never
- * discarded because a later refresh failed.
+ * know whether it is reading the mirror or the fallback. `source` is `firestore`, `cache` or
+ * `github`, and pages render it so a reader can tell a mirrored page from a fallback one.
+ *
+ * Rethrow only when there is nothing to show, which is what puts a page into its error state.
+ * Content that arrived is never discarded because a later refresh failed.
  */
 function unwrap(result) {
-  if (result && result.data !== null && result.data !== undefined) return result.data;
+  const source = result?.source ?? null;
+  if (result && result.data !== null && result.data !== undefined) return { data: result.data, source };
   if (result?.error) throw result.error;
-  return result?.data ?? null;
+  return { data: result?.data ?? null, source };
 }
 
 /**
  * Runs `load` when a dependency changes, keeping the previous value across reloads.
  *
+ * `load` resolves to `{ data, source }`; `source` is carried alongside the value so a page can
+ * report which backend answered.
+ *
  * `status` is `loading` only when there is nothing to show yet; a background refresh leaves it
  * `ready` and sets `refreshing`, which is what lets a page keep its content on screen.
  */
 function useAsync(load, deps) {
-  const [state, setState] = useState({ status: "loading", data: null, error: null, refreshing: false });
+  const [state, setState] = useState({ status: "loading", data: null, source: null, error: null, refreshing: false });
   const [nonce, setNonce] = useState(0);
   const retry = useCallback(() => setNonce((value) => value + 1), []);
 
@@ -67,12 +76,13 @@ function useAsync(load, deps) {
     setState((previous) => ({
       status: previous.data ? "ready" : "loading",
       data: previous.data,
+      source: previous.source,
       error: null,
       refreshing: Boolean(previous.data),
     }));
     load().then(
-      (data) => {
-        if (live) setState({ status: "ready", data, error: null, refreshing: false });
+      (answer) => {
+        if (live) setState({ status: "ready", data: answer?.data ?? null, source: answer?.source ?? null, error: null, refreshing: false });
       },
       (error) => {
         if (!live) return;
@@ -80,6 +90,7 @@ function useAsync(load, deps) {
           // Content already on screen is still shown; only the absence of content is a failure.
           status: previous.data ? "ready" : "error",
           data: previous.data,
+          source: previous.source,
           error,
           refreshing: false,
         }));
@@ -104,9 +115,9 @@ function useAsync(load, deps) {
  * selector, and `error` lets the header say the release list is unavailable.
  */
 export function useChannels() {
-  const { status, data, error, retry } = useAsync(() => getReleases().then(unwrap), []);
+  const { status, data, source, error, retry } = useAsync(() => getReleases().then(unwrap), []);
   const channels = data ?? [];
-  return { status, channels, error, retry };
+  return { status, channels, source, error, retry };
 }
 
 /** Resolves a `ref` from the URL against the live channel list. */
@@ -146,5 +157,5 @@ export function useChangelog(ref = DEFAULT_REF) {
 
 /** Any repository text file for a ref (used by status and philosophy). */
 export function useText(ref, path) {
-  return useAsync(() => loadText(ref, path), [ref, path]);
+  return useAsync(() => loadText(ref, path).then((text) => ({ data: text, source: "github" })), [ref, path]);
 }

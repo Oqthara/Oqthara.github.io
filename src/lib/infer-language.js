@@ -9,7 +9,7 @@
 // labelled when its content plainly matches, and an ambiguous block stays unlabelled so it is
 // rendered as plain text instead of being coloured with the wrong grammar.
 
-import { OQ_KEYWORDS, OQ_BUILTINS } from "./oqthara-grammar.js";
+import { OQ_KEYWORDS, OQ_BUILTINS, OQ_STATEMENT_BUILTINS } from "./oqthara-grammar.js";
 
 const SHELL_COMMANDS = [
   "java", "javap", "javac", "jar", "gradle", "gradlew", "npm", "npx", "node", "python", "python3",
@@ -19,7 +19,7 @@ const SHELL_COMMANDS = [
 
 const KEYWORDS = new Set(OQ_KEYWORDS);
 const LITERALS = new Set(["true", "false", "nothing"]);
-const BUILTINS = new Set(OQ_BUILTINS);
+const BUILTINS = new Set([...OQ_BUILTINS, ...OQ_STATEMENT_BUILTINS]);
 
 /** Lines that only make sense in a shell transcript. */
 const SHELL_LINE =
@@ -36,8 +36,13 @@ function shellScore(lines) {
   for (const line of lines) {
     if (SHELL_LINE.test(line)) score += 3;
     const first = /^\s*([A-Za-z_][\w.-]*)\s/.exec(line);
-    if (first && SHELL_COMMANDS.includes(first[1])) score += 2;
+    if (first && SHELL_COMMANDS.includes(first[1])) score += 3;
     if (CONTINUED.test(line)) score += 1;
+    // A pipeline into a shell interpreter, or a `curl`/`wget` invocation, is shell even when
+    // it is the only line in the block. This is how the documentation writes its install
+    // command, which used to stay unlabelled and render in one colour.
+    if (/\|\s*(?:ba|z|k)?sh\b/.test(line)) score += 3;
+    if (/\b(?:curl|wget)\b/.test(line)) score += 2;
   }
   return score;
 }
@@ -58,9 +63,15 @@ function oqtharaScore(lines) {
       else if (BUILTINS.has(word[1])) score += 2;
     }
     if (OQ_CALL.test(trimmed)) score += 2;
+    // A method call on a receiver, `xs.map(x -> x * 2)`, is Oqthara. It appears as a single
+    // line in the language reference and scored nothing before.
+    if (/\.\w+\s*\(/.test(trimmed)) score += 2;
     if (OQ_ASSIGNMENT.test(trimmed)) score += 1;
     if (/\b(?:to|until)\b/.test(trimmed) && /\bfor\b/.test(trimmed)) score += 2;
-    if (/->/.test(trimmed)) score += 1;
+    // A lambda arrow scores only when an expression precedes it. Diagram arrows (`+->`,
+    // `-->`, `| ->`) are art, not code, and used to be enough to label an architecture
+    // picture as Oqthara.
+    if (/[\w)\]"']\s*->/.test(trimmed)) score += 1;
     if (/\{.*\}/.test(trimmed) && /"/.test(trimmed)) score += 1;
     if (/^\s*(?:end|else|else\s+if)\s*$/.test(trimmed)) score += 2;
     if (/\bfun\s+\w+\s*\(/.test(trimmed)) score += 3;
@@ -70,12 +81,52 @@ function oqtharaScore(lines) {
 }
 
 /**
+ * True when a block is ASCII art rather than source: an architecture diagram, a directory
+ * tree, or a table drawn with box characters.
+ *
+ * The canonical design document contains such a picture between two real code samples, and
+ * colouring it as Oqthara was worse than leaving it plain, because the colours implied a
+ * structure the picture does not have.
+ *
+ * The signal is deliberately narrow. An earlier version counted any line containing a slash
+ * or a dash, which also matched shell paths (`build/oqdoc/hello.oq`) and mislabelled a plain
+ * transcript. What actually distinguishes a diagram is the presence of lines that carry no
+ * words at all: `|`, `v`, `+-->`, and the box-drawing characters used for trees.
+ */
+const BOX_DRAWING = /[\u2500-\u257f]/;
+const DRAWING_ONLY = /^(?:[|+*^<>v=_\-\\/.:]|\s)+$/i;
+
+export function looksLikeArt(text) {
+  const lines = String(text ?? "")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim() !== "");
+  if (lines.length < 3) return false;
+
+  let artLines = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // A tree drawn with box characters is art on every line that uses them.
+    if (BOX_DRAWING.test(trimmed)) {
+      artLines += 1;
+      continue;
+    }
+    // A line made only of drawing glyphs — `|`, `v`, `+--->`, `...` — has no words in it.
+    if (!/[A-Za-z0-9]/.test(trimmed) && DRAWING_ONLY.test(trimmed)) artLines += 1;
+  }
+  // At least two such lines, and a visible share of the block, or it is ordinary code that
+  // happens to contain a `|` or a `-`.
+  return artLines >= 2 && artLines >= lines.length * 0.2;
+}
+
+/**
  * The language name for a fence body, or `null` when it is not recognisable.
  *
  * Shell wins ties because a transcript often contains words that are also Oqthara keywords
  * (`for`, `in`, `do`), while the reverse confusion is rare.
  */
 export function inferLanguage(text) {
+  if (looksLikeArt(text)) return null;
   const lines = String(text ?? "").split("\n");
   const shell = shellScore(lines);
   const oq = oqtharaScore(lines);

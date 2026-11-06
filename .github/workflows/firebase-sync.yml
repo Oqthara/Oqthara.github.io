@@ -80,10 +80,10 @@ jobs:
           '
           echo "present=true" >> "$GITHUB_OUTPUT"
 
-      - name: Fail closed when the credential is missing on a scheduled sync
-        if: steps.credential.outputs.present != 'true' && github.event_name != 'workflow_dispatch'
+      - name: Fail closed when the credential is missing
+        if: steps.credential.outputs.present != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
         run: |
-          echo "::error::FIREBASE_SERVICE_ACCOUNT is not configured, so scheduled syncs cannot run."
+          echo "::error::FIREBASE_SERVICE_ACCOUNT is not configured, so the mirror cannot be updated."
           echo "Add the service account JSON as a repository secret, or run this workflow manually with dry_run=true."
           exit 1
 

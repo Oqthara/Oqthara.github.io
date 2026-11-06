@@ -15,7 +15,7 @@ import {
 //   remarkGfm -> rehypeRaw -> rehypeSanitize(schema) -> rehypeSlug
 //
 // `rehypeRaw` runs before the sanitizer, so embedded HTML is cleaned rather than trusted, and
-// the result is React elements, never an HTML string, so `dangerouslySetInnerHTML` is unused.
+// the result is React elements, never an HTML string, so there is no raw-HTML injection point.
 
 export { extractHeadings, tocFromHeadings };
 
@@ -47,6 +47,8 @@ export function MarkdownWithToc({ markdown = "", path = "", ref = "main" }) {
           ),
         )
       : null,
-    h("div", { className: "doc doc-article" }, renderMarkdownElement({ markdown, path, ref })),
+    // `.doc-article` is the layout wrapper and `.doc` the prose measure, so they stay distinct
+    // elements: the stylesheet and the browser tests both address `.doc-article .doc`.
+    h("div", { className: "doc-article" }, h("div", { className: "doc" }, renderMarkdownElement({ markdown, path, ref }))),
   );
 }

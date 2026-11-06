@@ -15,3 +15,7 @@ blob-report/
 
 # Agent worktrees
 .worktrees/
+
+# Firestore emulator output
+firebase-debug.log
+firestore-debug.log
