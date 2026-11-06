@@ -41,6 +41,13 @@
   --code-bg: #070b10;
   --code-border: #1d2937;
   --code-fg: #dbe6f2;
+  /* The code plate stays dark in both themes, so its label and buttons need foregrounds chosen
+     against that plate rather than against the page. Borrowing --fg-subtle was a real contrast
+     failure in the light theme (3.06:1 on the #12161c label row, and --fg-muted only 2.11:1):
+     those tokens were right for the page and wrong for the surface they were painted on. These
+     measure 6.18:1 on the light plate and 6.49:1 on the dark one. */
+  --code-label-fg: #8b98a5;
+  --code-label-fg-hover: #c2ccd6;
   --code-keyword: #c792ea;
   --code-string: #9ae6b4;
   --code-number: #f6c177;
@@ -122,6 +129,8 @@
   --code-bg: #0d1117;
   --code-border: #263242;
   --code-fg: #dbe6f2;
+  --code-label-fg: #8b98a5;
+  --code-label-fg-hover: #c2ccd6;
 
   --shadow-1: 0 1px 2px rgba(16, 24, 32, 0.07);
   --shadow-2: 0 2px 4px rgba(16, 24, 32, 0.06), 0 12px 28px rgba(16, 24, 32, 0.1);
@@ -155,6 +164,8 @@
     --code-bg: #0d1117;
     --code-border: #263242;
     --code-fg: #dbe6f2;
+    --code-label-fg: #8b98a5;
+    --code-label-fg-hover: #c2ccd6;
 
     --shadow-1: 0 1px 2px rgba(16, 24, 32, 0.07);
     --shadow-2: 0 2px 4px rgba(16, 24, 32, 0.06), 0 12px 28px rgba(16, 24, 32, 0.1);
@@ -369,8 +380,12 @@ hr {
   background: var(--surface-2);
 }
 
+/* --accent on --accent-soft measured 4.41:1 in the light theme when the mobile menu is open
+   (the panel sits on --surface-2, not on white), just under the 4.5:1 that AA requires at 15px;
+   the darker accent clears it at 5.47:1. The dark theme already passed, and --accent-strong is
+   darker there too, so one rule serves both. */
 .site-nav a[aria-current="page"] {
-  color: var(--accent);
+  color: var(--accent-strong);
   background: var(--accent-soft);
 }
 
@@ -683,6 +698,15 @@ hr {
   tab-size: 2;
 }
 
+/* A code block wider than its column scrolls, and a scroll region that cannot take focus is
+   unreachable by keyboard (WCAG 2.2 AA, scrollable-region-focusable). The `pre` gets a tab stop
+   from the renderer, and this keeps the visible ring inside the border rather than over the
+   label above it. */
+.code-block pre:focus-visible {
+  outline-offset: calc(var(--focus-offset) * -1);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
 .code-block code {
   font-family: inherit;
   white-space: pre;
@@ -698,16 +722,16 @@ hr {
   background: rgba(255, 255, 255, 0.02);
   font-size: var(--step--2);
   font-family: var(--font-mono);
-  color: var(--fg-subtle);
+  color: var(--code-label-fg);
 }
 
 .copy-button {
   min-height: 2.25rem;
   padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--code-border);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--code-label-fg);
   font-family: var(--font-sans);
   font-size: var(--step--2);
   font-weight: 550;
@@ -715,7 +739,7 @@ hr {
 }
 
 .copy-button:hover {
-  color: var(--fg);
+  color: var(--code-label-fg-hover);
   border-color: var(--accent);
 }
 
@@ -1205,6 +1229,13 @@ input:focus-visible {
   cursor: pointer;
   list-style: none;
   margin-top: var(--space-4);
+  /* WCAG 2.2 AA asks for a 24x24 CSS-pixel target. The heading alone measures 19.8px tall and
+     only as wide as its text, so the padding brings the whole row to a comfortable target
+     without moving the text away from its column. */
+  min-height: 24px;
+  padding-block: var(--space-1);
+  margin-inline: calc(var(--space-1) * -1);
+  padding-inline: var(--space-1);
 }
 
 .sidebar-section:first-child > summary {
@@ -1259,7 +1290,7 @@ input:focus-visible {
 }
 
 .docs-sidebar a[aria-current="page"] {
-  color: var(--accent);
+  color: var(--accent-strong);
   background: var(--accent-soft);
   font-weight: 600;
 }

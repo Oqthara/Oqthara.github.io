@@ -37,19 +37,24 @@ function applyTheme(theme) {
  * read localStorage, so starting from the stored value produced a React #418 text mismatch on
  * every page for anyone who had ever chosen an appearance. The stored value is adopted in the
  * effect below, after hydration, which is also when it is applied.
+ *
+ * `adopted` keeps the apply-and-persist effect from running before the stored value has been
+ * read. Both effects run in the same commit, so without it the second one would still see the
+ * initial "auto" and remove the attribute the head script had already set, painting one white
+ * frame for a reader who chose dark. Waiting costs nothing: the head script has the correct
+ * appearance on screen already, and this effect only re-applies it.
  */
 function ThemeToggle() {
   const [theme, setTheme] = useState("auto");
+  const [adopted, setAdopted] = useState(false);
 
   useEffect(() => {
-    const stored = storedTheme();
-    if (stored !== "auto") {
-      setTheme(stored);
-      applyTheme(stored);
-    }
+    setTheme(storedTheme());
+    setAdopted(true);
   }, []);
 
   useEffect(() => {
+    if (!adopted) return;
     applyTheme(theme);
     try {
       if (theme === "auto") window.localStorage.removeItem("oq-theme");
@@ -57,7 +62,7 @@ function ThemeToggle() {
     } catch {
       // Persisting is a convenience, not a requirement.
     }
-  }, [theme]);
+  }, [theme, adopted]);
 
   const next = theme === "auto" ? "light" : theme === "light" ? "dark" : "auto";
   const label =

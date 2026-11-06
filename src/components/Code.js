@@ -79,9 +79,13 @@ export function CodeBlock({ code, label, language, children, highlighted, classN
     ),
     // `highlighted` is already the `code` element for Markdown blocks. For plain text the
     // tokens are inline spans, so this branch supplies the wrapping `code` itself.
+    // The block scrolls when a line is wider than the column, so it takes a tab stop: without
+    // one the overflowed text is unreachable by keyboard (WCAG 2.2 AA). Only the block that
+    // actually overflows needs it, but that is a layout question, not a render-time one, so it
+    // is always focusable rather than focusable-when-overflowing.
     h(
       "pre",
-      null,
+      { tabIndex: 0 },
       highlighted
         ? rendered
         : h("code", { className: grammar ? `language-${grammar}` : undefined }, rendered ?? text),
@@ -103,7 +107,7 @@ export function Code({ children, language }) {
   return h(
     "div",
     { className: "code-block" },
-    h("pre", null, h("code", { className: language ? `language-${language}` : undefined }, tokens ?? text)),
+    h("pre", { tabIndex: 0 }, h("code", { className: language ? `language-${language}` : undefined }, tokens ?? text)),
   );
 }
 
