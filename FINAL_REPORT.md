@@ -1,6 +1,6 @@
 # Oqthara website — production readiness report
 
-Final HEAD `8fbcb0f9b71773357d84b6667a157fc22ec43c69` on
+Final HEAD `fa55d20f9b1c8b692782b2e5969d83577f8664cc` on
 `feat/alpha-automation-and-hardening`. Baseline `3be0388e2d6bb41956c0c03482d2a40f847cc648`
 (`origin/main`). Pull request
 [#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) is **open and mergeable**.
@@ -16,18 +16,18 @@ here is merged, deployed, or written to production Firestore.
 | | Commit | Detail |
 |---|---|---|
 | Baseline | `3be0388e2d6bb41956c0c03482d2a40f847cc648` | `origin/main` at the time of the run |
-| Final | `8fbcb0f9b71773357d84b6667a157fc22ec43c69` | tip of `feat/alpha-automation-and-hardening` |
-| Delta | | 27 commits, 75 files, `+13,702 / −2,065` |
+| Final | `fa55d20f9b1c8b692782b2e5969d83577f8664cc` | tip of `feat/alpha-automation-and-hardening` |
+| Delta | | 28 commits, 75 files, `+13,638 / −2,056` |
 
 ```
 $ git rev-parse HEAD
-8fbcb0f9b71773357d84b6667a157fc22ec43c69
+fa55d20f9b1c8b692782b2e5969d83577f8664cc
 
 $ git log --oneline origin/main..HEAD | wc -l
-27
+28
 
 $ git diff --shortstat origin/main..HEAD
- 75 files changed, 13702 insertions(+), 2065 deletions(-)
+ 75 files changed, 13638 insertions(+), 2056 deletions(-)
 ```
 
 The working tree was clean (`git status --porcelain` → empty) at the time these gates ran.
@@ -67,6 +67,7 @@ Oldest first, as GitHub orders them on the PR.
 | `956e4a5` | `feat(site)` — give the pages a shape a reader can navigate |
 | `8c9291f` | `test(e2e)` — make the browser suite honest on every engine |
 | `8fbcb0f` | `docs(visual)` — recapture every surface after the redesign |
+| `fa55d20` | `docs` — report the work against the acceptance criteria it was given |
 
 Every commit is focused on one concern and was gated before the next was started.
 
@@ -427,7 +428,9 @@ preference-enabled session.
 
 ## 13. Exact test commands and output summaries
 
-All run at HEAD `8fbcb0f` against a build produced by `npm run build`.
+All run against a build produced by `npm run build` from `8fbcb0f`. The only change since is
+`fa55d20`, which edits this report and no source file — so these results describe the code under
+test, not a stale tree.
 
 | # | Command | Result |
 |---|---|---|
