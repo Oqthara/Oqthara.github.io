@@ -86,6 +86,14 @@ export const BATCH_SIZE = 400;
 
 const FETCH_TIMEOUT_MS = 30 * 1000;
 
+/**
+ * GitHub's release list is paginated at 100 per page by the API and this mirror needs all of
+ * them, because a release missing from the response is read as one deleted upstream. Five pages
+ * is 500 releases, far more than this project will publish, and the bound keeps a misbehaving
+ * server from looping forever.
+ */
+const MAX_RELEASE_PAGES = 5;
+
 /** Every mirrored source path, described once so the planner has no per-kind branches. */
 export const SOURCE_KINDS = Object.freeze({
   documentation: "documentation",
@@ -331,7 +339,13 @@ async function fetchWithTimeout(url, { token, accept, fetchImpl = fetch } = {}) 
   }
 }
 
-/** The recursive tree for `ref`, filtered to the paths this mirror cares about. */
+/**
+ * The recursive tree for `ref`, filtered to the paths this mirror cares about.
+ *
+ * Returns the commit sha the tree was resolved from as well as the paths. Without it a mirror
+ * record says "this is `main`" and never which `main`, so a mirrored document and an upstream
+ * document cannot be compared to decide whether the mirror is behind.
+ */
 export async function listSourceFiles({ ref = MIRRORED_REF, token = "", fetchImpl = fetch } = {}) {
   const response = await fetchWithTimeout(treeApiUrl(ref), { token, fetchImpl });
   if (!response.ok) throw new Error(`GitHub tree request returned ${response.status}`);
@@ -342,10 +356,11 @@ export async function listSourceFiles({ ref = MIRRORED_REF, token = "", fetchImp
   if (payload.truncated === true) {
     throw new Error("GitHub returned a truncated tree; refusing to publish an incomplete mirror");
   }
-  return payload.tree
+  const paths = payload.tree
     .filter((entry) => entry && entry.type === "blob" && typeof entry.path === "string")
     .map((entry) => normalizePath(normalizeRepoPath(entry.path)))
     .filter((path) => classifyPath(path) !== null);
+  return { paths, commit: typeof payload.sha === "string" ? payload.sha : "" };
 }
 
 /** Raw file text. raw.githubusercontent.com has no API quota. */
@@ -359,13 +374,30 @@ export async function readSourceFile(path, { ref = MIRRORED_REF, token = "", fet
   return response.text();
 }
 
-/** Published releases; drafts and malformed entries are dropped. */
-export async function listReleases({ token = "", fetchImpl = fetch } = {}) {
-  const response = await fetchWithTimeout(releasesApiUrl(100), { token, fetchImpl });
-  if (!response.ok) throw new Error(`GitHub releases request returned ${response.status}`);
-  const payload = await response.json();
-  if (!Array.isArray(payload)) throw new Error("GitHub returned a release list this script could not read");
-  return payload.filter((release) => release && !release.draft);
+/**
+ * Published releases; drafts and malformed entries are dropped.
+ *
+ * Pages until GitHub returns a short page, because "not in the list" is how the planner decides
+ * a mirrored release was deleted upstream. A single page is capped at 100 by the API, so reading
+ * one page would silently unpublish every release past the hundredth as soon as the repository
+ * crossed that line. The loop is bounded: a runaway server cannot spin here forever.
+ */
+export async function listReleases({ token = "", fetchImpl = fetch, perPage = 100 } = {}) {
+  const releases = [];
+  for (let page = 1; page <= MAX_RELEASE_PAGES; page += 1) {
+    const response = await fetchWithTimeout(releasesApiUrl(perPage, page), { token, fetchImpl });
+    if (!response.ok) throw new Error(`GitHub releases request returned ${response.status}`);
+    const payload = await response.json();
+    if (!Array.isArray(payload)) {
+      throw new Error("GitHub returned a release list this script could not read");
+    }
+    releases.push(...payload.filter((release) => release && !release.draft));
+    if (payload.length < perPage) return releases;
+  }
+  // Reaching the bound means this mirror is knowingly incomplete, which is worse than failing.
+  throw new Error(
+    `GitHub returned more than ${MAX_RELEASE_PAGES * perPage} releases; refusing to publish a partial release list`,
+  );
 }
 
 /**
@@ -373,6 +405,9 @@ export async function listReleases({ token = "", fetchImpl = fetch } = {}) {
  *
  * `readFile` and the listing functions are injectable so a test can run the planner without a
  * network. A single unreadable file fails the run rather than publishing a mirror with holes.
+ *
+ * Returns the records and the upstream commit they came from. Callers that only want the list
+ * (every test, and any external use) get it through the `records` field like the rest.
  */
 export async function collectDesired({
   ref = MIRRORED_REF,
@@ -383,7 +418,11 @@ export async function collectDesired({
   readFile = readSourceFile,
   releases = listReleases,
 } = {}) {
-  const paths = await listFiles({ ref, token, fetchImpl });
+  const listing = await listFiles({ ref, token, fetchImpl });
+  // `listFiles` returns `{ paths, commit }`; a caller supplying its own may return the paths
+  // alone, which is the shape tests use when the commit is not what they are testing.
+  const paths = Array.isArray(listing) ? listing : listing.paths;
+  const commit = Array.isArray(listing) ? "" : (listing.commit ?? "");
   const desired = [];
   const stdlibDuplicates = [];
 
@@ -403,7 +442,7 @@ export async function collectDesired({
     const record = buildReleaseRecord(release, { now });
     if (record) desired.push(record);
   }
-  return desired;
+  return { records: desired, commit };
 }
 
 // ---------------------------------------------------------------------------
@@ -493,7 +532,11 @@ export async function readSyncState(db) {
  * `db` is a Firestore handle (`collection().doc()` returning a ref with `set`). The Admin SDK
  * and a test double satisfy that shape.
  */
-export async function applyPlan(db, plan, { now = new Date().toISOString() } = {}) {
+export async function applyPlan(
+  db,
+  plan,
+  { now = new Date().toISOString(), commit = "" } = {},
+) {
   const operations = [];
 
   for (const write of plan.writes) {
@@ -568,11 +611,14 @@ export async function applyPlan(db, plan, { now = new Date().toISOString() } = {
     written += batch.length;
   }
 
-  // One catalogue-level record so a later run can see when the mirror was last reconciled.
+  // One catalogue-level record so a later run can see when the mirror was last reconciled, and
+  // from which upstream commit. `sourceRef` alone says "main" and never which main, so it cannot
+  // answer whether the mirror is current.
   await db.collection(COLLECTIONS.sync).doc("catalog").set(
     {
       [FIELDS.status]: "published",
       [FIELDS.sourceRef]: MIRRORED_REF,
+      [FIELDS.sourceCommit]: commit,
       [FIELDS.updatedAt]: now,
       counts: {
         written: plan.writes.length,
@@ -611,7 +657,9 @@ export const USAGE = `Usage: node scripts/sync-firestore.mjs [--dry-run] [--full
 
   --dry-run   Read GitHub, compute hashes and print what would change. Needs no credentials.
   --full      Full reconciliation: rewrite every mirrored document even when its hash matches.
-  --ref=REF   Repository ref to mirror. Defaults to ${DEFAULT_REF}; the site reads main only.
+  --ref=REF   Repository ref to read. Defaults to ${DEFAULT_REF}. A ref other than ${DEFAULT_REF}
+              requires --dry-run; writing from a tag or branch would unpublish every document
+              it does not contain.
 
 Credentials for a write run come from FIREBASE_SERVICE_ACCOUNT or GOOGLE_APPLICATION_CREDENTIALS.
 Exit codes: 0 ok, 1 usage, 2 missing credentials, 3 GitHub failure, 4 Firestore failure.`;
@@ -642,16 +690,32 @@ export async function main(
     return EXIT.usage;
   }
 
+  // The planner publishes what a ref contains and unpublishes what it lacks, so writing from a
+  // ref other than `main` would unpublish every document that ref does not have. A tag is a
+  // strict subset of `main`, so `--ref=v0.1.0` is the destructive case. A non-default ref is
+  // therefore a read-only review, which is still useful for checking what a tag would publish.
+  if (options.ref !== MIRRORED_REF && !options.dryRun) {
+    error(
+      `--ref=${options.ref} is read-only: mirroring a ref other than ${MIRRORED_REF} would unpublish ` +
+        `every document that ref does not contain. Add --dry-run to review it.`,
+    );
+    return EXIT.usage;
+  }
+
   const token = String(env.GITHUB_TOKEN ?? env.GH_TOKEN ?? "").trim();
   let desired;
+  let commit = "";
   try {
-    desired = await collect({ ref: options.ref, token, now });
+    const collected = await collect({ ref: options.ref, token, now });
+    desired = Array.isArray(collected) ? collected : collected.records;
+    commit = Array.isArray(collected) ? "" : (collected.commit ?? "");
   } catch (cause) {
     error(`Could not read the canonical repository: ${cause?.message ?? cause}`);
     return EXIT.sourceFailed;
   }
   log(
-    `read ${desired.length} source record${desired.length === 1 ? "" : "s"} from ${REPO}@${options.ref}`,
+    `read ${desired.length} source record${desired.length === 1 ? "" : "s"} from ${REPO}@${options.ref}` +
+      (commit ? ` at ${commit.slice(0, 7)}` : ""),
   );
 
   const resolved = await credentials(env);
@@ -683,14 +747,17 @@ export async function main(
     return EXIT.missingCredentials;
   }
 
-  if (!plan.writes.length && !plan.oversized.length && !plan.unpublish.length) {
-    log("mirror is already current; nothing to write");
-    return EXIT.ok;
-  }
-
+  // The catalogue record is written on every run, including one that changes no document. It is
+  // the only place a reader can learn when the mirror was last reconciled and against which
+  // upstream commit, so skipping it on a quiet run would leave those two facts stale precisely
+  // when the mirror is current.
   try {
-    const result = await applyPlan(await openDb(resolved.serviceAccount), plan, { now });
-    log(`wrote ${result.operations} operations to ${resolved.projectId ?? "the configured project"}`);
+    const result = await applyPlan(await openDb(resolved.serviceAccount), plan, { now, commit });
+    log(
+      result.operations
+        ? `wrote ${result.operations} operations to ${resolved.projectId ?? "the configured project"}`
+        : "mirror is already current; recorded the reconciliation, nothing else to write",
+    );
   } catch (cause) {
     error(`Could not write to Firestore: ${cause?.message ?? cause}`);
     return EXIT.writeFailed;

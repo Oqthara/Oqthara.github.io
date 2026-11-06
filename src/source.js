@@ -113,8 +113,9 @@ export function treeApiUrl(ref = DEFAULT_REF) {
 }
 
 /** Published releases, drafts included in the raw response and filtered by the caller. */
-export function releasesApiUrl(perPage = 30) {
-  return `https://api.github.com/repos/${REPO}/releases?per_page=${perPage}`;
+export function releasesApiUrl(perPage = 30, page = 1) {
+  const base = `https://api.github.com/repos/${REPO}/releases?per_page=${perPage}`;
+  return page > 1 ? `${base}&page=${page}` : base;
 }
 
 /**

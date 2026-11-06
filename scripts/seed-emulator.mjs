@@ -74,7 +74,11 @@ const desired = await collectDesired({
   releases: async () => [],
 });
 
-if (!desired.length) {
+// A write run returns records and the upstream commit; a test-supplied `listFiles` returns its
+// own shape. Both are accepted so the seeding path does not depend on which was used.
+const records = Array.isArray(desired) ? desired : desired.records;
+
+if (!records.length) {
   console.error(`no mirrored files found under ${root}`);
   process.exit(1);
 }
@@ -82,9 +86,9 @@ if (!desired.length) {
 const app = initializeApp({ projectId: project }, "seed-emulator");
 const db = getFirestore(app);
 
-for (let index = 0; index < desired.length; index += BATCH_SIZE) {
+for (let index = 0; index < records.length; index += BATCH_SIZE) {
   const batch = db.batch();
-  for (const record of desired.slice(index, index + BATCH_SIZE)) {
+  for (const record of records.slice(index, index + BATCH_SIZE)) {
     batch.set(db.collection(record.collection).doc(record.id), record.data);
     const sync = buildSyncRecord({
       collection: record.collection,
@@ -99,12 +103,12 @@ for (let index = 0; index < desired.length; index += BATCH_SIZE) {
   await batch.commit();
 }
 
-const counts = desired.reduce((accumulator, record) => {
+const counts = records.reduce((accumulator, record) => {
   accumulator[record.collection] = (accumulator[record.collection] ?? 0) + 1;
   return accumulator;
 }, {});
 
-console.log(`seeded ${desired.length} records into ${project} at ${host}`);
+console.log(`seeded ${records.length} records into ${project} at ${host}`);
 for (const [collection, count] of Object.entries(counts).sort()) {
   console.log(`  ${collection}: ${count}`);
 }

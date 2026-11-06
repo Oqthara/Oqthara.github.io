@@ -38,6 +38,7 @@ export const FIELDS = Object.freeze({
   content: "content",
   published: "published",
   sourceRef: "sourceRef",
+  sourceCommit: "sourceCommit",
   contentHash: "contentHash",
   updatedAt: "updatedAt",
   kind: "kind",
