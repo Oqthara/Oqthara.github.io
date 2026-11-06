@@ -15,14 +15,31 @@ import { DEFAULT_REF } from "./source.js";
 import {
   findChannel,
   setRefreshErrorListener,
-  loadCatalog,
-  loadChangelog,
-  loadDocument,
-  loadExample,
-  loadExamples,
-  loadReleases,
   loadText,
 } from "./github-docs.js";
+import {
+  getCatalog,
+  getChangelog,
+  getDocument,
+  getExample,
+  getExamples,
+  getReleases,
+} from "./services/content.service.js";
+
+/**
+ * Unwraps a service result into the value the hooks return.
+ *
+ * The service never throws; it answers `{ data, source, stale, error }` because a page needs to
+ * know whether it is reading the mirror or the fallback. The hooks predate that and return the
+ * value itself, so the boundary is here: keep the value, and rethrow only when there is nothing
+ * to show, which is what puts a page into its error state. Content that arrived is never
+ * discarded because a later refresh failed.
+ */
+function unwrap(result) {
+  if (result && result.data !== null && result.data !== undefined) return result.data;
+  if (result?.error) throw result.error;
+  return result?.data ?? null;
+}
 
 /**
  * Runs `load` when a dependency changes, keeping the previous value across reloads.
@@ -87,7 +104,7 @@ function useAsync(load, deps) {
  * selector, and `error` lets the header say the release list is unavailable.
  */
 export function useChannels() {
-  const { status, data, error, retry } = useAsync(() => loadReleases(), []);
+  const { status, data, error, retry } = useAsync(() => getReleases().then(unwrap), []);
   const channels = data ?? [];
   return { status, channels, error, retry };
 }
@@ -104,27 +121,27 @@ export function resolveChannel(channels, ref) {
 
 /** The documentation catalogue for a ref. Always an array. */
 export function useCatalog(ref = DEFAULT_REF) {
-  return useAsync(() => loadCatalog(ref), [ref]);
+  return useAsync(() => getCatalog(ref).then(unwrap), [ref]);
 }
 
 /** One document for a ref. */
 export function useDocument(ref, path) {
-  return useAsync(() => loadDocument(ref, path), [ref, path]);
+  return useAsync(() => getDocument(ref, path).then(unwrap), [ref, path]);
 }
 
 /** Every example for a ref. */
 export function useExamples(ref = DEFAULT_REF) {
-  return useAsync(() => loadExamples(ref), [ref]);
+  return useAsync(() => getExamples(ref).then(unwrap), [ref]);
 }
 
 /** One example's source for a ref. */
 export function useExample(ref, path) {
-  return useAsync(() => loadExample(ref, path), [ref, path]);
+  return useAsync(() => getExample(ref, path).then(unwrap), [ref, path]);
 }
 
 /** The changelog for a ref. */
 export function useChangelog(ref = DEFAULT_REF) {
-  return useAsync(() => loadChangelog(ref), [ref]);
+  return useAsync(() => getChangelog(ref).then(unwrap), [ref]);
 }
 
 /** Any repository text file for a ref (used by status and philosophy). */
