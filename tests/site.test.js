@@ -138,3 +138,23 @@ test("every page declares an icon that the build actually ships", { skip }, () =
   assert.match(svg, /viewBox="0 0 32 32"/, "the icon scales without a fixed raster size");
   assert.match(svg, /<rect[^>]*rx=/, "the icon has rounded corners, not a bare square");
 });
+
+test("the two visual scripts do not write to the same directory", () => {
+  // Both scripts screenshot the same routes under the same filenames. When they shared an
+  // output directory the committed images were silently replaced by differently-sized ones,
+  // and consecutive captures looked nondeterministic when the cause was one clobbering the
+  // other. Keep their outputs distinct so that failure cannot come back quietly.
+  const read = (name) => readFileSync(path.join(root, "scripts", name), "utf8");
+  const dirOf = (source, declaration) => {
+    const match = source.match(new RegExp(`${declaration}\\s*=\\s*join\\([^)]*"artifacts",\\s*"([^"]+)"`));
+    assert.ok(match, `${declaration} must resolve an artifacts/ subdirectory`);
+    return match[1];
+  };
+  const captured = dirOf(read("capture-screenshots.mjs"), "const out");
+  const audited = dirOf(read("audit-visual.mjs"), "const OUT");
+  assert.notEqual(
+    audited,
+    captured,
+    `audit-visual.mjs writes to artifacts/${audited}, which collides with the committed screenshots`,
+  );
+});

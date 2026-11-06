@@ -20,8 +20,8 @@ here is merged, deployed, or written to production Firestore.
 | Report tip | `a5baac7b4471ea32a5443ad14bbdc6dfd00bd48a` | this file; no source change |
 | Code delta | | 27 commits, 75 files, `+13,702 / −2,065` |
 
-The delta is measured against `8fbcb0f`, not against the report tip, because the last two
-commits only edit this file. A total that counts its own report is a number that goes stale the
+The delta is measured against `8fbcb0f`, not against the report tip, because nothing after it
+changes site behaviour. A total that counts its own report is a number that goes stale the
 moment it is written; this one does not move.
 
 ```
@@ -32,6 +32,8 @@ $ git diff --shortstat origin/main..8fbcb0f
  75 files changed, 13702 insertions(+), 2065 deletions(-)
 
 $ git log --oneline 8fbcb0f..HEAD
+6062ee7 docs: cite the run that verifies this report, not just the one before it
+89bb31a docs: anchor the report's totals to the last code commit
 a5baac7 docs: count the report's own commit in its totals
 fa55d20 docs: report the work against the acceptance criteria it was given
 ```
@@ -349,7 +351,13 @@ cross-process probes, with and without blur, produced byte-identical output. The
 that `capture-screenshots.mjs` (`deviceScaleFactor: 2`, 2880×2000) and `audit-visual.mjs`
 (`deviceScaleFactor: 1`, full-page) write the **same filenames** to
 `artifacts/visual-audit/`, and an earlier capture had raced a still-running audit. Rendering is
-deterministic; the scripts collide. Known risk, see §17.
+deterministic; the scripts collided.
+
+**Fixed.** `audit-visual.mjs` now writes to `artifacts/visual-audit-routes/`, which holds
+diagnostics rather than reviewed artifacts. A test in `tests/site.test.js` parses both scripts'
+output directories and fails if they ever match again — confirmed by reverting the fix and
+watching it fail with *"audit-visual.mjs writes to artifacts/visual-audit, which collides with
+the committed screenshots"*.
 
 ---
 
@@ -444,7 +452,7 @@ under test, not a stale tree.
 | 1 | `npm run build` | exit 0, 11 HTML files emitted |
 | 2 | `node verify.mjs` | exit 0 |
 | 3 | `npx html-validate "_site/**/*.html"` | exit 0, no findings |
-| 4 | `npm test` | **282 tests, 278 pass, 0 fail, 4 skipped** |
+| 4 | `npm test` | **283 tests, 279 pass, 0 fail, 4 skipped** |
 | 5 | `npx playwright test` (default, Chromium + mobile) | **182 passed, 4 skipped, 0 failed** |
 | 6 | `PW_ENGINES=all npx playwright test` | **273 passed, 91 failed (Firefox launch), 8 skipped** |
 | 7 | `npx playwright test e2e/a11y.spec.js` | **54 passed** |
@@ -538,10 +546,11 @@ path it will take is now the narrower one — but it has not been taken.
    is genuinely absent rather than merely unmeasured. §12.
 2. **Four high `npm audit` advisories remain**, transitive through the Firebase client. Assessed
    unreachable from the shipped bundle; the only npm-offered fix is a downgrade.
-3. **The two visual scripts share an output directory.** `capture-screenshots.mjs` and
-   `audit-visual.mjs` write identical filenames to `artifacts/visual-audit/` at different
-   dimensions, so they clobber each other if run concurrently. Diagnosed, **not yet fixed**;
-   the recovery is to run `npm run screenshots` last. Tracked as follow-up work.
+3. **Visual screenshot directories are now separate, but ordering still matters for review.**
+   `audit-visual.mjs` writes to `artifacts/visual-audit-routes/` and `capture-screenshots.mjs` to
+   `artifacts/visual-audit/`, so neither can corrupt the committed images. A guard test enforces
+   this. What is *not* automated is noticing that committed screenshots have gone stale after a
+   style change — that remains a review responsibility.
 4. **Production sync is unverified.** The write path has never touched production.
 5. **Real assistive technology was not exercised**, and neither were forced-colors, print, or a
    reduced-motion-enabled session.
@@ -575,7 +584,7 @@ All 19 named requirements from the acceptance criteria, plus one deliberate twen
 | 14 | Secret exposure assessment completed | **PASS** | 50-commit history scan, no credential found; `.gitignore` contract test |
 | 15 | Dependency advisories assessed | **PASS** | 19 advisories triaged: 0 critical, 4 high accepted as unreachable (§9) |
 | 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit pass; 54 a11y checks; Firefox added to config |
-| 17 | Regression tests pass | **PASS** | 282 unit/integration (278 pass, 4 skip); 182 Playwright; 54 a11y; 4 live |
+| 17 | Regression tests pass | **PASS** | 283 unit/integration (279 pass, 4 skip); 182 Playwright; 54 a11y; 4 live |
 | 18 | Production write verified after authorization | **NOT VERIFIED** | Dry run `42252163291` wrote nothing; no authorization requested or granted (§14) |
 | 19 | Compiler repository untouched | **PASS** | No commit in this branch touches the compiler repository; all 75 files are under this repo |
 | 20 | Firefox browser behaviour verified | **NOT VERIFIED** | 91 launch failures, reproduced outside Playwright (§12) |
