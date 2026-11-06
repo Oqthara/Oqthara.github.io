@@ -82,10 +82,16 @@ test("every page has the required document shell", { skip }, () => {
   }
 });
 
-test("404.html redirects legacy paths and shows the not-found text", { skip }, () => {
+test("404.html shows the not-found page and the bundle can redirect legacy paths", { skip }, () => {
   const html = readPage("404.html");
-  assert.match(html, /<script[^>]*>[\s\S]*location[\s\S]*<\/script>/i);
   assert.match(html, /not found|404/i);
+  assert.match(html, /That page does not exist/);
+  // The redirect is implemented once, in the client bundle, through legacyRouteToCanonical.
+  // A second inline copy in 404.html used to exist and drifted from the router.
+  const assets = readdirSync(path.join(site, "assets")).filter((name) => name.endsWith(".js"));
+  const bundle = assets.map((name) => readFileSync(path.join(site, "assets", name), "utf8")).join("");
+  assert.ok(bundle.includes("/document.html"), "the bundle must know the canonical document route");
+  assert.ok(bundle.includes("/example.html"), "the bundle must know the canonical example route");
 });
 
 test("no page emits an unsafe URL in href or src", { skip }, () => {

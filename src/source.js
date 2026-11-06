@@ -38,6 +38,9 @@ const ANY_CONTROL_OR_SPACE = /[\u0000-\u0020]+/g;
 /** Repository-relative path without a leading slash, backslashes or `./`. */
 export function normalizeRepoPath(path) {
   return String(path ?? "")
+    // A NUL or other control character cannot occur in a repository path; strip it here so the
+    // allowlist never accepts a path that could not exist.
+    .replace(/[\u0000-\u001f\u007f]/g, "")
     .replace(/\\/g, "/")
     .replace(/^\/+/, "")
     .replace(/^\.\//, "");
@@ -274,7 +277,10 @@ export function safeUrl(value) {
 export function resolveRelative(fromPath, href, ref = DEFAULT_REF) {
   const safe = safeUrl(href);
   if (safe === null) return null;
-  if (/^https?:/i.test(safe) || /^mailto:/i.test(safe) || safe.startsWith("//")) return safe;
+  // A protocol-relative URL inherits the page's scheme and points at whatever host it names.
+  // It is resolved explicitly as https so a document cannot produce an ambiguous link.
+  if (safe.startsWith("//")) return `https:${safe}`;
+  if (/^https?:/i.test(safe) || /^mailto:/i.test(safe)) return safe;
   if (safe.startsWith("#") || safe.startsWith("?")) return safe;
 
   const hashAt = safe.indexOf("#");
@@ -298,7 +304,8 @@ export function resolveRelative(fromPath, href, ref = DEFAULT_REF) {
 export function resolveImage(fromPath, src, ref = DEFAULT_REF) {
   const safe = safeUrl(src);
   if (safe === null) return null;
-  if (/^https?:/i.test(safe) || safe.startsWith("//")) return safe;
+  if (safe.startsWith("//")) return `https:${safe}`;
+  if (/^https?:/i.test(safe)) return safe;
   if (safe.startsWith("#") || safe.startsWith("?")) return safe;
   if (/^mailto:/i.test(safe)) return null;
   const target = safe.split(/[?#]/)[0];

@@ -63,6 +63,11 @@ export function buildComponents({ path = "", ref = "main" } = {}) {
       const language = /language-([\w+-]+)/.exec(String(codeChild?.props?.className ?? ""))?.[1];
       return h(CodeBlock, { code: typeof raw === "string" ? raw : "", label: language });
     },
+    // The page supplies the single h1; a document's own h1 becomes an h2 so heading order stays
+    // valid and no page ever has two top-level headings.
+    h1({ node: _node, children, id, ...props }) {
+      return h("h2", { id, ...props }, children, id ? h("a", { className: "heading-anchor", href: `#${id}`, "aria-label": "Link to this section" }, "#") : null);
+    },
     h2({ node: _node, children, id, ...props }) {
       return h("h2", { id, ...props }, children, id ? h("a", { className: "heading-anchor", href: `#${id}`, "aria-label": "Link to this section" }, "#") : null);
     },

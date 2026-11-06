@@ -2,7 +2,7 @@ import { createElement as h, useCallback, useEffect, useMemo, useRef, useState }
 import { activeOptionId, keyAction, optionId, rankEntries } from "../search.js";
 
 import { loadCatalog, loadExamples } from "../github-docs.js";
-import { DEFAULT_REF, documentRoute, exampleRoute, sectionForPath } from "../source.js";
+import { DEFAULT_REF, documentRoute, exampleRoute, parseQuery, sectionForPath } from "../source.js";
 
 // Site search over dynamically discovered content.
 //
@@ -12,8 +12,6 @@ import { DEFAULT_REF, documentRoute, exampleRoute, sectionForPath } from "../sou
 //
 // The index is built on first use, not on page load, so a reader who never searches pays
 // nothing for it. It is built once per session and shared by every Search instance.
-
-let indexPromise = null;
 
 function buildIndex(ref = DEFAULT_REF) {
   return Promise.all([
@@ -41,23 +39,33 @@ function buildIndex(ref = DEFAULT_REF) {
   });
 }
 
+const indexCache = new Map();
+
+/**
+ * The search index for a ref.
+ *
+ * Keyed by ref: the site can be read at `main` or at a release, and a search from a pinned
+ * manual must return links into that manual, not into development.
+ */
 function ensureIndex(ref) {
-  if (!indexPromise) {
-    indexPromise = buildIndex(ref).catch((error) => {
+  if (!indexCache.has(ref)) {
+    const promise = buildIndex(ref).catch((error) => {
       // Let a later attempt try again instead of caching the failure forever.
-      indexPromise = null;
+      indexCache.delete(ref);
       throw error;
     });
+    indexCache.set(ref, promise);
   }
-  return indexPromise;
+  return indexCache.get(ref);
 }
 
 /** Test seam: forget the shared index. */
 export function __resetSearchIndexForTests() {
-  indexPromise = null;
+  indexCache.clear();
 }
 
 export function Search() {
+  const ref = typeof window === "undefined" ? DEFAULT_REF : parseQuery(window.location.search).ref;
   const [entries, setEntries] = useState(null);
   const [error, setError] = useState(null);
   const [query, setQuery] = useState("");
@@ -90,33 +98,34 @@ export function Search() {
     if (entries || requested.current) return;
     requested.current = true;
     setError(null);
-    ensureIndex(DEFAULT_REF)
+    ensureIndex(ref)
       .then(setEntries)
       .catch((cause) => {
         requested.current = false;
         setError(cause?.message ?? "Search is unavailable right now.");
       });
-  }, [entries]);
+  }, [entries, ref]);
 
   const onKeyDown = (event) => {
-    const action = keyAction(event.key);
-    if (action === "close") {
+    // `keyAction` returns a typed action; comparing it to a string silently did nothing, which
+    // is why arrow keys never moved the selection.
+    const action = keyAction(event.key, { expanded, active, count: results.length });
+    if (!action) return;
+    if (action.type === "close") {
       setOpen(false);
       setActive(-1);
       return;
     }
-    if (action === "previous" || action === "next") {
+    if (action.type === "move") {
       event.preventDefault();
-      setActive((current) => {
-        if (!results.length) return -1;
-        if (action === "next") return (current + 1) % results.length;
-        return current <= 0 ? results.length - 1 : current - 1;
-      });
+      setActive(action.index);
       return;
     }
-    if (action === "open" && results[active]) {
+    if (action.type === "open") {
+      const target = results[action.index];
+      if (!target) return;
       event.preventDefault();
-      window.location.href = results[active].url;
+      window.location.href = target.url;
     }
   };
 
@@ -146,6 +155,10 @@ export function Search() {
       "aria-expanded": expanded ? "true" : "false",
       "aria-controls": "site-search-results",
       "aria-autocomplete": "list",
+      // The combobox keeps DOM focus on the input; the active option is announced through
+      // aria-activedescendant. Without this, arrow keys moved a highlight no screen reader
+      // could follow.
+      "aria-activedescendant": expanded ? activeOptionId(true, active) : undefined,
       role: "combobox",
       onFocus: () => {
         ensure();
@@ -194,7 +207,11 @@ export function Search() {
         )
       : null,
     expanded && active >= 0
-      ? h("span", { className: "visually-hidden", "aria-live": "polite" }, activeOptionId(active))
+      ? h(
+          "span",
+          { className: "visually-hidden", "aria-live": "polite" },
+          `${results[active]?.title ?? ""} selected, ${active + 1} of ${results.length}`,
+        )
       : null,
   );
 }

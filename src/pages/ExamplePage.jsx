@@ -3,7 +3,7 @@ import { hrefFor } from "../components/Layout.jsx";
 import { ChannelBar } from "../components/ChannelSelect.jsx";
 import { CodeBlock } from "../components/Code.js";
 import { useChannels, useExample, resolveChannel } from "../use-docs.js";
-import { DEFAULT_REF, exampleRoute, treeUrl } from "../source.js";
+import { DEFAULT_REF, exampleRoute, isExamplePath, treeUrl } from "../source.js";
 
 // One example, read from the repository when it is opened.
 //
@@ -48,6 +48,29 @@ export function ExamplePage({ query }) {
         "div",
         { className: "status-block", role: "status", "aria-live": "polite" },
         h("div", null, h("p", null, "Opening the example…"), h("div", { className: "skeleton" })),
+      ),
+    );
+  }
+
+  if (!isExamplePath(path)) {
+    return h(
+      "div",
+      { className: "content" },
+      h(
+        "div",
+        { className: "status-block", "data-tone": "error", role: "alert" },
+        h(
+          "div",
+          null,
+          h("h2", null, "That is not an example path"),
+          h("p", null, h("code", null, path), " is not an .oq file under examples/."),
+          h(
+            "div",
+            { className: "status-block-actions" },
+            h("a", { href: hrefFor("/examples.html") }, "All examples"),
+            h("a", { href: treeUrl("examples", query.ref) }, "Browse examples on GitHub"),
+          ),
+        ),
       ),
     );
   }

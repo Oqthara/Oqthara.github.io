@@ -320,6 +320,14 @@ export function validateTree(payload, { ref = DEFAULT_REF } = {}) {
       ref,
     });
   }
+  // A truncated tree is an incomplete listing, not a smaller repository. Showing it would
+  // silently hide documents, so it is reported instead of being displayed as the whole manual.
+  if (payload.truncated === true) {
+    throw new GitHubError(
+      "GitHub returned a partial file tree, so the documentation index would be incomplete.",
+      { url: `https://github.com/Oqthara/oqthara/tree/${ref}`, ref },
+    );
+  }
   return payload.tree
     .filter((entry) => entry && typeof entry.path === "string" && entry.type === "blob")
     .map((entry) => ({ path: normalizeRepoPath(entry.path), size: Number(entry.size) || 0 }));
@@ -496,10 +504,13 @@ export function validateReleases(payload, { includeDev = true } = {}) {
     const ref = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
     if (!ref) continue;
     const published = typeof release.published_at === "string" ? release.published_at : "";
+    // Every field is untrusted: a non-string `name` used to throw a raw TypeError out of the
+    // loader, which surfaced as a generic failure instead of a usable channel list.
+    const name = typeof release.name === "string" ? release.name.trim() : "";
     channels.push({
       // The channel id is the readable version; the ref is the git tag that actually exists.
       id: ref.replace(/^v/, ""),
-      label: release.name?.trim() || ref,
+      label: name || ref,
       ref,
       prerelease: Boolean(release.prerelease),
       published,

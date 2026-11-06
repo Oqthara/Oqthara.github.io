@@ -17,28 +17,31 @@ const escapeHtml = (text) =>
     .replace(/"/g, "&quot;");
 
 /**
- * A legacy `/docs/**.html` link is served by 404.html. This script turns it into the canonical
- * document route instead of 404, which is what lets old documentation links keep working with
- * no generated file per document.
+ * Applies a stored appearance before first paint.
  *
- * Both the document and the example forms are handled, and the ref is preserved.
+ * Without this a reader who chose light sees a dark flash on every navigation. It only sets the
+ * attribute: React still renders the "auto" state first, so hydration matches the prerendered
+ * button, and the component adopts the stored value in an effect.
  */
-const REDIRECT_SCRIPT = `
+const THEME_SCRIPT = `
 <script>
 (function () {
-  var path = window.location.pathname;
-  var params = new URLSearchParams(window.location.search);
-  var ref = params.get("ref") || "main";
-  var doc = /^\\/docs\\/(.+?)\\.html?$/.exec(path);
-  var example = /^\\/examples\\/(.+?)\\.html?$/.exec(path);
-  var target = null;
-  if (doc) target = "/document.html?path=" + encodeURIComponent("docs/" + doc[1] + ".md") + "&ref=" + encodeURIComponent(ref);
-  else if (example) target = "/example.html?path=" + encodeURIComponent("examples/" + example[1] + ".oq") + "&ref=" + encodeURIComponent(ref);
-  if (target) window.location.replace(target);
+  try {
+    var stored = localStorage.getItem("oq-theme");
+    if (stored === "light" || stored === "dark") document.documentElement.setAttribute("data-theme", stored);
+  } catch (e) {}
 })();
 </script>`;
 
-function page({ title, description, body, script, stylesheet, extraHead = "", extraBody = "" }) {
+/**
+ * 404.html is served by GitHub Pages for every unknown address, including legacy
+ * `/docs/**.html` links. The redirect is performed by `main.jsx` through
+ * `legacyRouteToCanonical`, so there is exactly one implementation of that rule and it cannot
+ * drift from the router. Without JavaScript the page simply shows "not found", which is the
+ * honest result.
+ */
+
+function page({ title, description, body, script, stylesheet, extraHead = "" }) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -48,11 +51,11 @@ function page({ title, description, body, script, stylesheet, extraHead = "", ex
   <meta name="description" content="${escapeHtml(description)}">
   <link rel="stylesheet" href="${stylesheet}">
   <link rel="preconnect" href="https://raw.githubusercontent.com">
-  <link rel="preconnect" href="https://api.github.com">${extraHead}
+  <link rel="preconnect" href="https://api.github.com">${THEME_SCRIPT}${extraHead}
 </head>
 <body>
 <div id="root">${body}</div>
-${extraBody}  <script type="module" src="${script}"></script>
+  <script type="module" src="${script}"></script>
 </body>
 </html>
 `;
@@ -89,7 +92,6 @@ export function render404(assets) {
       body,
       script: assets.script,
       stylesheet: assets.stylesheet,
-      extraBody: REDIRECT_SCRIPT,
     }),
   };
 }

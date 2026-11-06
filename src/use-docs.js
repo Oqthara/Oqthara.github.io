@@ -10,8 +10,8 @@
 //     failed background refresh does not destroy content the reader is already reading;
 //   * a late response from an abandoned request can never overwrite newer state.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { DEFAULT_REF, parseQuery } from "./source.js";
+import { useCallback, useEffect, useState } from "react";
+import { DEFAULT_REF } from "./source.js";
 import {
   findChannel,
   setRefreshErrorListener,
@@ -130,20 +130,4 @@ export function useChangelog(ref = DEFAULT_REF) {
 /** Any repository text file for a ref (used by status and philosophy). */
 export function useText(ref, path) {
   return useAsync(() => loadText(ref, path), [ref, path]);
-}
-
-/**
- * The `path` and `ref` this address asks for, read after mount.
- *
- * The server cannot see a query string, so anything that depends on one has to settle after
- * hydration or the first client render disagrees with the markup in the file. This starts at
- * the same value the prerenderer used — no path, `main` — and updates in an effect, which makes
- * hydration deterministic for every page.
- */
-export function useQuery() {
-  const [query, setQuery] = useState({ path: "", ref: DEFAULT_REF });
-  useEffect(() => {
-    setQuery(parseQuery(window.location.search));
-  }, []);
-  return query;
 }

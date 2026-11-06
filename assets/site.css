@@ -1000,6 +1000,13 @@ input:focus-visible {
 
 .docs-main {
   min-width: 0;
+  order: 1;
+}
+
+/* The sidebar is second in the DOM so the document's heading comes first for assistive
+   technology; the grid places it on the left visually. */
+.docs-sidebar {
+  order: 0;
 }
 
 .breadcrumbs {

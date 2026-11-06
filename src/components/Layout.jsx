@@ -12,8 +12,7 @@ export function hrefFor(path) {
   return BASE_PATH.replace(/\/$/, "") + path;
 }
 
-/** Reads the stored appearance, falling back to the operating system preference. */
-function initialTheme() {
+function storedTheme() {
   if (typeof window === "undefined") return "auto";
   try {
     const stored = window.localStorage.getItem("oq-theme");
@@ -31,9 +30,24 @@ function applyTheme(theme) {
   else root.setAttribute("data-theme", theme);
 }
 
-/** Light / dark / system appearance. The choice survives a reload. */
+/**
+ * Light / dark / system appearance. The choice survives a reload.
+ *
+ * The first render must be "auto" because the prerendered HTML says "auto": the server cannot
+ * read localStorage, so starting from the stored value produced a React #418 text mismatch on
+ * every page for anyone who had ever chosen an appearance. The stored value is adopted in the
+ * effect below, after hydration, which is also when it is applied.
+ */
 function ThemeToggle() {
-  const [theme, setTheme] = useState(initialTheme);
+  const [theme, setTheme] = useState("auto");
+
+  useEffect(() => {
+    const stored = storedTheme();
+    if (stored !== "auto") {
+      setTheme(stored);
+      applyTheme(stored);
+    }
+  }, []);
 
   useEffect(() => {
     applyTheme(theme);

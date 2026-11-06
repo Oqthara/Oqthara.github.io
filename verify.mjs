@@ -122,10 +122,19 @@ for (const page of pageFiles) {
 if (existsSync(join(site, "docs"))) problems.push("documentation is copied into the site");
 if (existsSync(join(site, "stdlib.md"))) problems.push("the stdlib reference is copied into the site");
 
-// The 404 page must be able to redirect legacy content links, and must say what happened.
+// 404.html serves unknown addresses. Legacy `/docs/**.html` links are redirected by the client
+// through the same resolver the router uses, so the check is that the page is a real not-found
+// page and that the bundle contains the canonical route it redirects to.
 const notFound = readFileSync(join(site, "404.html"), "utf8");
-if (!notFound.includes("document.html")) problems.push("404.html does not redirect legacy documentation links");
 if (!notFound.toLowerCase().includes("does not exist")) problems.push("404.html does not render the not-found page");
+{
+  const assetsDir = join(site, "assets");
+  const bundle = existsSync(assetsDir)
+    ? readdirSync(assetsDir).filter((file) => file.endsWith(".js")).map((file) => readFileSync(join(assetsDir, file), "utf8")).join("")
+    : "";
+  if (!bundle.includes("/document.html")) problems.push("the bundle has no canonical document route for legacy redirects");
+  if (!bundle.includes("/example.html")) problems.push("the bundle has no canonical example route for legacy redirects");
+}
 
 // Navigation must reach every top-level page from every page.
 for (const page of pageFiles) {

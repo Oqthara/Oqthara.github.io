@@ -3,7 +3,7 @@ import { hrefFor } from "../components/Layout.jsx";
 import { ChannelBar } from "../components/ChannelSelect.jsx";
 import { MarkdownWithToc } from "../components/Markdown.jsx";
 import { useCatalog, useChannels, useDocument, resolveChannel } from "../use-docs.js";
-import { DEFAULT_REF, docsIndexUrl, sectionForPath, sectionTitle } from "../source.js";
+import { DEFAULT_REF, docsIndexUrl, isDocumentPath, sectionForPath, sectionTitle } from "../source.js";
 
 // The one page that renders any documentation file.
 //
@@ -111,16 +111,41 @@ export function DocumentPage({ query }) {
     );
   }
 
+  // A `path` that is not a documentation file is an error the reader can understand, not a
+  // request this site will ever make. It used to leave the loading skeleton on screen forever.
+  if (!isDocumentPath(path)) {
+    return h(
+      "div",
+      { className: "content" },
+      h(
+        "div",
+        { className: "status-block", "data-tone": "error", role: "alert" },
+        h(
+          "div",
+          null,
+          h("h2", null, "That is not a documentation path"),
+          h("p", null, h("code", null, path), " is not a Markdown file under docs/."),
+          h(
+            "div",
+            { className: "status-block-actions" },
+            h("a", { href: hrefFor("/docs.html") }, "All documentation"),
+            h("a", { href: docsIndexUrl(query.ref) }, "Browse docs on GitHub"),
+          ),
+        ),
+      ),
+    );
+  }
+
   return h(
     "div",
     { className: "content" },
     h(
       "div",
       { className: "docs-layout" },
-      h(Sidebar, { docs: catalog.data, currentPath: path, channel }),
       h(
         "div",
         { className: "docs-main" },
+        h("h1", { className: "visually-hidden" }, title),
         h(
           "nav",
           { className: "breadcrumbs", "aria-label": "Breadcrumb" },
@@ -174,6 +199,9 @@ export function DocumentPage({ query }) {
             )
           : null,
       ),
+      // Rendered after the article so the document's own heading is the first heading in
+      // reading order; CSS places it on the left.
+      h(Sidebar, { docs: catalog.data, currentPath: path, channel }),
     ),
   );
 }

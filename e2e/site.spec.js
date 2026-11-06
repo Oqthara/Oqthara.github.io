@@ -125,7 +125,8 @@ test.describe("site", () => {
     await page.locator(".doc-list a").first().click();
     await expect(page).toHaveURL(/\/document\.html\?path=.+&ref=/);
     await waitForArticle(page);
-    await expect(article(page).locator("h1").first()).toBeVisible();
+    await expect(page.locator("main h1").first()).toBeVisible();
+    await expect(article(page).locator("h2").first()).toBeVisible();
   });
 
   test("6. a document outside every site list opens directly", async ({ page }) => {

@@ -133,7 +133,8 @@ test.describe("mocked GitHub discovery", () => {
     await mockGithub(page);
     await page.goto(DOC("docs/guides/new.md"));
     await expect(article(page)).toContainText("This body came from a mocked raw file.");
-    await expect(article(page).locator("h1")).toHaveText(/Brand new guide/i);
+    // The document heading is an h2: the page owns the only h1.
+    await expect(article(page).locator("h2").first()).toHaveText(/Brand new guide/i);
   });
 
   test("releases hide drafts, include prereleases and stable, newest first", async ({ page }) => {
