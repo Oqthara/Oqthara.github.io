@@ -1,0 +1,186 @@
+name: Alpha release sync
+
+# Mirrors a newly published upstream Oqthara release into Cloud Firestore, and records whether
+# the mirror actually reflects it.
+#
+# Why this exists next to `firebase-sync.yml`
+# -------------------------------------------
+# `firebase-sync.yml` mirrors the tip of `main` once a day. That covers "the docs changed".
+# It does not cover "a release was published", which is the event that makes the site's release
+# channels meaningful. This workflow polls for that event every 15 minutes.
+#
+# Why a poll and not a `release` trigger
+# --------------------------------------
+# A GitHub `release` event fires only for releases published in *this* repository. Upstream
+# releases live in `Oqthara/oqthara`, which cannot dispatch an event here without a token
+# committed in that repository — unacceptable for a read-only upstream. Polling is the honest
+# mechanism, and the brief explicitly requires it.
+#
+# Catch-up is inherent, not bolted on
+# -----------------------------------
+# The workflow asks upstream for its newest published release, resolves the tag to a commit,
+# and compares that against the last release this repository *successfully* synchronized. A run
+# that never fired, was delayed, or was dropped costs nothing: the next run computes the same
+# difference and acts on it. There is no queue and no cursor to lose.
+#
+# Idempotence
+# -----------
+# A re-run after a successful sync decides "no action". A run that fails records the failure
+# without advancing the recorded release, so the next run retries it. The mirror itself is
+# hash-based, so even a redundant run writes identical bytes.
+#
+# Least privilege
+# ---------------
+# `contents: read` only. The job writes Firestore through the service account, never the GitHub
+# API, and it never deploys security rules — that stays in `firestore-rules.yml`.
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub runs scheduled work on a best-effort basis and may delay or skip
+    # a run under load; the comparison above makes a missed run harmless.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Synchronize even when the recorded release already matches upstream"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Detect only (print the decision, write nothing)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Two runs must not race for the same Firestore documents. `cancel-in-progress: false` queues
+# instead of cancelling, so a run that is mid-write is never killed.
+concurrency:
+  group: alpha-release-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Detect and synchronize the newest Alpha release
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out the site repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # Node 22 for the same reason as the other Firebase workflow: `superstatic` (a
+          # firebase-tools dependency) declares "18 || 20 || 22".
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Check for the service account secret
+        id: credential
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVICE_ACCOUNT}" ]; then
+            echo "::warning::FIREBASE_SERVICE_ACCOUNT is not set. Releases cannot be synchronized or recorded."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          node -e '
+            const raw = process.env.SERVICE_ACCOUNT;
+            let parsed;
+            try { parsed = JSON.parse(raw); } catch { console.error("::error::FIREBASE_SERVICE_ACCOUNT is not valid JSON"); process.exit(1); }
+            if (!parsed.client_email || !parsed.private_key) {
+              console.error("::error::FIREBASE_SERVICE_ACCOUNT is not a service account key");
+              process.exit(1);
+            }
+            console.log(`client_email: ${parsed.client_email}`);
+            console.log(`project_id: ${parsed.project_id}`);
+          '
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the credential identity and Cloud project
+        if: steps.credential.outputs.present == 'true'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node scripts/check-firebase-access.mjs --identity-only
+
+      - name: Detect the newest upstream release
+        id: detect
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        # A detection run must not report success over an unreadable state document: the
+        # script exits 2 without a credential and 4 when Firestore cannot be read. Both are
+        # real failures here, because "changed=false" would otherwise be a guess.
+        if: steps.credential.outputs.present == 'true' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        # Writes the `GITHUB_OUTPUT` protocol, so `changed`/`tag`/`sha` are set by the script
+        # itself and never re-parsed out of the log.
+        run: node scripts/check-upstream-release.mjs ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Report a missing credential
+        if: steps.credential.outputs.present != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        run: |
+          echo "::error::FIREBASE_SERVICE_ACCOUNT is not configured, so releases cannot be synchronized."
+          echo "Add the service account JSON as a repository secret, or run this workflow manually with dry_run=true."
+          exit 1
+
+      # `force` on a manual dispatch skips the comparison. The mirror is hash-based, so this
+      # rewrites only what differs; it exists to repair a mirror that was edited out of band.
+      - name: Decide
+        id: decide
+        if: steps.detect.outputs.changed == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force)
+        run: echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - name: No new release
+        if: steps.detect.outputs.changed == 'false' && !(github.event_name == 'workflow_dispatch' && inputs.force)
+        run: echo "::notice::${{ steps.detect.outputs.reason }}"
+
+      - name: Synchronize the mirror
+        id: sync
+        if: steps.decide.outputs.run == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        # The mirror reads `main`, which the detection step proved contains the release tag.
+        # `--full` is not used: incremental sync is hash-based and already correct.
+        run: node scripts/sync-firestore.mjs
+
+      # Both recording steps run even when the sync failed, so the failure is visible in state
+      # and the next scheduled run retries instead of believing the mirror is current.
+      - name: Record a successful sync
+        if: steps.sync.outcome == 'success'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          OQ_RELEASE_TAG: ${{ steps.detect.outputs.tag }}
+          OQ_RELEASE_SHA: ${{ steps.detect.outputs.sha }}
+          OQ_RELEASE_HASH: ${{ steps.detect.outputs.hash }}
+        run: node scripts/check-upstream-release.mjs --record=ok
+
+      - name: Record a failed sync
+        if: steps.decide.outputs.run == 'true' && steps.sync.outcome != 'success' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          OQ_RELEASE_TAG: ${{ steps.detect.outputs.tag }}
+          OQ_RELEASE_SHA: ${{ steps.detect.outputs.sha }}
+          OQ_RELEASE_DETAIL: "the mirror sync did not succeed"
+        run: node scripts/check-upstream-release.mjs --record=failed
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## Alpha release sync"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| upstream release | \`${{ steps.detect.outputs.tag }}\` |"
+            echo "| commit | \`${{ steps.detect.outputs.sha }}\` |"
+            echo "| decision | ${{ steps.detect.outputs.changed == 'true' && 'synchronize' || 'no action' }} |"
+            echo "| reason | ${{ steps.detect.outputs.reason }} |"
+            echo "| mirror sync | ${{ steps.sync.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

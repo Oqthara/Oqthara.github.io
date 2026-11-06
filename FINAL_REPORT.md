@@ -153,48 +153,64 @@ Administrative writes happen only in the trusted Actions environment, using the
 `FIREBASE_SERVICE_ACCOUNT` secret. That secret is never `VITE_`-prefixed and never reaches the
 browser bundle.
 
-### Blocker (honest status)
+### Superseded claim: the credential is configured
 
-**`FIREBASE_SERVICE_ACCOUNT` is not configured for this repository.** `gh secret list -R
-Oqthara/Oqthara.github.io` returns an empty list. Without it no live synchronisation can run,
-and I will not invent credentials or weaken the rules to make the site appear functional.
-
-Evidence gathered:
+An earlier revision of this report stated that `FIREBASE_SERVICE_ACCOUNT` was not configured.
+That was true when written and is **no longer true**. The secret was added at
+`2026-11-06T12:54:21Z`, and the mirror has since reconciled live against production.
 
 ```
 $ gh secret list -R Oqthara/Oqthara.github.io
-(empty)
+FIREBASE_SERVICE_ACCOUNT	2026-11-06T12:54:21Z
 
-$ curl -o /dev/null -w "%{http_code}" …/documents/<collection>?key=<public web key>
-documentation -> 403
-examples      -> 403
-releases      -> 403
-stdlib        -> 403
-metadata      -> 403
-sync          -> 403
+$ gh run list -R Oqthara/Oqthara.github.io --limit 3
+completed  success  Firebase sync     main  workflow_dispatch  42226044682  28s  2026-11-06T13:30:33Z
+completed  success  Firestore rules   main  workflow_dispatch  42225916505  36s  2026-11-06T13:29:37Z
+completed  success  Pages             main  push               42225214704  3m17s 2026-11-06T13:24:14Z
 ```
 
-A 403 on an unwritten project is the correct response, not a rules failure.
+The green run proves three things that were previously inferred:
 
-**Substitute evidence that the read path works:** the 57-record emulator seed, the 13/13 rules
-proof, and `artifacts/visual-audit/firebase-content-loaded.png` — a real browser capture of a
-documentation page whose `data-source` is `firestore`, taken from a build pointed at the
-emulator. Together they demonstrate the full read path without a production credential.
+```
+client_email: oqthara-github-sync@oqthara.iam.gserviceaccount.com
+project_id: oqthara
+Sync canonical content to Firestore:
+  would write 0, skip 59 unchanged, unpublish 0, skip 0 oversized
+```
 
-**To close:** add the JSON key of a service account holding `Cloud Datastore User` on project
-`oqthara` as the `FIREBASE_SERVICE_ACCOUNT` secret, then dispatch `firebase-sync` with
-`dry_run=false`. The workflow validates the JSON, masks the value, and writes it to a temporary
-credentials file that is deleted on exit.
+The identity is the expected principal, the project is the expected project, and the mirror was
+already at parity — 59 documents unchanged. The `client_email` line in the step *log* appears as
+`client_email: $***parsed.client_email***` inside the echoed script, confirming the runner masks
+the secret value.
+
+Independent verification against the live database, using the public web API key and no
+credential:
+
+```
+$ curl "…/documents/documents?key=<public web key>"                    -> 403
+$ curl "…/documents/documents?key=<public web key>&where=published==true" -> 19
+$ …examples (published == true)   -> 37
+$ …releases (published == true)   -> 2
+$ …stdlib   (published == true)   -> 1
+```
+
+An unfiltered list is refused and a `published == true` query is answered — exactly what
+`firestore.rules` permits. Upstream `main` holds 18 documents plus `CHANGELOG.md` and 37
+examples, so the mirror is complete and current.
+
+The emulator evidence below (57-record seed, 13/13 rules proof, the `data-source="firestore"`
+capture) remains valid as proof of the browser read path; it is no longer a *substitute* for
+production.
 
 ---
 
 ## 8. Commands and results
 
-Every command below was executed in `.site-repo/`.
+Every command below was executed in the site checkout at the commit named in §12.
 
 | Command | Result |
 |---------|--------|
-| `npm test` | **145 tests, 141 pass, 0 fail, 4 skipped** |
+| `npm test` | **208 tests, 204 pass, 0 fail, 4 skipped** |
 | `npm run test:rules` | **13/13 rule assertions passed** |
 | `npm run build` | 10 static routes + `404.html` prerendered into `_site` |
 | `npm run verify` | **11 HTML files verified** |
@@ -291,10 +307,10 @@ links, Inter typeface — not the static server's error page.
 | Website visually repaired | Met — 57/57 audit checks |
 | Navigation works desktop and mobile | Met — with ARIA, Escape and focus return |
 | Oqthara syntax highlighting | Met — real grammar, 14 token classes verified |
-| Firestore reads work | Met — proven against the emulator; production blocked on the secret |
-| Public access restricted to published content | Met — 13/13 rules assertions |
+| Firestore reads work | Met — live production reads verified; emulator proof retained |
+| Public access restricted to published content | Met — 13/13 rules assertions, plus live 403/200 contrast |
 | Client writes denied | Met — `write: if false` everywhere, asserted |
-| Sync implemented or blocker documented | Met — implemented; blocker documented with evidence |
+| Sync implemented or blocker documented | Met — implemented **and** run green in production |
 | Dynamic content remains automatic | Met — no hand-maintained content introduced |
 | Existing content not silently lost | Met — deletions unpublish, never drop |
 | Playwright passes | Met — 34 passed |
@@ -302,8 +318,9 @@ links, Inter typeface — not the static server's error page.
 | Screenshots produced | Met — 16 files |
 | CI green and deployed | Met — run `42168174018` succeeded end to end |
 
-One criterion is met with a documented external blocker rather than a green production run: live
-synchronisation needs a credential only the repository owner can provide.
+Every criterion is now met with executed evidence. The one line that was previously qualified —
+live synchronisation needing a credential only the repository owner could provide — has been
+closed: the owner configured it, and the first production run reconciled the mirror successfully.
 
 ---
 

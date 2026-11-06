@@ -1,6 +1,6 @@
 # Firebase: credentials, workflows and the rules boundary
 
-This repository owns two Firebase jobs with deliberately separate credentials and separate
+This repository owns three Firebase jobs with deliberately separate triggers and separate
 failure modes. Nothing here is a secret; the credential itself lives only in the
 `FIREBASE_SERVICE_ACCOUNT` repository secret.
 
@@ -9,6 +9,7 @@ failure modes. Nothing here is a secret; the credential itself lives only in the
 | Concern | Workflow | Writes | Needs |
 | --- | --- | --- | --- |
 | Content mirror (`documentation`, `examples`, `releases`, `stdlib`) | `.github/workflows/firebase-sync.yml` | Documents via the Admin SDK | `roles/datastore.user` |
+| Alpha release detection | `.github/workflows/alpha-release-sync.yml` | The mirror, plus `sync/upstream-release` | `roles/datastore.user` |
 | Security rules (`firestore.rules`) | `.github/workflows/firestore-rules.yml` | The `cloud.firestore` release | `roles/firebaserules.admin` |
 
 The split is intentional. Before it, a single job mirrored content and then deployed rules, so
@@ -24,7 +25,7 @@ Production expects exactly one principal:
 oqthara-github-sync@oqthara.iam.gserviceaccount.com   in project oqthara
 ```
 
-Both workflows print `client_email` and `project_id` and stop when either differs. That is the
+All three workflows print `client_email` and `project_id` and stop when either differs. That is the
 whole diagnostic: a mismatch is reported, never papered over by granting a role to whatever
 principal happened to be configured.
 
@@ -102,3 +103,65 @@ is skipped whole and recorded as `oversized` — never truncated.
 Exit codes: `0` ok, `1` usage, `2` missing credentials, `3` GitHub failure, `4` Firestore
 failure. `--dry-run` reads GitHub, prints the plan and writes nothing; it needs no credential at
 all.
+
+## Watching for Alpha releases
+
+`scripts/check-upstream-release.mjs` answers one question per run: *does the mirror reflect the
+newest published upstream release?* `alpha-release-sync.yml` asks it every 15 minutes.
+
+Polling is the mechanism, not a compromise. A GitHub `release` event fires only for releases
+created in the repository that owns the workflow, and upstream (`Oqthara/oqthara`) cannot
+dispatch an event here without a token committed there. Polling also makes catch-up free: nothing
+is queued, so a delayed or skipped run simply recomputes the same difference next time.
+
+One run does three things:
+
+1. Reads the newest **published, non-draft** release from upstream, ordered by `published_at`
+   rather than by tag name or id, so an older release re-published later still wins.
+2. Resolves the tag to a commit with `/commits/{tag}`. `/git/ref/tags/{tag}` is wrong here: for an
+   annotated tag it returns the tag object's SHA, not the commit's.
+3. Compares that against `sync/upstream-release` in Firestore, the record of the last release this
+   repository actually synchronized.
+
+The decision matrix:
+
+| recorded state | upstream | result |
+| --- | --- | --- |
+| none | any | synchronize (first run) |
+| same tag, same commit | unchanged | no action |
+| newer tag | newer commit | synchronize |
+| same tag, **different** commit | tag re-pointed | synchronize |
+| same tag, same commit, body edited | content hash changed | synchronize |
+| same tag, `lastAttempt.result: failed` | unchanged | synchronize (retry) |
+| any | tag not an ancestor of `main` | fail the run |
+
+Only a successful sync advances the record. A failed attempt writes
+`lastAttempt: { result: "failed", detail }` and leaves `tag`/`commitSha` alone, so the next run
+retries rather than believing the mirror is current.
+
+The ancestry gate exists because the mirror follows `main`. A tag cut from a side branch is not
+reachable from `main`, so mirroring `main` and labelling it with that tag would publish the wrong
+bytes under a release name. When `compare/{tag}...main` reports `diverged`, the run fails with an
+explicit error instead.
+
+Exit codes: `0` ok, `1` usage, `2` missing credentials, `3` upstream lookup or ancestry failure,
+`4` Firestore read/write failure. Unlike the sync script, this one **fails closed** without a
+credential during a normal run: detection reads the recorded state to decide, and reporting "no
+change" over an unread state would be a guess. `--dry-run` is the credential-free escape hatch.
+
+`--record=ok` and `--record=failed` are the writers the workflow calls after the sync step, with
+`OQ_RELEASE_TAG`, `OQ_RELEASE_SHA`, and (for success) `OQ_RELEASE_HASH` in the environment.
+
+### The state document
+
+`sync/upstream-release`, in the collection the rules make unreadable from a browser:
+
+```
+tag, commitSha, hash, name, url, publishedAt, prerelease  // last successful sync
+syncedAt                                                  // when it succeeded
+lastCheckedAt, observed: { tag, commitSha, hash }         // every run, success or not
+lastAttempt: { result, tag, commitSha, detail, at }       // most recent attempt
+```
+
+It is bookkeeping, not content: the site never reads it, and no browser can.
+
