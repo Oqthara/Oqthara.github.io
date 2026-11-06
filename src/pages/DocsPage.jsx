@@ -63,7 +63,10 @@ function DocumentIndex({ docs }) {
                 "a",
                 { href: doc.route },
                 h("span", null, doc.title),
-                h("span", { className: "doc-path" }, doc.path),
+                // The path is orientation for the eye. Left in the accessible name it ran into
+                // the title with no separator ("Documentationdocs/README.md"), so a screen
+                // reader announced a URL fragment glued to the page name.
+                h("span", { className: "doc-path", "aria-hidden": "true" }, doc.path),
               ),
             ),
           ),

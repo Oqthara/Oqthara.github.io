@@ -329,7 +329,10 @@ hr {
 
 .brand {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
+  /* The wordmark measured 70x28: a link whose hit area is shorter than the text beside it.
+     44px of height costs nothing here because the search field already sits at that size. */
+  min-height: 2.75rem;
   gap: 1px;
   font-family: var(--font-mono);
   font-size: var(--step-1);
@@ -409,11 +412,12 @@ hr {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* 40px minimum touch target. `flex-shrink: 0` because the shrink above used to squeeze these
-     to 31.7px at 320px: a touch target must not be negotiable. */
+  /* 44px touch target. WCAG 2.2 AA asks for 24px (2.5.8) and these passed at 40px, but 44px
+     (2.5.5) is what a thumb actually hits, and the header had room. `flex-shrink: 0` because
+     the shrink above used to squeeze these to 31.7px at 320px. */
   flex: 0 0 auto;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 2.75rem;
+  height: 2.75rem;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1326,6 +1330,13 @@ input:focus-visible {
   text-decoration: underline;
 }
 
+/* The documentation page title. It sits below the breadcrumb and channel bar so the reader
+   meets "Parent node n-1 of a k-ary heap" rather than a trail of where it lives. */
+.doc-title {
+  font-size: var(--step-4);
+  margin-bottom: var(--space-4);
+}
+
 .doc-source {
   margin-top: var(--space-6);
   padding-top: var(--space-4);
@@ -1695,6 +1706,7 @@ input:focus-visible {
 .search .search-input {
   width: clamp(6.5rem, 18vw, 12rem);
   min-width: 0;
+  min-height: 2.75rem;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1769,20 +1781,6 @@ input:focus-visible {
   font-size: var(--step--2);
   color: var(--fg-subtle);
   overflow-wrap: anywhere;
-}
-
-@media (max-width: 900px) {
-  .search-input {
-    width: 7rem;
-  }
-}
-
-@media (max-width: 480px) {
-  /* Keep search available but let it yield space to the two buttons. */
-  .search-input {
-    width: 5.5rem;
-    padding-inline: var(--space-2);
-  }
 }
 
 /* ---------------------------------------------------------------- misc */

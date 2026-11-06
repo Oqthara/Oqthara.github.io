@@ -145,7 +145,6 @@ export function DocumentPage({ query }) {
       h(
         "div",
         { className: "docs-main" },
-        h("h1", { className: "visually-hidden" }, title),
         h(
           "nav",
           { className: "breadcrumbs", "aria-label": "Breadcrumb" },
@@ -156,6 +155,10 @@ export function DocumentPage({ query }) {
           h("span", { "aria-current": "page" }, title),
         ),
         h(ChannelBar, { channels, channel }),
+        // The document's own heading names the page. It used to be here but visually hidden,
+        // which left the reader with a breadcrumb and no title: every documentation page
+        // looked like it had started in the middle.
+        h("h1", { className: "doc-title" }, title),
 
         document.status === "loading" ? h(Loading, { path }) : null,
         document.status === "error" && !document.data
