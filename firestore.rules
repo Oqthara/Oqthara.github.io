@@ -1,0 +1,67 @@
+rules_version = '2';
+
+// Security boundary for the Oqthara content mirror.
+//
+// The browser is untrusted. This file — not the `where('published', '==', true)` filter in
+// `src/repositories/*.repository.js` — is what guarantees that an unpublished or oversized
+// document can never be read from the public project. The repository filter is defence in
+// depth: it keeps malformed documents out of the UI, it is not a permission.
+//
+// Every collection is read-only for clients. Content is written exclusively by
+// `scripts/sync-firestore.mjs` with the Admin SDK, which bypasses these rules by design.
+// There is no client write path and no admin credential under `src/`.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // A document is publicly readable only when it carries the literal boolean `true`.
+    // A missing document has `resource == null`, so the guard denies instead of throwing.
+    function isPublished() {
+      return resource != null
+        && resource.data != null
+        && resource.data.published == true;
+    }
+
+    // Mirrored canonical content. All four collections share the same schema and the same
+    // read rule, so a new mirrored collection must not be added here without the rule.
+    match /documentation/{docId} {
+      allow read: if isPublished();
+      allow write: if false;
+    }
+
+    match /examples/{docId} {
+      allow read: if isPublished();
+      allow write: if false;
+    }
+
+    match /releases/{docId} {
+      allow read: if isPublished();
+      allow write: if false;
+    }
+
+    match /stdlib/{docId} {
+      allow read: if isPublished();
+      allow write: if false;
+    }
+
+    // Sync bookkeeping records which documents are published, oversized or gone. They contain
+    // operational detail (byte counts, reasons) and are not public content, so even a record
+    // that accidentally carried `published: true` is unreadable from a client.
+    match /sync/{docId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // Reserved for future site metadata. Deny by default rather than leak an unscoped field.
+    match /metadata/{docId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // Anything not named above is closed. A collection added to the sync script without a rule
+    // in this file is unreadable, which fails safe.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

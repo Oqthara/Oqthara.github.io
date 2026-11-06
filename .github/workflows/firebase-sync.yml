@@ -1,0 +1,117 @@
+name: Firebase sync
+
+# Mirrors canonical repository content into Cloud Firestore.
+#
+# The canonical repository at github.com/Oqthara/oqthara stays the source of truth; this job
+# copies it. The site prefers the mirror and falls back to GitHub, so a failed run degrades
+# freshness, never correctness.
+#
+# Required secret: FIREBASE_SERVICE_ACCOUNT — the JSON key of a service account with the
+# "Cloud Datastore User" role in project oqthara (or Firebase Admin). Create it in the Firebase
+# console (Project settings -> Service accounts -> Generate new private key) and add the whole
+# file as a repository secret. It is never printed: only its presence is checked.
+#
+# Deployment credentials for `firebase deploy --only firestore:rules` are the same service
+# account, passed through `GOOGLE_APPLICATION_CREDENTIALS`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Full reconciliation (rewrite every document)"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Dry run (read GitHub, print the diff, write nothing)"
+        type: boolean
+        default: false
+  schedule:
+    # Daily at 03:17 UTC. A fixed odd minute avoids the top-of-hour runner spike.
+    - cron: "17 3 * * *"
+  repository_dispatch:
+    types: [content-updated]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firebase-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync canonical content to Firestore
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the site repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Check for the service account secret
+        id: credential
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVICE_ACCOUNT}" ]; then
+            echo "::warning::FIREBASE_SERVICE_ACCOUNT is not set. The mirror cannot be updated."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Validate without printing: the file must be JSON with a private key.
+          node -e '
+            const raw = process.env.SERVICE_ACCOUNT;
+            let parsed;
+            try { parsed = JSON.parse(raw); } catch { console.error("::error::FIREBASE_SERVICE_ACCOUNT is not valid JSON"); process.exit(1); }
+            if (!parsed.client_email || !parsed.private_key) {
+              console.error("::error::FIREBASE_SERVICE_ACCOUNT is not a service account key");
+              process.exit(1);
+            }
+            console.log("service account key is present and well formed");
+          '
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
+      - name: Fail closed when the credential is missing on a scheduled sync
+        if: steps.credential.outputs.present != 'true' && github.event_name != 'workflow_dispatch'
+        run: |
+          echo "::error::FIREBASE_SERVICE_ACCOUNT is not configured, so scheduled syncs cannot run."
+          echo "Add the service account JSON as a repository secret, or run this workflow manually with dry_run=true."
+          exit 1
+
+      - name: Dry run (no credentials required)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/sync-firestore.mjs --dry-run ${{ inputs.full && '--full' || '' }}
+
+      - name: Sync
+        if: steps.credential.outputs.present == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node scripts/sync-firestore.mjs ${{ inputs.full && '--full' || '' }}
+
+      - name: Deploy Firestore security rules
+        if: steps.credential.outputs.present == 'true'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          # The service account file is created inside the runner's temp directory, removed on
+          # exit, and never echoed. `::add-mask::` guards against an accidental later print.
+          credentials="$(mktemp)"
+          trap 'rm -f "$credentials"' EXIT
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$credentials"
+          chmod 600 "$credentials"
+          echo "::add-mask::$FIREBASE_SERVICE_ACCOUNT"
+          export GOOGLE_APPLICATION_CREDENTIALS="$credentials"
+          npx --yes firebase-tools@13 deploy --only firestore:rules --project oqthara --non-interactive
