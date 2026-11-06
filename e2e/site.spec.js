@@ -74,6 +74,9 @@ test.describe("site", () => {
   });
 
   test("2. main navigation reaches each route and h1", async ({ page }) => {
+    // The nav is inline above the 960px collapse point and behind the menu button below it, so
+    // this traversal pins a desktop width. Test 3 covers the collapsed menu at a phone width.
+    await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");
     const nav = page.getByRole("navigation", { name: "Main" });
     const destinations = [
@@ -268,17 +271,7 @@ test.describe("site", () => {
     await waitForArticle(page);
   });
 
-  test("21. no uncaught exceptions or console errors across the routes", async ({ page }) => {
-    const failures = [];
-    page.on("pageerror", (error) => failures.push(`pageerror: ${error.message}`));
-    page.on("console", (message) => {
-      if (message.type() !== "error") return;
-      const text = message.text();
-      // A missing favicon is a server detail, not a page error.
-      if (/favicon\.ico/i.test(text)) return;
-      failures.push(`console: ${text}`);
-    });
-
+  test("21. no uncaught exceptions or console errors across the routes", async ({ browser }) => {
     const routes = [
       "/",
       "/philosophy.html",
@@ -291,9 +284,31 @@ test.describe("site", () => {
       "/changelog.html",
       "/status.html",
     ];
+    // Each route gets its own context. Reusing one page means leaving the previous document,
+    // and WebKit reports the teardown of the SDK's long-lived Firestore Listen channel as a
+    // cross-origin `pageerror` naming the request URL. That is transport noise from the walk
+    // itself, not a defect in the page, and it cannot be fixed from application code: the site
+    // issues only one-shot getDocs/getDoc reads and owns no listener to close. A fresh context
+    // per route measures what this test is for -- the errors a visitor actually causes by
+    // loading a page -- rather than the errors caused by abandoning one.
+    const failures = [];
     for (const route of routes) {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      page.on("pageerror", (error) => failures.push(`${route} pageerror: ${error.message}`));
+      page.on("console", (message) => {
+        if (message.type() !== "error") return;
+        const text = message.text();
+        // A missing favicon is a server detail, not a page error.
+        if (/favicon\.ico/i.test(text)) return;
+        failures.push(`${route} console: ${text}`);
+      });
+
       await page.goto(route);
       await expect(page.locator("main")).toBeVisible();
+      // Let backend reads land so a failure would be reported against this route, not the next.
+      await page.waitForTimeout(2500);
+      await context.close();
     }
     expect(failures).toEqual([]);
   });
