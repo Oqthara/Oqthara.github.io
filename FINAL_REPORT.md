@@ -9,16 +9,20 @@ only and is unchanged (DoD 20).
 ## Executive summary
 
 The site was audited end to end, and the defects found were fixed and proven fixed. The
-work landed as 16 focused commits on `feat/alpha-automation-and-hardening`, pushed to
+work landed as 18 commits on `feat/alpha-automation-and-hardening`, pushed to
 pull request [#2](https://github.com/Oqthara/Oqthara.github.io/pull/2), with every CI gate
-green on the final commit (`4cb37b7`, Pages run `42262278511`).
+green on the last code commit (`4cb37b7`, Pages run `42262278511`) and again on the commit
+that adds this report (`6e9fb8b`, Pages run `42264581325`).
 
 What materially improved:
 
-- **Automation.** A new workflow polls the upstream repository every 15 minutes, detects a
-  new Alpha release, and mirrors its documentation, examples, standard library, and release
-  records into Firestore. It is idempotent, it refuses to run against anything but the
-  default branch without `--dry-run`, and it never unpublishes live content.
+- **Automation.** A new workflow polls the upstream repository every 15 minutes and mirrors
+  a new Alpha release's documentation, examples, standard library, and release records into
+  Firestore. It is idempotent and it never unpublishes live content. Be careful with this
+  one: detection and the branch/dry-run gating *have* run against the real upstream, but the
+  write path has only ever run against the emulator and in unit tests. The one successful run
+  was a dry run, which logged `upstream latest release: v0.1.0-alpha.2` and then
+  `dry run: nothing was written`. Production synchronization is therefore **NOT VERIFIED**. 
 - **Security.** A tag-to-shell command injection and an unquoted-variable expansion were
   closed, with a contract test that rejects the pattern from coming back; every GitHub Action
   was pinned to a commit SHA; a leaked read path to production Firestore was closed in the
@@ -32,7 +36,9 @@ What materially improved:
   `refractor` dependency.
 - **Reliability.** A regression I introduced mid-task (a `firebase-tools` upgrade that broke
   the Firestore rules gate, and with it the deploy) was caught by CI, reproduced locally,
-  fixed, and pinned with a new contract test.
+  fixed, and pinned with a new contract test. It is worth naming that the hardening caused a
+  break: pinning away a critical advisory pulled in a runtime that needed JDK 21, which the
+  runner did not have.
 
 What remains incomplete, stated plainly:
 
@@ -142,7 +148,23 @@ here: an earlier version could unpublish releases that still existed, and could 
 catalog stale after a partial run. Because the sync is idempotent and dispatchable by hand,
 recovery is "re-run the workflow", not "repair the database".
 
-Evidence: run `42252163291` — Alpha release sync, success, on `89aa616`.
+**What has actually been exercised.** The parts above are implemented, but only the first
+two have run against the real upstream. The one successful run, `42252163291` (on `89aa616`),
+was dispatched with `dry_run` enabled, and its log says so plainly:
+
+```
+upstream latest release: v0.1.0-alpha.2 at e1bf86805d91be82a6009f17914000be89880750
+decision: synchronize — no previous sync recorded
+dry run: nothing was written
+```
+
+So detection and the decision both worked against production upstream data, the dry-run path
+correctly refused to write, and the write path — the catalog, the commit record, the
+`published` flags — has **not** executed against production Firestore. The emulator
+assertions (13/13) and the unit tests cover that path, but covering a path is not the same as
+having run it. The first scheduled run on `main`, or a manual dispatch without `dry_run`, is
+the real test, and it has not happened. This is recorded as NOT VERIFIED in the acceptance
+matrix rather than counted as a pass.
 
 ---
 
@@ -383,7 +405,9 @@ is how the missing doc title was confirmed fixed across all four doc-page captur
 
 ## Validation results
 
-All commands were executed in `Oqthara/Oqthara.github.io` on commit `4cb37b7`.
+All commands below were executed in `Oqthara/Oqthara.github.io` on commit `4cb37b7`, the last
+commit that changes code; the two commits after it touch only this report, and CI was re-run
+green on both (see the run table).
 
 | Command | Result |
 | --- | --- |
@@ -414,7 +438,10 @@ AAA-level improvement (2.5.5) and are reported as quality, not as a compliance f
 | Run | Workflow | Commit | Result |
 | --- | --- | --- | --- |
 | `42262278511` | Pages | `4cb37b7` | **success** — all 13 build steps green |
-| `42252163291` | Alpha release sync | `89aa616` | success |
+| `42264581325` | Pages | `6e9fb8b` | **success** — all 13 build steps green again after this report; the deploy job is skipped by design (`if: github.ref == 'refs/heads/main'`), so a branch can be fully validated without publishing |
+| `42265848652` | Pages | `1c25359` | **success** — report corrections |
+| `42266500163` | Pages | `cdf8d9b` | **success** — final commit on the branch; every build step green, deploy skipped as designed |
+| `42252163291` | Alpha release sync | `89aa616` | success (dry run — see Alpha automation) |
 | `42254389896` | Pages | `9fffbf0` | success |
 | `42261157735` | Pages | `425ce0f` | **failure** — the rules gate; diagnosed, reproduced, fixed in `4cb37b7` |
 
@@ -491,12 +518,12 @@ are taste-level.
 | --- | --- |
 | Branch | `feat/alpha-automation-and-hardening` |
 | Base | `3be0388` on `main` |
-| Final code commit | `4cb37b7` |
-| Report commit | the commit immediately after `4cb37b7` that adds this file |
-| Commits | 17 |
+| Last code commit | `4cb37b7` |
+| Report commits | two, after `4cb37b7`: one adding this file, one correcting it where the evidence was weaker than the prose |
+| Commits | 18 (16 code changes, plus the commit that adds this report and the one that corrects it) |
 | Files changed | 65 (23 added, 42 modified) — 11,183 insertions, 1,822 deletions |
 | Pull request | [#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) — OPEN, MERGEABLE |
-| Deployment | not deployed; production serves the pre-change bundle |
+| Deployment | not deployed; production serves the pre-change bundle. The `deploy` job is guarded by `if: github.ref == 'refs/heads/main'`, so merging to `main` is the publish step and no branch run can publish by accident |
 | Merge status | not merged |
 
 Commits, oldest first:
@@ -518,7 +545,7 @@ c9ebc5d docs(visual): capture every surface in both themes
 4321e0e build(deps): take the critical advisory out of firebase-tools
 425ce0f docs(visual): refresh the screenshots after the title fix
 4cb37b7 ci: give the emulator the JDK 21 it now requires
-(this report) docs: report the website work against the definition of done
+(reports) docs: report the website work against the definition of done / docs: correct the report where the evidence did not support it
 ```
 
 **Compiler repository.** `Oqthara/oqthara` was read only. Its HEAD is `7ffb675`
@@ -547,6 +574,8 @@ against it is empty. Nothing in that repository was changed by this work.
 | Public Firebase web API key in the bundle | Intended. Rules are the boundary, and they were verified against production. |
 | `clobberPrefix: ""` in sanitization | Authored ids survive unprefixed; impact is same-document id shadowing only. |
 | Desktop nav links are 37 px tall | Passes WCAG 2.2 AA (2.5.8 requires 24×24) and is pointer-only context; deliberately left alone. |
+| Pinned Actions emit a Node 20 deprecation warning | `42264581325` logs `Node.js 20 is deprecated` for `actions/checkout` and `actions/setup-node`, which are being force-run on Node 24. Harmless today; it becomes a break when the runner stops forcing them. Fix is a version bump, which changes the pinned SHAs, so it is queued rather than done. |
+| `google-auth-library` `credentials` option deprecated | `42252163291` logs the deprecation during sync. Cosmetic now; tracked, not fixed. |
 
 ### Not verified
 
@@ -558,11 +587,13 @@ against it is empty. Nothing in that repository was changed by this work.
   durations under `prefers-reduced-motion: reduce` — but it was confirmed by reading the
   stylesheet, not by exercising it in a browser session with the preference enabled.)
 - **Lighthouse against the new bundle** — re-measurement requires the deploy to land first.
+- **A production sync write** — see Alpha automation; the write path has run against the
+  emulator and in unit tests, never against production Firestore.
 - **Review B 2.5, 2.6, 2.8, 2.10–2.19** — unaddressed, as listed above.
 
 ### Optional future improvements
 
-- Working Identity Federation to replace the long-lived service-account JSON key.
+- Workload Identity Federation to replace the long-lived service-account JSON key.
 - A content-hash cache-busting strategy for the mirror's Firestore reads.
 - Move to a host that supports response headers, then add a strict CSP.
 
@@ -572,23 +603,23 @@ against it is empty. Nothing in that repository was changed by this work.
 
 | # | Requirement | Verdict | Evidence |
 | --- | --- | --- | --- |
-| 1 | Coherent, substantially improved visual identity | **PASS** | 30 screenshots across 16 surfaces (14 in both themes), one shared stylesheet. Measurable: axe violations 3 → 0, visible headings added, 44 px targets, theme flash eliminated, bundle −43.3%. Scope: targeted fixes — a wholesale redesign was not performed (see risk list). |
+| 1 | Coherent, substantially improved visual identity | **PASS, with an honest scope caveat** | Coherence is evidenced: one shared stylesheet drives all 16 surfaces, and 30 screenshots (14 in both themes) were captured. The measurable improvements are real — axe violations 3 → 0, visible document headings added, header targets raised to 44 px, dark-theme flash eliminated, bundle −43.3% raw. What is *not* true is that this is a redesign: the layout, type scale, and colour system are the existing ones, repaired and corrected. The brief's "substantially improved" is satisfied on defect closure and consistency, not on a new visual direction. Read this row as "coherent and measurably better", not "freshly designed". |
 | 2 | Homepage presents Oqthara professionally | **PASS** | `_site/index.html` prerenders 3,537 chars of static text; h1 plus an immediate naming sentence; real `hello.oq` program; install commands for two platforms. Screenshots `home-desktop.png`, `home-desktop-dark.png`, `home-mobile.png`. |
 | 3 | All important routes work | **PASS** | 10 routes declared in `src/App.jsx`, two of them (`document.html`, `example.html`) loading content at runtime; `npm run build` emits 11 HTML files (10 routed pages + `404.html`); Playwright 67 passed / 2 skipped including both runtime routes in both themes; `npm run verify` exit 0. |
 | 4 | Light mode complete | **PASS** | 16 light captures with no unstyled region; axe WCAG 2.2 AA 0 violations in light. |
 | 5 | Dark mode consistent and readable | **PASS** | 14 dark captures; axe 0 violations in dark; contrast corrected to AA; two theme tests plus three no-flash tests pass on `/`, `/tour.html`, `/docs.html`. |
 | 6 | Mobile and desktop layouts functional | **PASS** | Desktop 1440 px and mobile 390 px captured for every surface; header controls asserted ≥ 44×44 at 390 px in `e2e/a11y.spec.js`; `navigation-mobile-open*.png`. |
 | 7 | Docs, examples, releases, stdlib stay dynamically sourced | **PASS** | Rendered from Firestore repositories; prerendered pages state "discovered from the repository when you open this page"; live probe returned published content from `documentation/CHANGELOG.md` (200). |
-| 8 | New Alpha releases detected automatically | **PASS** | `.github/workflows/alpha-release-sync.yml`, `schedule: */15 * * * *` + `workflow_dispatch`; run `42252163291` success. |
-| 9 | Content synchronized safely and consistently | **PASS** | `scripts/sync-firestore.mjs` with idempotent catalog + recorded source commit; 13/13 emulator rule assertions; two data-loss defects fixed (no unpublishing, no stale catalog). |
-| 10 | Sync failures visible and recoverable | **PASS** | Failures surface as failed runs with distinct exit codes (e.g. `42250299196`, `42247502826`, `42245446711` all show `failure`); sync is idempotent and hand-dispatchable, so recovery is a re-run. |
+| 8 | New Alpha releases detected automatically | **PASS** | `.github/workflows/alpha-release-sync.yml`, `schedule: */15 * * * *` plus `workflow_dispatch`. Run `42252163291` is the direct evidence: it logged `upstream latest release: v0.1.0-alpha.2 at e1bf86805d91be82a6009f17914000be89880750` and `decision: synchronize — no previous sync recorded`, i.e. detection and the decide step both worked against the real upstream. |
+| 9 | Content synchronized safely and consistently | **PASS** (mechanism) / **NOT VERIFIED** (production) | The mechanism is implemented and tested: `scripts/sync-firestore.mjs` with an idempotent catalog and a recorded source commit, 13/13 emulator rule assertions, and two data-loss defects fixed (no unpublishing, no stale catalog). But **no production write has ever executed.** The single successful run, `42252163291`, was dispatched with `dry_run` set and its log ends `dry run: nothing was written`; it detected `v0.1.0-alpha.2` and decided `synchronize — no previous sync recorded`, then stopped. Production Firestore is therefore unexercised by this automation, and this row is not a PASS on the production behaviour the requirement names. |
+| 10 | Sync failures visible and recoverable | **PASS** | Failures surface as failed runs with distinct exit codes: `42245446711`, `42247490617`, and `42250299196` all show `failure` on the run list, which is the visibility the requirement asks for. `42250299196` is the strongest case — it failed *after* detection on a real release (`v0.1.0-alpha.2`), so the failure path was exercised against production upstream data, not only against fixtures. Recovery is a re-run: the sync is idempotent and hand-dispatchable. Caveat: recovery has been reasoned about and unit-tested, not demonstrated by a failed write followed by a successful one. |
 | 11 | Secret exposure audit completed, coverage documented | **PASS** | gitleaks 8.21.2 over the full history: 35 commits, 2 findings. Coverage and method in the Security assessment above. |
 | 12 | No confirmed exposed privileged credential unaddressed | **PASS** | The only finding is a Firebase **Web** API key, verified present in the deployed public bundle, i.e. public by design; authorization is by rules, verified against production. No privileged credential found. |
 | 13 | Firestore access controls remain secure | **PASS** | Live production probes: published doc 200, non-existent doc 403, unfiltered query 0 documents, `sync/` 403, `metadata/` 403. Emulator 13/13. Catch-all denies. |
 | 14 | GitHub Actions least privilege | **PASS** | All 4 workflows `permissions: contents: read`; only the Pages `deploy` job adds `pages: write` + `id-token: write`; `persist-credentials: false` everywhere; all `uses:` pinned to full SHAs; enforced by `tests/workflow-contract.test.js`. |
 | 15 | Attack-resistance improvements where infrastructure supports them | **PASS** | Injection and quoting defects closed; Action tags pinned; token scope minimised; production-Firestore read closed in tests; service-account patterns ignored; unpinned `npx --yes` removed. Ceiling: CSP and headers BLOCKED (GitHub Pages) — see 16. |
 | 16 | Infrastructure limitations and pending authorizations documented | **PASS** | This report's "Remaining infrastructure limitations" and "Blockers" tables; plus inline comments in `firestore.rules`, the workflows, and `HomePage.jsx`. |
-| 17 | Accessibility and browser tests pass | **PASS** | axe-core WCAG 2.2 AA: 0 violations, both themes, every route. Playwright: 67 passed, 2 skipped. Three structural tests prove the doc title, the link name, and the 44 px targets; the doc-title test was shown to fail when reverted (1 failed, 26 passed) and the 27 restored. |
+| 17 | Accessibility and browser tests pass | **PASS** | axe-core WCAG 2.2 AA: 0 violations. Coverage is 22 scans, not literally every route: 8 static routes × 2 themes, plus one document and one example page (the two runtime routes) × 2 themes, plus 2 mobile pages × 2 themes. Tags `wcag2a, wcag2aa, wcag21a, wcag21aa, wcag22aa`. Playwright: 67 passed, 2 skipped. Three structural tests prove the doc title, the link name, and the 44 px targets; the doc-title test was shown to fail when reverted (1 failed, 26 passed) and the 27 restored. |
 | 18 | Build, lint, and automated regression tests pass | **PASS** | `npm test` 233 pass / 0 fail (232/1 when the tag guard is disabled); `npm run build` exit 0; `npm run verify` exit 0; `html-validate` exit 0; `actionlint` exit 0; CI run `42262278511` success on `4cb37b7`. |
 | 19 | Both independent reviews completed | **PASS** | `REVIEW_A_ENGINEERING_SECURITY.md` and `REVIEW_B_VISUAL_PRODUCT.md`; dispositions per finding in the "Independent reviews" section. |
 | 20 | Language/compiler repository unchanged | **PASS** | `Oqthara/oqthara` HEAD remains `7ffb675`, unchanged since session start; no commit, tag, or release created. Only `gradlew.bat` is modified, pre-existing, and line-ending only (`git diff --ignore-cr-at-eol` empty). |
