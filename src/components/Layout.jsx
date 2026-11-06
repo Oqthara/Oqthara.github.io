@@ -1,5 +1,5 @@
 import { createElement as h, useEffect, useRef, useState } from "react";
-import { BASE_PATH, NAV } from "../data/meta.js";
+import { BASE_PATH, FOOTER_GROUPS, NAV } from "../data/meta.js";
 import { Search } from "./Search.jsx";
 
 /**
@@ -167,21 +167,60 @@ export function Layout({ current, children }) {
         ),
       ),
     ),
-    h("main", { id: "main" }, children),
+    h("main", { id: "main", tabIndex: -1 }, children),
     h(
       "footer",
       { className: "site-footer" },
       h(
         "div",
-        { className: "content site-footer-inner" },
-        h("span", null, "Oqthara · MIT · built on the JVM"),
+        { className: "content" },
         h(
-          "span",
-          { className: "footer-links" },
-          h("a", { href: hrefFor("/philosophy.html") }, "Philosophy"),
-          h("a", { href: hrefFor("/docs.html") }, "Documentation"),
-          h("a", { href: "https://github.com/Oqthara/oqthara" }, "GitHub"),
-          h("a", { href: "https://github.com/Oqthara/oqthara/releases" }, "Releases"),
+          "div",
+          { className: "site-footer-inner" },
+          h(
+            "div",
+            { className: "footer-brand" },
+            h("span", { className: "footer-mark" }, "Oqthara"),
+            h(
+              "p",
+              { className: "footer-note" },
+              "A small language for the JVM that reads like the idea. MIT licensed, Java 21 or newer, and every page here is built from the repository it describes.",
+            ),
+          ),
+          h(
+            "nav",
+            { className: "footer-groups", "aria-label": "Footer" },
+            FOOTER_GROUPS.map((group) =>
+              h(
+                "div",
+                { className: "footer-group", key: group.title },
+                h("h2", null, group.title),
+                h(
+                  "ul",
+                  null,
+                  group.links.map((link) =>
+                    h(
+                      "li",
+                      { key: link.label },
+                      h(
+                        "a",
+                        link.href.startsWith("http")
+                          ? { href: link.href, rel: "noreferrer" }
+                          : { href: hrefFor(link.href) },
+                        link.label,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        h(
+          "div",
+          { className: "footer-legal" },
+          h("span", null, "MIT licensed. Built on the JVM."),
+          h("span", null, "Documentation is read from the repository at request time."),
         ),
       ),
     ),
@@ -205,14 +244,17 @@ export function Note({ children }) {
   return h("div", { className: "note" }, children);
 }
 
-/** A card. `href` makes the whole card a link. */
-export function Card({ title, kicker, href, children }) {
+/** A card. `href` makes the whole card a link. `featured` raises it one step. */
+export function Card({ title, kicker, href, featured = false, children }) {
   const body = [
     kicker ? h("p", { className: "card-kicker", key: "k" }, kicker) : null,
     h("h3", { key: "t" }, title),
     children ? h("p", { key: "c" }, children) : null,
   ];
-  return href ? h("a", { className: "card", href }, body) : h("div", { className: "card" }, body);
+  const className = featured ? "card card-featured" : "card";
+  return href
+    ? h("a", { className, href }, body)
+    : h("div", { className }, body);
 }
 
 export function Grid({ children, two = false }) {

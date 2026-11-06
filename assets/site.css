@@ -13,26 +13,42 @@
 :root {
   color-scheme: dark light;
 
-  /* Surfaces, darkest to lightest */
-  --bg: #0a0e13;
-  --bg-elevated: #0f141b;
-  --surface: #121922;
-  --surface-2: #17202b;
-  --border: #223040;
-  --border-strong: #31435a;
+  /* Surfaces, darkest to lightest. Dark is the identity appearance: a cold near-black that
+     lets the green read as light rather than as paint. */
+  --bg: #070b0e;
+  --bg-elevated: #0c1218;
+  --surface: #101822;
+  --surface-2: #15202c;
+  --border: #22303f;
+  --border-strong: #33465c;
+  /* A border on a control has to be seen to find the control: this one measures 3.71:1 against
+     the page and 3.35:1 against a card, clearing the 3:1 non-text minimum. --border is a
+     decorative rule and deliberately quieter. */
+  --border-control: #5b6d80;
 
-  /* Text */
-  --fg: #e9eef5;
-  --fg-muted: #9daebf;
-  --fg-subtle: #71829a;
+  /* Text. Measured on --bg / --surface / --surface-2 respectively: 17.70 / 16.01 / 14.77 for
+     --fg, 9.55 / 8.63 / 7.96 for --fg-muted, 5.87 / 5.31 / 4.89 for --fg-subtle. */
+  --fg: #eef3f9;
+  --fg-muted: #a7b6c6;
+  --fg-subtle: #7b8ea3;
 
   /* Accents: a single green for identity, a blue for links and focus */
   --accent: #6ee7a0;
   --accent-strong: #34d399;
   --accent-contrast: #04160d;
   --accent-soft: rgba(110, 231, 160, 0.12);
+  --accent-line: rgba(110, 231, 160, 0.34);
   --link: #79b8ff;
   --link-hover: #a8d1ff;
+
+  /* Surface treatments, expressed once so a panel, a raised card and a hero plate differ by
+     one token instead of by an invented gradient at each call site. */
+  --gradient-hero: radial-gradient(60rem 32rem at 12% -12%, rgba(110, 231, 160, 0.16), transparent 62%),
+    radial-gradient(48rem 26rem at 92% 4%, rgba(121, 184, 255, 0.13), transparent 60%);
+  --gradient-panel: linear-gradient(160deg, var(--surface), var(--bg-elevated));
+  --grid-line: rgba(255, 255, 255, 0.035);
+  --state-hover: rgba(255, 255, 255, 0.05);
+  --state-active: rgba(255, 255, 255, 0.09);
   --warn: #f0b849;
   --danger: #ff7b72;
   --danger-soft: rgba(255, 123, 114, 0.12);
@@ -54,45 +70,137 @@
   --code-comment: #6b7d91;
 
   /* Type */
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* The system UI stack, named honestly. A previous revision listed "Inter" first, but the
+     font was never loaded -- no @font-face, no preload, no font binary in the payload -- so
+     every visitor rendered in the fallback anyway and the declaration only misled the next
+     reader. Using the platform UI font costs zero requests, keeps the text crisp at the small
+     sizes this site leans on, and is the fastest option on every platform. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
+  /* Three weights, plus one display weight. The audit found eight values in use (400, 550,
+     600, 620, 640, 650, 680, 700) whose half-steps were indistinguishable on screen but
+     unmistakable in the source. */
+  --weight-regular: 400;
+  --weight-medium: 550;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* A modular scale at a 1.2 ratio, clamped at the top so display type grows with the viewport
+     rather than stepping between breakpoints. The base step is 16px: the old 15px base made
+     every paragraph read a little small on a high-density laptop. */
   --step--2: 0.75rem;
   --step--1: 0.8125rem;
-  --step-0: 0.9375rem;
-  --step-1: 1.0625rem;
-  --step-2: 1.3125rem;
-  --step-3: 1.625rem;
-  --step-4: 2.125rem;
-  --step-5: clamp(2.25rem, 1.6rem + 3vw, 3.5rem);
-  --step-6: clamp(2.75rem, 1.8rem + 4.2vw, 4.5rem);
+  --step-0: 1rem;
+  --step-1: 1.125rem;
+  --step-2: 1.375rem;
+  --step-3: 1.75rem;
+  --step-4: 2.25rem;
+  --step-5: clamp(2.5rem, 1.75rem + 3.1vw, 3.75rem);
+  --step-6: clamp(3rem, 1.9rem + 4.4vw, 4.75rem);
 
-  --leading-tight: 1.15;
-  --leading-snug: 1.35;
-  --leading: 1.65;
+  --leading-tight: 1.08;
+  --leading-snug: 1.3;
+  --leading: 1.68;
+  --leading-code: 1.7;
+  --leading-doc: 1.72;
 
-  /* Space */
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-5: 1.5rem;
-  --space-6: 2rem;
-  --space-7: 3rem;
-  --space-8: 4rem;
-  --space-9: 6rem;
+  /* Optical letter-spacing for the two extremes: display type closes up, small caps open. */
+  --tracking-display: -0.028em;
+  --tracking-tight: -0.014em;
+  --tracking-caps: 0.09em;
+
+  /* Typography by role. Components reference these, never the numeric steps, so the hierarchy
+     can be retuned in one place and two elements that should match cannot drift apart.
+       display      the hero statement, once per page
+       page-title   the h1 of a page or document
+       section      a top-level section heading
+       subsection   a heading inside a section
+       card-title   the heading of a card or a status block
+       lead         the standfirst under a title, also the documentation reading size
+       body         running prose
+       secondary    supporting text that is still read
+       caption      small print, counts, metadata
+       label        uppercase micro-labels and eyebrow text
+       control      text inside an input or a control that mimics one */
+  --text-display: var(--step-6);
+  --text-page-title: var(--step-4);
+  --text-section: var(--step-3);
+  --text-subsection: var(--step-2);
+  --text-heading-sm: var(--step-1);
+  --text-card-title: var(--step-1);
+  --text-lead: var(--step-1);
+  --text-body: var(--step-0);
+  --text-secondary: var(--step--1);
+  --text-caption: var(--step--2);
+  --text-label: var(--step--2);
+  --text-nav: var(--step--1);
+  --text-nav-mobile: var(--step-0);
+  --text-button: var(--step-0);
+  --text-button-sm: var(--step--1);
+  --text-control: var(--step--1);
+  --text-code: var(--step--1);
+  --text-inline-code: 0.9em;
+
+  /* Space. A 4px foundation, one token per step, no gaps in the ladder: 4 8 12 16 24 32 40 48
+     64 80 96 128. Every gap and padding in the stylesheet resolves to one of these unless a
+     comment says why it cannot. */
+  --space-1: 0.25rem; /* 4 */
+  --space-2: 0.5rem; /* 8 */
+  --space-3: 0.75rem; /* 12 */
+  --space-4: 1rem; /* 16 */
+  --space-5: 1.5rem; /* 24 */
+  --space-6: 2rem; /* 32 */
+  --space-7: 2.5rem; /* 40 */
+  --space-8: 3rem; /* 48 */
+  --space-9: 4rem; /* 64 */
+  --space-10: 5rem; /* 80 */
+  --space-11: 6rem; /* 96 */
+  --space-12: 8rem; /* 128 */
+
+  /* Semantic spacing. These are what components consume; the numeric steps are the raw scale.
+     Naming the role means a card's inner padding can change once instead of at fourteen call
+     sites, and it stops a component from picking a step by eye. */
+  --gap-inline: var(--space-2); /* between a label and its value, an icon and its text */
+  --gap-inline-loose: var(--space-3); /* between sibling controls in a row */
+  --gap-stack: var(--space-2); /* between a heading and the line under it */
+  --gap-group: var(--space-4); /* between cards in a grid */
+  --gap-group-loose: var(--space-6); /* between a grid and the block after it */
+  --pad-control-x: var(--space-4);
+  --pad-control-y: var(--space-2);
+  --pad-card: var(--space-5);
+  --pad-panel: var(--space-6);
+  --pad-inline: clamp(var(--space-4), 4vw, var(--space-8)); /* page gutter */
+  --space-section: clamp(var(--space-9), 7vw, var(--space-11));
+  --space-section-tight: clamp(var(--space-8), 4.5vw, var(--space-9));
+  --space-page-top: clamp(var(--space-9), 6vw, var(--space-10));
+
+  /* Documentation reading layout. Prose is measured in characters, not pixels, and the rail
+     widths are named so the three documentation layouts cannot drift apart. */
+  --measure-prose: 68ch;
+  --measure-lead: 58ch;
+  --measure-caption: 44ch;
+  --doc-sidebar: 16rem;
+  --doc-toc: 15rem;
+  --doc-gutter: var(--space-9);
+
+  /* Aliases kept for the call sites that already speak in "band" terms. */
+  --band: var(--space-section);
+  --band-tight: var(--space-section-tight);
 
   /* Shape and depth */
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-lg: 16px;
+  --radius-sm: 7px;
+  --radius: 12px;
+  --radius-lg: 20px;
   --radius-pill: 999px;
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-2: 0 2px 4px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.28);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.32), 0 16px 40px rgba(0, 0, 0, 0.36);
+  --shadow-lift: 0 4px 10px rgba(0, 0, 0, 0.3), 0 24px 60px rgba(0, 0, 0, 0.42);
+  --ring: 0 0 0 1px var(--border), 0 0 0 4px var(--bg);
 
   /* Layout */
-  --measure: 72ch;
-  --content: 1180px;
+  --measure: 68ch;
+  --content: 1240px;
   --sidebar: 250px;
   /* Height of one header row. The sticky header, the mobile menu's scroll area and the sticky
      documentation rails all key off it, so they cannot drift apart. */
@@ -105,23 +213,37 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --bg: #ffffff;
-  --bg-elevated: #f7f9fc;
+  /* The light appearance is warm paper, not a white void: cards are the brightest surface and
+     the page sits a shade below them, which is the inverse of the dark appearance's relationship
+     and the reason the two do not read as one theme with inverted channels. */
+  --bg: #fbfaf7;
+  --bg-elevated: #f5f3ee;
   --surface: #ffffff;
-  --surface-2: #f2f5f9;
-  --border: #dbe3ec;
-  --border-strong: #bcc8d6;
+  --surface-2: #f2efe9;
+  --border: #e2ddd3;
+  --border-strong: #c9c2b5;
+  --border-control: #8a8377;
 
-  --fg: #10161d;
-  --fg-muted: #3f4d5e;
-  --fg-subtle: #55657a;
+  /* On --bg / --surface / --surface-2: 17.92 / 18.71 / 16.30 for --fg, 9.00 / 9.40 / 8.19 for
+     --fg-muted, 6.78 / 7.07 / 6.16 for --fg-subtle. */
+  --fg: #14120e;
+  --fg-muted: #4a463d;
+  --fg-subtle: #5d584d;
 
-  --accent: #0f7b45;
-  --accent-strong: #0b6b3a;
+  --accent: #0b6b3a;
+  --accent-strong: #095a31;
   --accent-contrast: #ffffff;
-  --accent-soft: rgba(15, 123, 69, 0.1);
-  --link: #0a5cc0;
-  --link-hover: #084792;
+  --accent-soft: rgba(11, 107, 58, 0.09);
+  --accent-line: rgba(11, 107, 58, 0.28);
+  --link: #0a4fa8;
+  --link-hover: #083b7e;
+
+  --gradient-hero: radial-gradient(58rem 30rem at 10% -14%, rgba(11, 107, 58, 0.1), transparent 62%),
+    radial-gradient(46rem 24rem at 94% 2%, rgba(10, 79, 168, 0.09), transparent 60%);
+  --gradient-panel: linear-gradient(160deg, var(--surface), var(--bg-elevated));
+  --grid-line: rgba(20, 18, 14, 0.045);
+  --state-hover: rgba(20, 18, 14, 0.045);
+  --state-active: rgba(20, 18, 14, 0.08);
   --warn: #8a5a00;
   --danger: #b3261e;
   --danger-soft: rgba(179, 38, 30, 0.08);
@@ -140,23 +262,32 @@
   :root:not([data-theme="dark"]) {
     color-scheme: light;
 
-    --bg: #ffffff;
-    --bg-elevated: #f7f9fc;
+    --bg: #fbfaf7;
+    --bg-elevated: #f5f3ee;
     --surface: #ffffff;
-    --surface-2: #f2f5f9;
-    --border: #dbe3ec;
-    --border-strong: #bcc8d6;
+    --surface-2: #f2efe9;
+    --border: #e2ddd3;
+    --border-strong: #c9c2b5;
+    --border-control: #8a8377;
 
-    --fg: #10161d;
-    --fg-muted: #3f4d5e;
-    --fg-subtle: #55657a;
+    --fg: #14120e;
+    --fg-muted: #4a463d;
+    --fg-subtle: #5d584d;
 
-    --accent: #0f7b45;
-    --accent-strong: #0b6b3a;
+    --accent: #0b6b3a;
+    --accent-strong: #095a31;
     --accent-contrast: #ffffff;
-    --accent-soft: rgba(15, 123, 69, 0.1);
-    --link: #0a5cc0;
-    --link-hover: #084792;
+    --accent-soft: rgba(11, 107, 58, 0.09);
+    --accent-line: rgba(11, 107, 58, 0.28);
+    --link: #0a4fa8;
+    --link-hover: #083b7e;
+
+    --gradient-hero: radial-gradient(58rem 30rem at 10% -14%, rgba(11, 107, 58, 0.1), transparent 62%),
+      radial-gradient(46rem 24rem at 94% 2%, rgba(10, 79, 168, 0.09), transparent 60%);
+    --gradient-panel: linear-gradient(160deg, var(--surface), var(--bg-elevated));
+    --grid-line: rgba(20, 18, 14, 0.045);
+    --state-hover: rgba(20, 18, 14, 0.045);
+    --state-active: rgba(20, 18, 14, 0.08);
     --warn: #8a5a00;
     --danger: #b3261e;
     --danger-soft: rgba(179, 38, 30, 0.08);
@@ -199,15 +330,20 @@ html {
   }
 }
 
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
-  font-size: var(--step-0);
+  font-size: var(--text-body);
   line-height: var(--leading);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Proportional digits everywhere except where they are columnar (the two places that need
+     them set font-variant-numeric explicitly). Inter's default tabular figures made prose
+     numbers look gappy. */
+  font-variant-numeric: proportional-nums;
 }
 
 img,
@@ -225,9 +361,15 @@ h5,
 h6 {
   margin: 0;
   line-height: var(--leading-tight);
-  font-weight: 650;
-  letter-spacing: -0.012em;
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
   text-wrap: balance;
+}
+
+/* Display type closes up more than a subhead: at 3.5rem the default tracking reads loose. */
+h1 {
+  letter-spacing: var(--tracking-display);
+  font-weight: var(--weight-bold);
 }
 
 p {
@@ -284,7 +426,7 @@ hr {
   background: var(--accent);
   color: var(--accent-contrast);
   border-radius: var(--radius-sm);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   text-decoration: none;
 }
 
@@ -298,7 +440,7 @@ hr {
   width: 100%;
   max-width: var(--content);
   margin-inline: auto;
-  padding-inline: clamp(var(--space-4), 4vw, var(--space-7));
+  padding-inline: clamp(var(--space-4), 4vw, var(--space-8));
 }
 
 .content-narrow {
@@ -335,11 +477,11 @@ hr {
   min-height: 2.75rem;
   gap: 1px;
   font-family: var(--font-mono);
-  font-size: var(--step-1);
-  font-weight: 700;
+  font-size: var(--text-lead);
+  font-weight: var(--weight-bold);
   color: var(--fg);
   text-decoration: none;
-  letter-spacing: -0.02em;
+  letter-spacing: var(--tracking-display);
   flex: 0 0 auto;
 }
 
@@ -372,8 +514,8 @@ hr {
   padding: var(--space-2) clamp(var(--space-2), 0.8vw, var(--space-3));
   border-radius: var(--radius-sm);
   color: var(--fg);
-  font-size: var(--step--1);
-  font-weight: 550;
+  font-size: var(--text-nav);
+  font-weight: var(--weight-medium);
   text-decoration: none;
   white-space: nowrap;
 }
@@ -452,7 +594,7 @@ hr {
     right: 0;
     top: 100%;
     margin: 0;
-    padding: var(--space-3) clamp(var(--space-4), 4vw, var(--space-7));
+    padding: var(--space-3) clamp(var(--space-4), 4vw, var(--space-8));
     gap: var(--space-1);
     flex-direction: column;
     align-items: stretch;
@@ -475,25 +617,81 @@ hr {
     padding: var(--space-3);
     /* Touch-sized rows: 44px including the vertical padding. */
     min-height: 2.75rem;
-    font-size: var(--step-0);
+  font-size: var(--text-nav-mobile);
   }
 }
 
 /* ---------------------------------------------------------------- footer */
 
 .site-footer {
-  margin-top: var(--space-9);
-  padding-block: var(--space-6);
+  margin-top: var(--space-section);
+  padding-block: var(--space-9) var(--space-7);
   border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
   color: var(--fg-subtle);
-  font-size: var(--step--1);
+  font-size: var(--text-secondary);
 }
 
+/* The footer is a real closing statement: the wordmark and the one-line description on the
+   left, the link groups on the right, and a rule under both before the legal line. */
 .site-footer-inner {
+  display: grid;
+  gap: var(--space-7);
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+@media (max-width: 760px) {
+  .site-footer-inner {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-6);
+  }
+}
+
+.footer-brand {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  justify-content: space-between;
+  flex-direction: column;
+  gap: var(--gap-stack);
+  max-width: var(--measure-caption);
+}
+
+.footer-mark {
+  font-family: var(--font-mono);
+  font-size: var(--text-lead);
+  font-weight: var(--weight-bold);
+  color: var(--fg);
+  letter-spacing: var(--tracking-display);
+}
+
+.footer-note {
+  margin: 0;
+  color: var(--fg-subtle);
+  font-size: var(--text-secondary);
+  line-height: var(--leading);
+}
+
+.footer-groups {
+  display: grid;
+  gap: var(--space-6);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+}
+
+.footer-group h2 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-label);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+}
+
+.footer-group ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .site-footer a {
@@ -516,74 +714,107 @@ hr {
   flex-wrap: wrap;
 }
 
+.footer-legal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  justify-content: space-between;
+  margin-top: var(--space-7);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border);
+  color: var(--fg-subtle);
+  font-size: var(--text-caption);
+}
+
 /* ---------------------------------------------------------------- headings */
 
 .eyebrow {
   margin: 0 0 var(--space-2);
-  font-size: var(--step--2);
-  font-weight: 650;
-  letter-spacing: 0.09em;
+  font-size: var(--text-label);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   color: var(--accent);
 }
 
 .page-head {
-  padding-block: var(--space-7) var(--space-5);
+  padding-block: var(--space-8) var(--space-5);
   max-width: 68ch;
 }
 
 .page-head h1 {
-  font-size: var(--step-4);
+  font-size: var(--text-page-title);
   margin-bottom: var(--space-3);
 }
 
 .page-head .lead {
-  font-size: var(--step-1);
+  font-size: var(--text-lead);
   color: var(--fg-muted);
   line-height: var(--leading-snug);
 }
 
 .section {
-  padding-block: var(--space-7);
+  padding-block: var(--space-section);
+}
+
+/* An alternating band. Sections that carry a different kind of content read as their own
+   chapter instead of running together as one long scroll; --bg-elevated is one step off the
+   page in both appearances, so the rhythm survives the theme switch. */
+.section-band {
+  background: var(--bg-elevated);
+  border-block: 1px solid var(--border);
 }
 
 .section-head {
-  max-width: 60ch;
-  margin-bottom: var(--space-5);
+  max-width: 62ch;
+  margin-bottom: var(--space-7);
 }
 
 .section-head h2 {
-  font-size: var(--step-3);
-  margin-bottom: var(--space-2);
+  font-size: var(--text-section);
+  line-height: var(--leading-snug);
+  letter-spacing: var(--tracking-tight);
+  text-wrap: balance;
+  margin-bottom: var(--space-3);
 }
 
 .section-head p {
   color: var(--fg-muted);
+  font-size: var(--text-lead);
+  line-height: var(--leading-snug);
+  max-width: var(--measure-lead);
 }
 
 /* ---------------------------------------------------------------- hero */
 
 .hero {
   position: relative;
-  padding-block: clamp(var(--space-7), 7vw, var(--space-9)) var(--space-7);
+  padding-block: clamp(var(--space-9), 8vw, var(--space-12)) var(--space-10);
   border-bottom: 1px solid var(--border);
   overflow: hidden;
+  background: var(--gradient-hero), var(--bg);
 }
 
-.hero::before {
+/* A faint measuring grid behind the hero. It is drawn with --grid-line so it disappears in both
+   appearances rather than needing a separate opacity per theme, and it is masked out toward the
+   bottom so it never competes with the code plate. */
+.hero::after {
   content: "";
   position: absolute;
-  inset: -40% 40% auto -10%;
-  height: 60vh;
-  background: radial-gradient(closest-side, var(--accent-soft), transparent 70%);
+  inset: 0;
+  background-image: linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: linear-gradient(to bottom, #000 0%, transparent 82%);
   pointer-events: none;
 }
 
 .hero-inner {
   position: relative;
+  z-index: 1;
   display: grid;
-  gap: var(--space-6);
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: clamp(var(--space-6), 5vw, var(--space-9));
+  grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr);
   align-items: center;
 }
 
@@ -594,26 +825,37 @@ hr {
 }
 
 .hero h1 {
-  font-size: var(--step-6);
-  margin-block: var(--space-3) var(--space-4);
-  max-width: 16ch;
+  font-size: var(--text-display);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-display);
+  text-wrap: balance;
+  margin-block: var(--space-4) var(--space-4);
+  max-width: 15ch;
 }
 
 .hero .lead {
-  font-size: var(--step-1);
+  font-size: var(--text-lead);
   color: var(--fg-muted);
-  max-width: 52ch;
+  line-height: var(--leading-snug);
+  max-width: var(--measure-lead);
 }
 
 .hero-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-3);
-  margin-top: var(--space-5);
+  gap: var(--gap-inline-loose);
+  margin-top: var(--space-6);
 }
 
 .hero-code {
   min-width: 0;
+  /* The plate is the second voice in the hero, so it is raised off the page rather than being
+     one more flat box: --shadow-lift is only ever used here. */
+  filter: drop-shadow(0 24px 48px rgba(0, 0, 0, 0.28));
+}
+
+.hero-code .code-block {
+  border-radius: var(--radius-lg);
 }
 
 .badge {
@@ -624,8 +866,8 @@ hr {
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
   background: var(--surface);
-  font-size: var(--step--2);
-  font-weight: 550;
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
   color: var(--fg-muted);
 }
 
@@ -648,8 +890,8 @@ hr {
   border-radius: var(--radius);
   background: var(--accent);
   color: var(--accent-contrast);
-  font-size: var(--step-0);
-  font-weight: 620;
+  font-size: var(--text-button);
+  font-weight: var(--weight-semibold);
   text-decoration: none;
   cursor: pointer;
   transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
@@ -678,7 +920,7 @@ hr {
 
 .button-small {
   padding: var(--space-2) var(--space-3);
-  font-size: var(--step--1);
+  font-size: var(--text-button-sm);
 }
 
 /* ---------------------------------------------------------------- code */
@@ -696,8 +938,8 @@ hr {
   padding: var(--space-5) var(--space-4);
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: var(--step--1);
-  line-height: 1.7;
+  font-size: var(--text-code);
+  line-height: var(--leading-code);
   color: var(--code-fg);
   tab-size: 2;
 }
@@ -724,7 +966,7 @@ hr {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--code-border);
   background: rgba(255, 255, 255, 0.02);
-  font-size: var(--step--2);
+  font-size: var(--text-label);
   font-family: var(--font-mono);
   color: var(--code-label-fg);
 }
@@ -737,8 +979,8 @@ hr {
   background: transparent;
   color: var(--code-label-fg);
   font-family: var(--font-sans);
-  font-size: var(--step--2);
-  font-weight: 550;
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
   cursor: pointer;
 }
 
@@ -872,7 +1114,7 @@ pre[class*="language-"] {
 .token.directive,
 .token.atrule {
   color: var(--tok-keyword);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .token.string,
@@ -941,7 +1183,7 @@ pre[class*="language-"] {
 }
 
 .token.bold {
-  font-weight: 700;
+  font-weight: var(--weight-bold);
 }
 
 .token.italic {
@@ -967,21 +1209,24 @@ pre[class*="language-"] {
 .card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-5);
+  gap: var(--gap-stack);
+  padding: var(--pad-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--surface);
-  transition: border-color 120ms ease, background-color 120ms ease;
+  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .card h3 {
-  font-size: var(--step-1);
+  font-size: var(--text-card-title);
+  line-height: var(--leading-snug);
+  letter-spacing: var(--tracking-tight);
 }
 
 .card p {
   color: var(--fg-muted);
-  font-size: var(--step-0);
+  font-size: var(--text-body);
 }
 
 a.card {
@@ -993,11 +1238,29 @@ a.card:hover {
   border-color: var(--border-strong);
   background: var(--surface-2);
   color: inherit;
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-2);
+}
+
+a.card:active {
+  transform: translateY(0);
+  background: var(--state-active);
+}
+
+/* A card that leads a section gets one accent hairline so the eye has an entry point, and its
+   title steps up. Used sparingly: two per page at most. */
+.card-featured {
+  background: var(--gradient-panel);
+  border-color: var(--accent-line);
+}
+
+.card-featured h3 {
+  font-size: var(--text-subsection);
 }
 
 .grid {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--gap-group);
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
 }
 
@@ -1016,10 +1279,16 @@ a.card:hover {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
 }
 
+/* Three across on wide screens, two on tablets, one on phones: auto-fit with a floor that
+   produces exactly those steps at the container widths this site actually has. */
+.grid-3 {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+}
+
 .card-kicker {
-  font-size: var(--step--2);
-  font-weight: 650;
-  letter-spacing: 0.06em;
+  font-size: var(--text-label);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   color: var(--accent);
 }
@@ -1033,7 +1302,7 @@ a.card:hover {
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--fg-muted);
-  font-size: var(--step-0);
+  font-size: var(--text-body);
 }
 
 .note strong {
@@ -1053,7 +1322,7 @@ a.card:hover {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--step--1);
+  font-size: var(--text-secondary);
 }
 
 th,
@@ -1066,7 +1335,7 @@ td {
 
 th {
   background: var(--surface-2);
-  font-weight: 620;
+  font-weight: var(--weight-semibold);
   color: var(--fg);
   white-space: nowrap;
 }
@@ -1088,8 +1357,8 @@ td code {
 
 .field label,
 .field span.label {
-  font-size: var(--step--1);
-  font-weight: 600;
+  font-size: var(--text-label);
+  font-weight: var(--weight-semibold);
   color: var(--fg-muted);
 }
 
@@ -1103,7 +1372,7 @@ input[type="text"] {
   background: var(--surface);
   color: var(--fg);
   font-family: inherit;
-  font-size: var(--step--1);
+  font-size: var(--text-control);
 }
 
 select:focus-visible,
@@ -1131,7 +1400,7 @@ input:focus-visible {
 
 .channel-note {
   margin: 0;
-  font-size: var(--step--2);
+  font-size: var(--text-caption);
   color: var(--fg-subtle);
   flex: 1 1 16rem;
 }
@@ -1155,7 +1424,7 @@ input:focus-visible {
 
 .status-block h2,
 .status-block h3 {
-  font-size: var(--step-1);
+  font-size: var(--text-card-title);
   margin-bottom: var(--space-1);
 }
 
@@ -1194,9 +1463,9 @@ input:focus-visible {
 .docs-layout {
   display: grid;
   grid-template-columns: var(--sidebar) minmax(0, 1fr);
-  gap: var(--space-7);
+  gap: var(--space-8);
   align-items: start;
-  padding-block: var(--space-6) var(--space-8);
+  padding-block: var(--space-6) var(--space-9);
 }
 
 @media (max-width: 1000px) {
@@ -1251,9 +1520,9 @@ input:focus-visible {
 }
 
 .sidebar-section > summary h2 {
-  font-size: var(--step--2);
-  font-weight: 650;
-  letter-spacing: 0.08em;
+  font-size: var(--text-label);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   color: var(--fg-subtle);
   margin: 0;
@@ -1283,7 +1552,7 @@ input:focus-visible {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   color: var(--fg-muted);
-  font-size: var(--step--1);
+  font-size: var(--text-secondary);
   text-decoration: none;
   overflow-wrap: anywhere;
 }
@@ -1296,7 +1565,7 @@ input:focus-visible {
 .docs-sidebar a[aria-current="page"] {
   color: var(--accent-strong);
   background: var(--accent-soft);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .docs-main {
@@ -1316,7 +1585,7 @@ input:focus-visible {
   gap: var(--space-2);
   align-items: center;
   margin-bottom: var(--space-4);
-  font-size: var(--step--1);
+  font-size: var(--text-secondary);
   color: var(--fg-subtle);
 }
 
@@ -1333,7 +1602,7 @@ input:focus-visible {
 /* The documentation page title. It sits below the breadcrumb and channel bar so the reader
    meets "Parent node n-1 of a k-ary heap" rather than a trail of where it lives. */
 .doc-title {
-  font-size: var(--step-4);
+  font-size: var(--text-page-title);
   margin-bottom: var(--space-4);
 }
 
@@ -1341,7 +1610,7 @@ input:focus-visible {
   margin-top: var(--space-6);
   padding-top: var(--space-4);
   border-top: 1px solid var(--border);
-  font-size: var(--step--1);
+  font-size: var(--text-secondary);
   color: var(--fg-subtle);
   display: flex;
   flex-wrap: wrap;
@@ -1359,14 +1628,14 @@ input:focus-visible {
   border-radius: var(--radius);
   background: var(--surface);
   margin-bottom: var(--space-5);
-  font-size: var(--step--1);
+  font-size: var(--text-secondary);
 }
 
 .toc > strong {
   display: block;
   margin-bottom: var(--space-2);
-  font-size: var(--step--2);
-  letter-spacing: 0.07em;
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   color: var(--fg-subtle);
 }
@@ -1422,7 +1691,7 @@ input:focus-visible {
    measure. These rules only add the rhythm between its sections, which a Markdown document
    gets from the prose styles but a hand-built page does not. */
 .tour-section + .tour-section {
-  margin-top: var(--space-7);
+  margin-top: var(--space-8);
 }
 
 .tour-body > section > h2 {
@@ -1432,9 +1701,9 @@ input:focus-visible {
 /* ---------------------------------------------------------------- prose */
 
 .doc {
-  max-width: var(--measure);
-  font-size: var(--step-1);
-  line-height: 1.72;
+  max-width: var(--measure-prose);
+  font-size: var(--text-lead);
+  line-height: var(--leading-doc);
   color: var(--fg);
 }
 
@@ -1443,25 +1712,25 @@ input:focus-visible {
 }
 
 .doc h1 {
-  font-size: var(--step-4);
+  font-size: var(--text-page-title);
   margin-top: 0;
   margin-bottom: var(--space-4);
 }
 
 .doc h2 {
-  font-size: var(--step-3);
-  margin-top: var(--space-7);
+  font-size: var(--text-section);
+  margin-top: var(--space-8);
   padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--border);
 }
 
 .doc h3 {
-  font-size: var(--step-2);
+  font-size: var(--text-subsection);
   margin-top: var(--space-6);
 }
 
 .doc h4 {
-  font-size: var(--step-1);
+  font-size: var(--text-heading-sm);
   margin-top: var(--space-5);
   color: var(--fg);
 }
@@ -1508,8 +1777,8 @@ input:focus-visible {
   border-radius: var(--radius);
   background: var(--code-bg);
   overflow-x: auto;
-  font-size: var(--step--1);
-  line-height: 1.7;
+  font-size: var(--text-code);
+  line-height: var(--leading-code);
 }
 
 .doc pre code {
@@ -1522,7 +1791,7 @@ input:focus-visible {
 }
 
 .doc table {
-  font-size: var(--step--1);
+  font-size: var(--text-secondary);
 }
 
 .doc :not(pre) > code {
@@ -1552,7 +1821,7 @@ input:focus-visible {
   color: var(--fg-subtle);
   text-decoration: none;
   opacity: 0;
-  font-weight: 400;
+  font-weight: var(--weight-regular);
 }
 
 .doc h2:hover .heading-anchor,
@@ -1596,7 +1865,7 @@ input:focus-visible {
 
 .doc-list .doc-path {
   font-family: var(--font-mono);
-  font-size: var(--step--2);
+  font-size: var(--text-caption);
   color: var(--fg-subtle);
   margin-left: auto;
   overflow-wrap: anywhere;
@@ -1607,7 +1876,7 @@ input:focus-visible {
 }
 
 .section-group h2 {
-  font-size: var(--step-2);
+  font-size: var(--text-subsection);
   margin-bottom: var(--space-3);
   display: flex;
   align-items: baseline;
@@ -1615,8 +1884,8 @@ input:focus-visible {
 }
 
 .count {
-  font-size: var(--step--2);
-  font-weight: 600;
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
   color: var(--fg-subtle);
   font-variant-numeric: tabular-nums;
 }
@@ -1649,12 +1918,12 @@ input:focus-visible {
 
 .example-card strong {
   font-family: var(--font-mono);
-  font-size: var(--step-0);
-  font-weight: 600;
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
 }
 
 .example-card span {
-  font-size: var(--step--2);
+  font-size: var(--text-caption);
   color: var(--fg-subtle);
 }
 
@@ -1674,20 +1943,20 @@ input:focus-visible {
 }
 
 .principle h3 {
-  font-size: var(--step-1);
+  font-size: var(--text-card-title);
   margin-bottom: var(--space-2);
 }
 
 .principle p {
   color: var(--fg-muted);
-  font-size: var(--step-0);
+  font-size: var(--text-body);
 }
 
 .principle-number {
   display: inline-block;
   margin-bottom: var(--space-2);
   font-family: var(--font-mono);
-  font-size: var(--step--2);
+  font-size: var(--text-caption);
   color: var(--accent);
 }
 
@@ -1712,7 +1981,7 @@ input:focus-visible {
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--fg);
-  font-size: var(--step--1);
+  font-size: var(--text-control);
 }
 
 .search-panel {
@@ -1746,7 +2015,7 @@ input:focus-visible {
 
 .search-status {
   padding: var(--space-3);
-  font-size: var(--step--1);
+  font-size: var(--text-secondary);
   color: var(--fg-subtle);
 }
 
@@ -1773,12 +2042,12 @@ input:focus-visible {
 }
 
 .search-results strong {
-  font-size: var(--step--1);
-  font-weight: 600;
+  font-size: var(--text-secondary);
+  font-weight: var(--weight-semibold);
 }
 
 .search-results span {
-  font-size: var(--step--2);
+  font-size: var(--text-caption);
   color: var(--fg-subtle);
   overflow-wrap: anywhere;
 }
@@ -1800,8 +2069,8 @@ input:focus-visible {
   background: var(--surface-2);
   color: var(--fg);
   font: inherit;
-  font-size: var(--step--1);
-  font-weight: 600;
+  font-size: var(--text-secondary);
+  font-weight: var(--weight-semibold);
   cursor: pointer;
 }
 
@@ -1820,7 +2089,7 @@ input:focus-visible {
   border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--warn) 10%, transparent);
-  font-size: var(--step--1);
+  font-size: var(--text-secondary);
   color: var(--fg-muted);
 }
 
@@ -1829,7 +2098,7 @@ input:focus-visible {
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-4);
   align-items: center;
-  font-size: var(--step--2);
+  font-size: var(--text-caption);
   color: var(--fg-subtle);
 }
 
@@ -1853,8 +2122,8 @@ input:focus-visible {
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
   background: var(--surface);
-  font-size: var(--step--2);
-  font-weight: 600;
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
   color: var(--fg-muted);
 }
 
@@ -1887,4 +2156,212 @@ input:focus-visible {
 
 .block-gap-sm {
   height: var(--space-3);
+}
+
+/* ---------------------------------------------------------------- print */
+
+/* Printing is a real reading mode, not an afterthought: documentation is the main thing anyone
+   would print. Screen chrome goes, the code plate turns into ink on paper, and every link that
+   leaves the page prints its destination so the paper copy is still usable. */
+@media print {
+  :root {
+    /* Ink on paper. The dark appearance is unreadable printed and burns the page white. */
+    --bg: #ffffff;
+    --bg-elevated: #ffffff;
+    --surface: #ffffff;
+    --surface-2: #ffffff;
+    --fg: #000000;
+    --fg-muted: #333333;
+    --fg-subtle: #444444;
+    --border: #bbbbbb;
+    --border-strong: #888888;
+    --accent: #000000;
+    --accent-strong: #000000;
+    --link: #000000;
+    --code-bg: #ffffff;
+    --code-fg: #000000;
+    --code-border: #999999;
+    --code-label-fg: #333333;
+    --shadow-1: none;
+    --shadow-2: none;
+  }
+
+  @page {
+    margin: 18mm 16mm;
+  }
+
+  html,
+  body {
+    background: #ffffff;
+    color: #000000;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  /* Navigation, controls and anything interactive cannot be used on paper. */
+  .site-header,
+  .site-footer,
+  .docs-sidebar,
+  .doc-toc,
+  .skip-link,
+  .nav-toggle,
+  .icon-button,
+  .copy-button,
+  .search,
+  .theme-toggle,
+  .hero-actions,
+  .pager {
+    display: none !important;
+  }
+
+  .content {
+    max-width: none;
+    padding-inline: 0;
+  }
+
+  .docs-layout,
+  .doc-with-toc {
+    display: block;
+    padding-block: 0;
+  }
+
+  .hero {
+    padding-block: 0 var(--space-4);
+    background: none;
+    border-bottom: 1px solid #bbbbbb;
+  }
+
+  .hero::before,
+  .hero::after {
+    display: none;
+  }
+
+  .section {
+    padding-block: var(--space-4);
+    break-inside: avoid;
+  }
+
+  .section-band {
+    background: none;
+    border-block: 0;
+  }
+
+  /* A code sample that breaks across pages is unreadable. */
+  .code-block,
+  pre,
+  table,
+  figure,
+  .note {
+    break-inside: avoid;
+  }
+
+  .code-block {
+    border: 1px solid #999999;
+    background: #ffffff;
+    box-shadow: none;
+  }
+
+  .code-block pre,
+  .code-block code {
+    color: #000000;
+    background: none;
+  }
+
+  /* Syntax highlighting is colour-only information on paper, so it collapses to plain ink. */
+  .tok-keyword,
+  .tok-string,
+  .tok-number,
+  .tok-comment {
+    color: #000000 !important;
+  }
+
+  .tok-comment {
+    font-style: italic;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    break-after: avoid;
+    color: #000000;
+  }
+
+  /* A link that leaves the page would otherwise print as an unusable word. */
+  .doc a[href^="http"]::after,
+  .prose a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 9pt;
+    color: #444444;
+    word-break: break-all;
+  }
+}
+
+/* The transforms are motion, so in a reduced-motion context they are removed rather than merely
+   shortened to 0.01ms: a hair of duration is still a visible jump on every hover. This block sits
+   at the end of the stylesheet on purpose -- declaring it beside the global reduced-motion rule
+   lost the cascade to the later `.card:hover` rule, which is exactly the bug a shortening-only
+   rule hides. */
+@media (prefers-reduced-motion: reduce) {
+  a.card:hover,
+  a.card:active,
+  .button:active,
+  .button:hover {
+    transform: none;
+  }
+}
+
+/* ---------------------------------------------------------------- forced colours */
+
+/* Declared at the end of the stylesheet rather than beside the other mode queries: these rules
+   must win against component rules declared later in the file, and a media query adds no
+   specificity. Placed earlier, `.card`'s own border and `.principle-number`'s accent colour
+   overrode them, so the mode silently kept author colours. */
+/* Forced-colours mode throws away author backgrounds, borders and shadows, so anything that was
+   communicating with a fill alone becomes invisible. Restate the ones that carry meaning as
+   system colours, which is the only vocabulary this mode keeps. */
+@media (forced-colors: active) {
+  .card,
+  .principle,
+  .note,
+  .code-block,
+  .site-nav[data-open="true"] {
+    border: 1px solid CanvasText;
+  }
+
+  /* The dot was a 6px background swatch with no other channel, so this mode painted it Canvas --
+     invisible on a Canvas page. A ring survives, and it is grown by a pixel so the ring is not
+     the whole shape. */
+  .badge-dot {
+    width: 8px;
+    height: 8px;
+    border: 1px solid CanvasText;
+    background: Canvas;
+  }
+
+  .brand-mark,
+  .principle-number {
+    color: LinkText;
+  }
+
+  .site-nav a[aria-current="page"] {
+    border: 1px solid Highlight;
+  }
+
+  .button {
+    border: 1px solid ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+
+  .skip-link:focus {
+    outline: 2px solid CanvasText;
+    outline-offset: 2px;
+  }
+
+  /* The hero grid and the radial washes are decoration; in this mode they produce mud. */
+  .hero::after,
+  .hero::before {
+    display: none;
+  }
 }

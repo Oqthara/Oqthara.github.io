@@ -93,7 +93,7 @@ export function HomePage() {
 
     h(
       "section",
-      { className: "section", "aria-labelledby": "why" },
+      { className: "section section-band", "aria-labelledby": "why" },
       h(
         "div",
         { className: "content" },
@@ -106,7 +106,7 @@ export function HomePage() {
         h(
           Grid,
           null,
-          h(Card, { title: "Reads like pseudocode", kicker: "Surface" },
+          h(Card, { title: "Reads like pseudocode", kicker: "Surface", featured: true },
             "Blocks close with end, statements end at a newline, and a program can be one line. Nothing is there to satisfy the parser."),
           h(Card, { title: "Real Java interop", kicker: "Runtime" },
             "use imports any Java class. Constructors, static methods and fields work the way you expect, without a wrapper layer."),
@@ -156,7 +156,7 @@ export function HomePage() {
 
     h(
       "section",
-      { className: "section", "aria-labelledby": "explore" },
+      { className: "section section-band", "aria-labelledby": "explore" },
       h(
         "div",
         { className: "content" },
@@ -169,7 +169,7 @@ export function HomePage() {
         h(
           Grid,
           null,
-          h(Card, { title: "The tour", kicker: "Learn", href: hrefFor("/tour.html") },
+          h(Card, { title: "The tour", kicker: "Learn", href: hrefFor("/tour.html"), featured: true },
             "Values, control flow, functions, collections, data types, errors and interop in one sitting."),
           h(Card, { title: "Examples", kicker: "Read", href: hrefFor("/examples.html") },
             "Complete programs discovered from the repository, from calculators to data structures."),
