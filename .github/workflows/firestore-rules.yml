@@ -83,6 +83,7 @@ jobs:
             echo "::error::FIREBASE_SERVICE_ACCOUNT is not set, so no rules can be deployed."
             exit 1
           fi
+          # shellcheck disable=SC2016  # the JavaScript below is single-quoted on purpose
           node -e '
             const raw = process.env.SERVICE_ACCOUNT;
             let parsed;
@@ -124,6 +125,7 @@ jobs:
           # authorized, and print only the two non-secret fields. This is the file the Firebase
           # CLI will read, so a mismatch here is a mismatch in the deploy itself.
           test -r "$GOOGLE_APPLICATION_CREDENTIALS"
+          # shellcheck disable=SC2016  # the JavaScript below is single-quoted on purpose
           node -e '
             const { readFileSync } = require("node:fs");
             const parsed = JSON.parse(readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8"));

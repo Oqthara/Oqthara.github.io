@@ -78,6 +78,7 @@ jobs:
             exit 0
           fi
           # Validate, and report only the two non-secret identity fields.
+          # shellcheck disable=SC2016  # the JavaScript below is single-quoted on purpose
           node -e '
             const raw = process.env.SERVICE_ACCOUNT;
             let parsed;
