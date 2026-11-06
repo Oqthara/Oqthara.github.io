@@ -17,12 +17,12 @@ here is merged, deployed, or written to production Firestore.
 |---|---|---|
 | Baseline | `3be0388e2d6bb41956c0c03482d2a40f847cc648` | `origin/main` at the time of the run |
 | Last code commit | `8fbcb0f9b71773357d84b6667a157fc22ec43c69` | every gate in §13 ran here |
-| Report tip | `a5baac7b4471ea32a5443ad14bbdc6dfd00bd48a` | this file; no source change |
+| Commits after it | | this report, plus one audit-script fix and its guard test |
 | Code delta | | 27 commits, 75 files, `+13,702 / −2,065` |
 
-The delta is measured against `8fbcb0f` rather than the branch tip because the commits after it
-touch the report and one audit script; no shipped page, component, or style changed. A total that counts its own report is a number that goes stale the
-moment it is written; this one does not move.
+The delta is measured against `8fbcb0f`, not the branch tip, because the commits after it change
+this file and one developer script. No shipped page, component, or style moved. A total that
+counts its own report goes stale the moment it is written; this one does not.
 
 ```
 $ git log --oneline origin/main..8fbcb0f | wc -l
