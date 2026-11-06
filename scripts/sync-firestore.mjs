@@ -376,8 +376,10 @@ export async function fetchWithTimeout(
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  // A pending deadline must not be the reason the process stays alive after work is done.
-  if (typeof timer.unref === "function") timer.unref();
+  // Deliberately ref'd. An unref'd timer is the only handle a stalled body read leaves behind,
+  // and Node exits with the promise still pending rather than waiting for the deadline - the
+  // hang becomes a truncated run instead of a timeout. `done` clears it on every path, so the
+  // timer cannot outlive the fetch and keep the process alive for its own sake.
   const done = () => clearTimeout(timer);
 
   let response;

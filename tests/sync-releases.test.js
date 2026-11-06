@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 
 import * as syncModule from "../scripts/sync-firestore.mjs";
 import {
@@ -242,6 +243,33 @@ test("a body that never finishes is aborted, not awaited forever", async () => {
     /aborted|time limit/,
   );
   assert.equal(aborted, true, "the request must be aborted, not merely abandoned");
+});
+
+test("a stalled body times out in a child process instead of exiting the process", async () => {
+  // The deadline must stay ref'd. An unref'd timer is the only handle a stalled body leaves behind,
+  // so Node decides the event loop is empty and exits with the promise still pending: the caller
+  // sees success with no work done, and in a test runner the whole suite is torn down mid-flight.
+  // This is invisible to an in-process assertion - it only shows up as an exit code, so it is run
+  // in one.
+  const script = `
+    import { fetchWithTimeout } from ${JSON.stringify(new URL("../scripts/sync-firestore.mjs", import.meta.url).href)};
+    const hangs = () => new Promise(() => {});
+    const fetchImpl = () => Promise.resolve({ ok: true, status: 200, json: hangs, text: hangs });
+    try {
+      const response = await fetchWithTimeout("https://api.github.com/x", { fetchImpl, timeoutMs: 50 });
+      await response.json();
+      console.log("RESOLVED");
+    } catch (error) {
+      console.log("REJECTED " + error.message);
+    }
+  `;
+  const { stdout, code } = await new Promise((resolve) => {
+    execFile(process.execPath, ["--input-type=module", "-e", script], (error, out) => {
+      resolve({ stdout: out, code: error ? error.code : 0 });
+    });
+  });
+  assert.equal(code, 0, "the process must survive to report the timeout, not exit while it is pending");
+  assert.match(stdout, /REJECTED /, "the stalled body must surface as a timeout, not as silence");
 });
 
 test("the deadline survives until the body is consumed, and is cleared afterwards", async () => {
