@@ -259,6 +259,34 @@ describe("repository hygiene", () => {
   });
 });
 
+describe("the emulator's Java requirement is met by CI", () => {
+  // `firebase-tools` 15 hard-fails the emulator on a JRE below 21 (`controller.js`), and the
+  // ubuntu runner does not ship one. Without an explicit JDK the rules gate fails with an
+  // error that reads like a rules problem, and Pages stops deploying. Pin the coupling: every
+  // workflow that runs `test:rules` must first install a JDK, and it must be 21 or newer.
+  const RULES_WORKFLOWS = ["pages.yml", "firestore-rules.yml"];
+
+  it("every workflow that runs the rules suite installs a JDK first", async () => {
+    for (const name of RULES_WORKFLOWS) {
+      const text = await workflow(name);
+      assert.ok(text.includes("test:rules"), `${name} no longer runs test:rules; update this test`);
+
+      const jdkAt = text.indexOf("actions/setup-java@");
+      assert.ok(jdkAt !== -1, `${name} runs test:rules without actions/setup-java`);
+
+      // Order matters: the JDK has to exist before the emulator starts.
+      assert.ok(jdkAt < text.indexOf("test:rules"), `${name} installs the JDK after running test:rules`);
+
+      const version = /java-version:\s*"?(\d+)"?/.exec(text);
+      assert.ok(version, `${name} does not pin java-version`);
+      assert.ok(
+        Number(version[1]) >= 21,
+        `${name} pins Java ${version[1]}, but firebase-tools needs 21 or newer`
+      );
+    }
+  });
+});
+
 describe("workflow files are valid YAML", () => {
   // A duplicate key is the quietest way to break a workflow: the file is syntactically
   // plausible, `git diff` looks fine, and GitHub rejects the run before any step starts —
