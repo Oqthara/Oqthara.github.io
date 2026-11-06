@@ -118,7 +118,7 @@ export function ExamplePage({ query }) {
 
     status === "error" && !data ? h(Failure, { error, path, onRetry: retry, ref: channel.ref }) : null,
 
-    data ? h(CodeBlock, { code: data.source, label: `${name}.oq` }) : null,
+    data ? h(CodeBlock, { code: data.source, label: `${name}.oq`, language: "oq" }) : null,
 
     data && withoutComments.trim() === "" && lineCount > PREVIEW_LINES
       ? h("p", { className: "meta-row" }, "This program is mostly comments.")

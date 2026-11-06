@@ -17,6 +17,10 @@ import { highlightToReact } from "../lib/highlight.js";
 
 export function CodeBlock({ code, label, language, children, highlighted, className }) {
   const text = String(code ?? children ?? "");
+  // `label` is what the reader sees; `language` is the grammar to apply. They are separate
+  // props because a label is prose ("macOS and Linux") and a grammar name is an identifier.
+  // Conflating them produced class="language-macOS and Linux".
+  const grammar = language ?? null;
   const [state, setState] = useState("idle");
   const timer = useRef(null);
 
@@ -48,11 +52,11 @@ export function CodeBlock({ code, label, language, children, highlighted, classN
     timer.current = setTimeout(() => setState("idle"), 2000);
   }, [text]);
 
-  const name = label ?? language ?? null;
   // Highlighting the already-highlighted tree would double the work; only plain text is
-  // tokenised here. `highlightToReact` infers the language when the caller gave none.
-  const rendered = highlighted ?? highlightToReact(text, name);
-  const shown = name ? String(name) : "code";
+  // tokenised here. Without an explicit grammar the language is inferred from the content,
+  // which is what makes an untagged install command render as shell.
+  const rendered = highlighted ?? highlightToReact(text, grammar);
+  const shown = label ?? grammar ?? "code";
 
   return h(
     "div",
@@ -68,14 +72,20 @@ export function CodeBlock({ code, label, language, children, highlighted, classN
           className: "copy-button",
           onClick: copy,
           "data-copied": state === "copied" ? "true" : "false",
-          "aria-label": name ? `Copy ${shown} code` : "Copy code",
+          "aria-label": shown ? `Copy ${shown}` : "Copy code",
         },
         state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy",
       ),
     ),
     // `highlighted` is already the `code` element for Markdown blocks. For plain text the
     // tokens are inline spans, so this branch supplies the wrapping `code` itself.
-    h("pre", null, highlighted ? rendered : h("code", { className: name ? `language-${name}` : undefined }, rendered ?? text)),
+    h(
+      "pre",
+      null,
+      highlighted
+        ? rendered
+        : h("code", { className: grammar ? `language-${grammar}` : undefined }, rendered ?? text),
+    ),
     // The live region is separate from the button label so the button does not change width
     // mid-interaction, which would move the pointer target.
     h(

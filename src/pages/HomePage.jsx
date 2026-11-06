@@ -62,7 +62,7 @@ export function HomePage() {
         h(
           "div",
           { className: "hero-code" },
-          h(CodeBlock, { code: HELLO, label: "hello.oq" }),
+          h(CodeBlock, { code: HELLO, label: "hello.oq", language: "oq" }),
         ),
       ),
     ),
@@ -79,9 +79,9 @@ export function HomePage() {
           h("h2", { id: "install" }, "Install"),
           h("p", null, "One command on macOS or Linux. The installer reads the latest published release, verifies the artifact before installing it, and can be pinned to a version with OQ_VERSION."),
         ),
-        h(CodeBlock, { code: INSTALL_COMMAND, label: "macOS and Linux" }),
+        h(CodeBlock, { code: INSTALL_COMMAND, label: "macOS and Linux", language: "bash" }),
         h("div", { style: { height: "var(--space-3)" } }),
-        h(CodeBlock, { code: INSTALL_COMMAND_WINDOWS, label: "Windows PowerShell" }),
+        h(CodeBlock, { code: INSTALL_COMMAND_WINDOWS, label: "Windows PowerShell", language: "bash" }),
         h(
           "p",
           { className: "meta-row", style: { marginTop: "var(--space-4)" } },
@@ -116,7 +116,7 @@ export function HomePage() {
         h(
           "div",
           { style: { marginTop: "var(--space-6)" } },
-          h(CodeBlock, { code: TOUR_SNIPPET, label: "loops.oq" }),
+          h(CodeBlock, { code: TOUR_SNIPPET, label: "loops.oq", language: "oq" }),
         ),
       ),
     ),
