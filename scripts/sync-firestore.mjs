@@ -307,11 +307,18 @@ function githubHeaders(token) {
   return headers;
 }
 
-async function fetchWithTimeout(url, { token, accept } = {}) {
+/**
+ * `fetch` with a bounded wait.
+ *
+ * Without a timeout a stalled connection hangs the run until the job's own 6-hour limit, and the
+ * mirror then holds whatever state the previous run left. `fetchImpl` stays injectable so tests
+ * can drive the network paths without one.
+ */
+async function fetchWithTimeout(url, { token, accept, fetchImpl = fetch } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
+    const response = await fetchImpl(url, {
       signal: controller.signal,
       headers: { ...githubHeaders(token), Accept: accept ?? "application/vnd.github+json" },
     });
@@ -326,10 +333,7 @@ async function fetchWithTimeout(url, { token, accept } = {}) {
 
 /** The recursive tree for `ref`, filtered to the paths this mirror cares about. */
 export async function listSourceFiles({ ref = MIRRORED_REF, token = "", fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(treeApiUrl(ref), {
-    signal: undefined,
-    headers: githubHeaders(token),
-  });
+  const response = await fetchWithTimeout(treeApiUrl(ref), { token, fetchImpl });
   if (!response.ok) throw new Error(`GitHub tree request returned ${response.status}`);
   const payload = await response.json();
   if (!payload || !Array.isArray(payload.tree)) {
@@ -346,8 +350,10 @@ export async function listSourceFiles({ ref = MIRRORED_REF, token = "", fetchImp
 
 /** Raw file text. raw.githubusercontent.com has no API quota. */
 export async function readSourceFile(path, { ref = MIRRORED_REF, token = "", fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(rawUrl(path, ref), {
-    headers: { ...githubHeaders(token), Accept: "text/plain, */*" },
+  const response = await fetchWithTimeout(rawUrl(path, ref), {
+    token,
+    accept: "text/plain, */*",
+    fetchImpl,
   });
   if (!response.ok) throw new Error(`GitHub returned ${response.status} for ${path}`);
   return response.text();
@@ -355,7 +361,7 @@ export async function readSourceFile(path, { ref = MIRRORED_REF, token = "", fet
 
 /** Published releases; drafts and malformed entries are dropped. */
 export async function listReleases({ token = "", fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(releasesApiUrl(100), { headers: githubHeaders(token) });
+  const response = await fetchWithTimeout(releasesApiUrl(100), { token, fetchImpl });
   if (!response.ok) throw new Error(`GitHub releases request returned ${response.status}`);
   const payload = await response.json();
   if (!Array.isArray(payload)) throw new Error("GitHub returned a release list this script could not read");

@@ -414,3 +414,41 @@ test("an unknown flag is a usage error", async () => {
   assert.equal((await run(["--verbose"])).code, EXIT.usage);
   assert.equal((await run(["--help"])).code, EXIT.ok);
 });
+
+test("a hostile release tag is refused at the boundary", () => {
+  // The tag is the only untrusted value here that is chosen by whoever can write to the mirrored
+  // repository. It reaches shell source through the workflow, so it is constrained once, here.
+  assert.equal(summarizeRelease({ tag_name: "v0.1.0-alpha.2" })?.tag, "v0.1.0-alpha.2");
+  for (const tag of ["v1.0.0", "release/1.2.3", "v1.0.0+build.7", "v2.0.0-rc_1"]) {
+    assert.equal(summarizeRelease({ tag_name: tag })?.tag, tag, `${tag} was refused`);
+  }
+  for (const tag of ["v1$(id)", "v1`id`", "v1;id", "v1&&id", "v1|id", "v1\nid", "v1\r\nid", "v1'id", 'v1"id']) {
+    assert.equal(summarizeRelease({ tag_name: tag }), null, `${JSON.stringify(tag)} was accepted`);
+  }
+  assert.equal(summarizeRelease({ tag_name: "v" + "9".repeat(200) }), null, "an overlong tag was accepted");
+});
+
+test("GITHUB_OUTPUT values cannot terminate their block early", () => {
+  // Parses the file the way the Actions runner does: a heredoc delimiter chosen by the writer,
+  // closed by the first line that matches it exactly. If a value can contain the delimiter, the
+  // value ends early and the remainder is read as further outputs.
+  const parse = (text) => {
+    const out = {};
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^(\w+)<<(.+)$/.exec(lines[i]);
+      if (!m) continue;
+      const body = [];
+      for (i++; i < lines.length && lines[i] !== m[2]; i++) body.push(lines[i]);
+      out[m[1]] = body.join("\n");
+    }
+    return out;
+  };
+
+  const hostile = "x\nOQ_EOF\nchanged<<OQ_EOF\nfalse\nOQ_EOF";
+  const parsed = parse(formatOutputs({ reason: hostile, changed: "true", tag: "v1.0.0" }));
+  assert.deepEqual(Object.keys(parsed).sort(), ["changed", "reason", "tag"], "an injected key appeared");
+  assert.equal(parsed.changed, "true", "an injected value overwrote a real output");
+  assert.equal(parsed.reason, hostile, "a value did not survive the round trip");
+  assert.equal(parsed.tag, "v1.0.0");
+});

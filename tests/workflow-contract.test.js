@@ -113,6 +113,79 @@ describe("workflow permissions across the repository", () => {
       }
     }
   });
+
+  it("no workflow interpolates any step output into a shell script body", async () => {
+    // The same paste-into-source hazard applies to step outputs, and those are attacker-reachable:
+    // an upstream release tag is chosen by anyone who can write to the mirrored repository.
+    // A tag named `v1$(id)` runs on the runner if it is interpolated here. Only `env:` is allowed.
+    for (const name of NAMES) {
+      const text = await workflow(name);
+      const bodies = [
+        ...text.matchAll(/^ +run: \|\n((?: {8,}.*\n|\n)+)/gm),
+        ...text.matchAll(/^ +run: (?!\|)(.*)$/gm),
+      ];
+      for (const block of bodies) {
+        const body = block[1] ?? "";
+        assert.doesNotMatch(body, /\$\{\{/,
+          `${name} interpolates a workflow expression into a shell script body; pass it via env:`);
+      }
+    }
+  });
+
+  it("publishing scopes stay on the job that publishes", async () => {
+    // `pages: write` and `id-token: write` are workflow-wide by default, which would hand them to
+    // the build job as well — the job that runs `npm ci`, an emulator and a browser suite.
+    const text = await workflow("pages.yml");
+    const topLevel = text.slice(0, text.indexOf("jobs:"));
+    assert.doesNotMatch(topLevel, /pages: write/, "pages: write is granted workflow-wide");
+    assert.doesNotMatch(topLevel, /id-token: write/, "id-token: write is granted workflow-wide");
+    const deployJob = text.slice(text.indexOf("\n  deploy:"));
+    assert.match(deployJob, /^ +permissions:\n +pages: write\n +id-token: write/m,
+      "the deploy job must hold the publishing scopes");
+  });
+
+  it("third-party CLIs are installed from the lockfile, not fetched ad hoc", async () => {
+    // `npx --yes pkg@13` downloads and runs whatever `pkg@13` resolves to at build time, next to
+    // FIREBASE_SERVICE_ACCOUNT in the rules workflow. The pinned devDependency is the same CLI
+    // with a lockfile hash behind it.
+    for (const name of NAMES) {
+      const text = await workflow(name);
+      for (const line of text.split("\n")) {
+        if (!line.includes("npx ")) continue;
+        assert.doesNotMatch(line, /npx +--yes/, `${name} fetches a CLI at run time: ${line.trim()}`);
+        assert.doesNotMatch(line, /@[0-9]/, `${name} resolves a CLI by range: ${line.trim()}`);
+      }
+    }
+  });
+
+  it("every workflow that writes the mirror shares one concurrency group", async () => {
+    // Two workflows that each serialize only themselves still race: both read the mirror state at
+    // the start and commit later, so one can publish an unpublish set computed before the other
+    // created those documents.
+    const writers = [];
+    for (const name of NAMES) {
+      const text = await workflow(name);
+      if (text.includes("scripts/sync-firestore.mjs")) writers.push([name, text]);
+    }
+    assert.ok(writers.length >= 2, "expected more than one workflow to run the mirror sync");
+    for (const [name, text] of writers) {
+      const group = text.match(/^concurrency:\n +group: (.+)$/m);
+      assert.ok(group, `${name} writes the mirror without a concurrency group`);
+      assert.equal(group[1].trim(), "firestore-mirror", `${name} is not in the shared mirror group`);
+    }
+  });
+
+  it("checkout does not persist the job token into the working tree", async () => {
+    // `actions/checkout` defaults to leaving GITHUB_TOKEN in `.git/config`, where anything that can
+    // read files can use it. No job here pushes, so none of them needs it.
+    for (const name of NAMES) {
+      const text = await workflow(name);
+      for (const block of text.matchAll(/^ +- uses: actions\/checkout@.*$/gm)) {
+        assert.match(text.slice(block.index, block.index + 400), /persist-credentials: false/,
+          `${name} leaves GITHUB_TOKEN in .git/config`);
+      }
+    }
+  });
 });
 
 describe("firestore rules deployment stays separate from content mirroring", () => {

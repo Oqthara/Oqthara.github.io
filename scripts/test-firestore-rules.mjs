@@ -53,9 +53,13 @@ async function attempt(fn) {
   }
 }
 
-/** Maps a probe to the exact outcome the rules must produce. */
-function expect(read, allowed) {
-  if (allowed) return read.ok ? "allowed" : read.code;
+/**
+ * The outcome a probe produced, as the string the caller compares against.
+ *
+ * This only reports; the expectation lives at the call site so the table below reads as a list of
+ * claims. It used to take an `allowed` flag and ignore it, which looked like it asserted.
+ */
+function outcome(read) {
   return read.ok ? "allowed" : read.code;
 }
 
@@ -94,23 +98,23 @@ const { app, db } = clientDb();
 
 // Reads: only documents carrying the literal `published: true` are visible.
 const publishedRead = await attempt(() => getDoc(doc(db, "documentation", PUBLISHED)));
-record("published doc is readable", "allowed", expect(publishedRead, true));
+record("published doc is readable", "allowed", outcome(publishedRead));
 
 const draftRead = await attempt(() => getDoc(doc(db, "documentation", DRAFT)));
-record("unpublished doc is denied", "permission-denied", expect(draftRead, false));
+record("unpublished doc is denied", "permission-denied", outcome(draftRead));
 
 const noFlagRead = await attempt(() => getDoc(doc(db, "documentation", NO_FLAG)));
-record("doc without published flag is denied", "permission-denied", expect(noFlagRead, false));
+record("doc without published flag is denied", "permission-denied", outcome(noFlagRead));
 
 const exampleRead = await attempt(() => getDoc(doc(db, "examples", EXAMPLE)));
-record("published example is readable", "allowed", expect(exampleRead, true));
+record("published example is readable", "allowed", outcome(exampleRead));
 
 // The query the site actually runs. `where('published','==',true)` is defence in depth;
 // the rule is the permission, so the result set must also contain nothing else.
 const filtered = await attempt(() =>
   getDocs(query(collection(db, "documentation"), where("published", "==", true)))
 );
-record("published-filtered query is allowed", "allowed", expect(filtered, true));
+record("published-filtered query is allowed", "allowed", outcome(filtered));
 if (filtered.ok) {
   record(
     "filtered query returns only published docs",
@@ -134,24 +138,24 @@ record(
 
 // Operational collections are never public, even when a record says `published: true`.
 const syncRead = await attempt(() => getDoc(doc(db, "sync", `documentation__${PUBLISHED}`)));
-record("sync collection is denied", "permission-denied", expect(syncRead, false));
+record("sync collection is denied", "permission-denied", outcome(syncRead));
 
 const metadataRead = await attempt(() => getDoc(doc(db, "metadata", "site")));
-record("metadata collection is denied", "permission-denied", expect(metadataRead, false));
+record("metadata collection is denied", "permission-denied", outcome(metadataRead));
 
 // Writes: there is no client write path for published content.
 const create = await attempt(() => setDoc(doc(db, "documentation", "docs__guide__evil.md"), { published: true }));
-record("client create is denied", "permission-denied", expect(create, false));
+record("client create is denied", "permission-denied", outcome(create));
 
 const update = await attempt(() => setDoc(doc(db, "documentation", PUBLISHED), { published: true }));
-record("client update is denied", "permission-denied", expect(update, false));
+record("client update is denied", "permission-denied", outcome(update));
 
 const add = await attempt(() => addDoc(collection(db, "examples"), { published: true }));
-record("client add is denied", "permission-denied", expect(add, false));
+record("client add is denied", "permission-denied", outcome(add));
 
 // Anything unnamed falls to the catch-all deny.
 const unknown = await attempt(() => getDoc(doc(db, "secrets", "x")));
-record("unknown collection is denied", "permission-denied", expect(unknown, false));
+record("unknown collection is denied", "permission-denied", outcome(unknown));
 
 await deleteApp(app);
 

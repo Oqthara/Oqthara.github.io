@@ -66,6 +66,17 @@ export const ATTEMPT_RESULT = Object.freeze({ ok: "ok", failed: "failed" });
 const FETCH_TIMEOUT_MS = 30 * 1000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 
+/**
+ * The characters a release tag may contain.
+ *
+ * A tag is untrusted input: it is chosen by whoever can write to the upstream repository, and
+ * the mirror carries it into shell source, worker output, and a Firestore document. `git` and
+ * GitHub both allow `$`, backticks, `;` and newlines in a tag name, so the value is constrained
+ * once here, at the only point where it enters this process. Everything downstream — workflow
+ * summaries, `GITHUB_OUTPUT` blocks, the recorded state — can then treat it as inert text.
+ */
+const TAG_PATTERN = /^[A-Za-z0-9._/+-]{1,128}$/;
+
 function githubHeaders(token) {
   const headers = {
     Accept: "application/vnd.github+json",
@@ -136,6 +147,10 @@ export function releaseHashOf(release) {
 export function summarizeRelease(release) {
   if (!isPlainObject(release) || !isNonEmptyString(release.tag_name)) return null;
   const tag = release.tag_name.trim();
+  // A tag that is not a plain version identifier is refused rather than sanitized: silently
+  // rewriting it would record one release under another's name. Refusing leaves the recorded
+  // release untouched, so the next run reports the same mismatch and a human sees it.
+  if (!TAG_PATTERN.test(tag)) return null;
   return {
     tag,
     releaseId: Number.isFinite(Number(release.id)) ? Number(release.id) : 0,
@@ -287,11 +302,23 @@ export function buildStateUpdate({ release, result, detail = "", syncedAt = new 
 }
 
 /** The `GITHUB_OUTPUT` key=value protocol, without the Actions runtime. */
+/**
+ * Renders `GITHUB_OUTPUT` multi-line values.
+ *
+ * The heredoc delimiter must not appear in a value, or the value ends the block early and
+ * everything after it is read as further outputs. Tags are constrained upstream of here, but
+ * `formatOutputs` is also given release names and error text, so the delimiter is derived per
+ * call and checked against every value rather than assumed safe.
+ */
 export function formatOutputs(outputs) {
-  const lines = [];
-  for (const [key, value] of Object.entries(outputs ?? {})) {
-    lines.push(`${key}<<OQ_EOF`, String(value ?? ""), "OQ_EOF");
+  const entries = Object.entries(outputs ?? {}).map(([key, value]) => [key, String(value ?? "")]);
+  let delimiter = "OQ_EOF";
+  let attempt = 0;
+  while (entries.some(([, value]) => value.includes(delimiter))) {
+    delimiter = `OQ_EOF_${++attempt}`;
   }
+  const lines = [];
+  for (const [key, value] of entries) lines.push(`${key}<<${delimiter}`, value, delimiter);
   return lines.join("\n");
 }
 
@@ -412,8 +439,19 @@ export async function main(
     return EXIT.sourceFailed;
   }
 
-  const latest = summarizeRelease(selectLatestRelease(raw));
+  const rejected = selectLatestRelease(raw);
+  const latest = summarizeRelease(rejected);
   if (!latest) {
+    // A tag that fails TAG_PATTERN is refused, not ignored. Saying "no published release" here
+    // would describe a hostile tag as an empty upstream, and the condition would persist
+    // silently every 15 minutes.
+    if (isNonEmptyString(rejected?.tag_name)) {
+      error(
+        `::error::The newest upstream release tag ${JSON.stringify(rejected.tag_name)} is not a plain ` +
+          "version identifier and was refused. Allowed characters: A-Z a-z 0-9 . _ / + -",
+      );
+      return EXIT.sourceFailed;
+    }
     log("upstream has no published release; nothing to synchronize");
     await output(formatOutputs({ changed: "false", tag: "", sha: "", hash: "", reason: "no published upstream release" }));
     return EXIT.ok;

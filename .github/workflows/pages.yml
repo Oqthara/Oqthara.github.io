@@ -6,10 +6,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The build job reads the repository and nothing else. Deploying needs the Pages write scope and
+# an OIDC token, and both are granted on the `deploy` job instead of workflow-wide: the build job
+# runs `npm ci`, a rules emulator and a browser suite, which is the widest surface here and has no
+# reason to be able to publish.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -21,6 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # No job here pushes, so the job token has no reason to stay readable in .git/config.
+          persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -43,7 +48,7 @@ jobs:
         run: node verify.mjs
 
       - name: Validate HTML
-        run: npx --yes html-validate@9 --formatter stylish _site/*.html
+        run: npx --no-install html-validate --formatter stylish _site/*.html
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
@@ -63,11 +68,17 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # No job here pushes, so the job token has no reason to stay readable in .git/config.
+          persist-credentials: false
 
       - id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

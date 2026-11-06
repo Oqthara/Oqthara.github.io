@@ -52,6 +52,9 @@ jobs:
     steps:
       - name: Check out the site repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # No job here pushes, so the job token has no reason to stay readable in .git/config.
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -129,4 +132,4 @@ jobs:
             }
           '
 
-          npx --yes firebase-tools@13 deploy --only firestore:rules --project oqthara --non-interactive
+          npx --no-install firebase-tools deploy --only firestore:rules --project oqthara --non-interactive
