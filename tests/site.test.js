@@ -120,3 +120,21 @@ test("the Playground is gone from every emitted page and bundle", { skip }, () =
 test("_site has .nojekyll", { skip }, () => {
   assert.ok(existsSync(path.join(site, ".nojekyll")), "_site/.nojekyll must exist");
 });
+
+test("every page declares an icon that the build actually ships", { skip }, () => {
+  // A page with no icon link makes the browser request `/favicon.ico`, which GitHub Pages
+  // answers with 404 — a console error on every visit, and a best-practices deduction.
+  for (const file of STATIC_ROUTES) {
+    const html = readPage(file);
+    assert.match(
+      html,
+      /<link[^>]*rel="icon"[^>]*href="\/favicon\.svg"[^>]*>/i,
+      `${file} declares the root icon`,
+    );
+  }
+  const icon = path.join(site, "favicon.svg");
+  assert.ok(existsSync(icon), "the icon must be copied to the site root");
+  const svg = readFileSync(icon, "utf8");
+  assert.match(svg, /viewBox="0 0 32 32"/, "the icon scales without a fixed raster size");
+  assert.match(svg, /<rect[^>]*rx=/, "the icon has rounded corners, not a bare square");
+});
