@@ -348,13 +348,13 @@ hr {
 .site-nav {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 2px;
   margin-left: auto;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .site-nav a {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) clamp(var(--space-2), 0.8vw, var(--space-3));
   border-radius: var(--radius-sm);
   color: var(--fg);
   font-size: var(--step--1);
@@ -384,8 +384,9 @@ hr {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
+  /* 40px minimum touch target. */
+  width: 2.5rem;
+  height: 2.5rem;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -450,6 +451,9 @@ hr {
 
 .site-footer a {
   /* Small text, so it must clear 4.5:1 rather than sitting at the muted colour. */
+  display: inline-block;
+  min-height: 2rem;
+  padding-block: var(--space-1);
   color: var(--fg);
   text-decoration: none;
 }
@@ -670,7 +674,8 @@ hr {
 }
 
 .copy-button {
-  padding: var(--space-1) var(--space-2);
+  min-height: 2.25rem;
+  padding: var(--space-1) var(--space-3);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: transparent;
@@ -956,17 +961,41 @@ input:focus-visible {
   }
 }
 
-.docs-sidebar h2 {
+/* Desktop: the rail is always open and the summary collapses into a plain heading. */
+.sidebar-section > summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  cursor: pointer;
+  list-style: none;
+  margin-top: var(--space-4);
+}
+
+.sidebar-section:first-child > summary {
+  margin-top: 0;
+}
+
+.sidebar-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sidebar-section > summary h2 {
   font-size: var(--step--2);
   font-weight: 650;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--fg-subtle);
-  margin: var(--space-4) 0 var(--space-2);
+  margin: 0;
 }
 
-.docs-sidebar h2:first-child {
-  margin-top: 0;
+@media (min-width: 1001px) {
+  /* The disclosure is a mobile affordance; on desktop everything is visible. */
+  .sidebar-section > summary {
+    pointer-events: none;
+  }
+  .sidebar-section:not([open]) > ul {
+    display: grid;
+  }
 }
 
 .docs-sidebar ul {
@@ -979,6 +1008,7 @@ input:focus-visible {
 
 .docs-sidebar a {
   display: block;
+  min-height: 2.5rem;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   color: var(--fg-muted);
@@ -1203,6 +1233,18 @@ input:focus-visible {
 
 .doc :not(pre) > code {
   font-size: 0.88em;
+  /* A long identifier such as a test method name must break rather than push the page wider
+     than the viewport on a phone. This was measured at 688px inside a 358px column. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.doc ul,
+.doc ol,
+.doc li,
+.doc p {
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 
 .doc h2[id],

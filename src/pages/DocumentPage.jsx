@@ -4,6 +4,7 @@ import { ChannelBar } from "../components/ChannelSelect.jsx";
 import { MarkdownWithToc } from "../components/Markdown.jsx";
 import { useCatalog, useChannels, useDocument, resolveChannel } from "../use-docs.js";
 import { DEFAULT_REF, docsIndexUrl, isDocumentPath, sectionForPath, sectionTitle } from "../source.js";
+import { groupDocuments } from "../lib/sections.js";
 
 // The one page that renders any documentation file.
 //
@@ -16,22 +17,20 @@ import { DEFAULT_REF, docsIndexUrl, isDocumentPath, sectionForPath, sectionTitle
 
 function Sidebar({ docs, currentPath, channel }) {
   if (!docs || !docs.length) return null;
-  const groups = new Map();
-  for (const doc of docs) {
-    const key = doc.section || "Documentation";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(doc);
-  }
-  const ordered = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  // Same grouping and ordering as the index, so the two navigation surfaces never disagree.
+  const ordered = groupDocuments(docs).map((group) => [group.section, group.entries]);
 
   return h(
     "aside",
     { className: "docs-sidebar", "aria-label": "Documentation navigation" },
+    // Below 1000px the whole rail would be an eighteen-link wall above the document, so each
+    // section is a disclosure that starts closed on small screens. On desktop the CSS turns the
+    // summary into a plain heading and the lists stay visible.
     ordered.map(([section, entries]) =>
       h(
-        "div",
-        { key: section },
-        h("h2", null, section),
+        "details",
+        { key: section, className: "sidebar-section", open: entries.some((doc) => doc.path === currentPath) },
+        h("summary", null, h("h2", null, section), h("span", { className: "count" }, entries.length)),
         h(
           "ul",
           null,
@@ -163,19 +162,11 @@ export function DocumentPage({ query }) {
           : null,
 
         document.data
-          ? h(
-              "div",
-              { className: "doc-with-toc" },
-              h(
-                "div",
-                { className: "doc-article" },
-                h(MarkdownWithToc, {
-                  markdown: document.data.markdown,
-                  path: document.data.path,
-                  ref: channel.ref,
-                }),
-              ),
-            )
+          ? h(MarkdownWithToc, {
+              markdown: document.data.markdown,
+              path: document.data.path,
+              ref: channel.ref,
+            })
           : null,
 
         document.error && document.data

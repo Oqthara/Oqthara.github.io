@@ -13,7 +13,14 @@ import { DEFAULT_REF, blobUrl } from "../source.js";
 
 const DESIGN_PATH = "docs/spec/design.md";
 
-/** The principles, in the order the introduction on the homepage presents them. */
+/**
+ * The site's own short summary, used on this page and on the homepage.
+ *
+ * This is presentation, not a second source of truth: the authoritative statement is the design
+ * document rendered below, which is fetched from the language repository. The summary must stay
+ * faithful to that document, and the page says so instead of claiming these lines are the
+ * document itself.
+ */
 export const PRINCIPLES = [
   {
     title: "Readability first",
@@ -92,7 +99,7 @@ export function PhilosophyPage({ query = {} }) {
       h(
         "p",
         { className: "lead" },
-        "A small language for the JVM that reads like pseudocode. These principles are the ones the project actually holds itself to, and they come from the language repository rather than from a marketing page.",
+        "A small language for the JVM that reads like pseudocode. The short version is below; the authoritative statement is the design document itself, read from the language repository and rendered on this page.",
       ),
     ),
 
@@ -103,7 +110,7 @@ export function PhilosophyPage({ query = {} }) {
         "div",
         { className: "section-head" },
         h("h2", { id: "principles" }, "The principles"),
-        h("p", null, "Summarised for orientation. The full argument, including the goals and non-goals, is the design document rendered below."),
+        h("p", null, "A summary written for this page to orient a first-time reader. It is not a second copy of the specification: the goals, non-goals and full argument are the design document rendered below, which is fetched from the repository."),
       ),
       h(
         "div",

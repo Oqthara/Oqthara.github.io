@@ -148,7 +148,12 @@ function fromPersisted(key, load, { revalidate = true } = {}) {
   const value = entry.value;
   const immediate = Promise.resolve(value);
   cache.set(key, { promise: immediate, at: entry.at, value });
-  if (revalidate) {
+
+  // Fresh enough: serve it and make no request at all. A persisted entry used to be
+  // revalidated on every page load, which turned every navigation into API calls and exhausted
+  // the 60/hour unauthenticated quota during a normal reading session.
+  const fresh = Date.now() - entry.at < CACHE_TTL_MS;
+  if (revalidate && !fresh) {
     // Deferred by a microtask so a hook that mounts in the same tick can subscribe before the
     // failure is published. Without this the very first reload after a failure reports nothing.
     const refresh = Promise.resolve().then(load);

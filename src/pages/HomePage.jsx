@@ -77,7 +77,7 @@ export function HomePage() {
           "div",
           { className: "section-head" },
           h("h2", { id: "install" }, "Install"),
-          h("p", null, "One command on macOS or Linux. The installer checks the published SHA-256 before it replaces anything, and it picks up prereleases."),
+          h("p", null, "One command on macOS or Linux. The installer reads the latest published release, verifies the artifact before installing it, and can be pinned to a version with OQ_VERSION."),
         ),
         h(CodeBlock, { code: INSTALL_COMMAND, label: "macOS and Linux" }),
         h("div", { style: { height: "var(--space-3)" } }),

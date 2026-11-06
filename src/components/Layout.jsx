@@ -1,4 +1,4 @@
-import { createElement as h, useEffect, useState } from "react";
+import { createElement as h, useEffect, useRef, useState } from "react";
 import { BASE_PATH, NAV } from "../data/meta.js";
 import { Search } from "./Search.jsx";
 
@@ -80,16 +80,25 @@ function ThemeToggle() {
 /** Shared page chrome: skip link, header, navigation, main landmark and footer. */
 export function Layout({ current, children }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const toggleRef = useRef(null);
+  const navRef = useRef(null);
 
   // Close the mobile menu on navigation and on Escape, so it never traps the reader.
   useEffect(() => {
     setMenuOpen(false);
   }, [current]);
 
+  // Focus follows the menu: opening moves into the nav so a keyboard user is not left behind on
+  // the toggle, and closing returns them to it.
   useEffect(() => {
     if (!menuOpen) return;
+    const first = navRef.current?.querySelector("a");
+    if (first) first.focus();
     const onKey = (event) => {
-      if (event.key === "Escape") setMenuOpen(false);
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        toggleRef.current?.focus();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -118,6 +127,7 @@ export function Layout({ current, children }) {
             className: "site-nav",
             "aria-label": "Main",
             id: "site-nav",
+            ref: navRef,
             "data-open": menuOpen ? "true" : "false",
           },
           NAV.map((item) =>
@@ -142,6 +152,7 @@ export function Layout({ current, children }) {
             {
               type: "button",
               className: "icon-button nav-toggle",
+              ref: toggleRef,
               onClick: () => setMenuOpen((open) => !open),
               "aria-expanded": menuOpen ? "true" : "false",
               "aria-controls": "site-nav",

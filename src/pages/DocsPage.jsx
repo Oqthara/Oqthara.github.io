@@ -3,6 +3,7 @@ import { hrefFor, PageHead } from "../components/Layout.jsx";
 import { ChannelBar } from "../components/ChannelSelect.jsx";
 import { useCatalog, useChannels, resolveChannel } from "../use-docs.js";
 import { DEFAULT_REF, docsIndexUrl } from "../source.js";
+import { groupDocuments } from "../lib/sections.js";
 
 // The documentation index.
 //
@@ -12,29 +13,6 @@ import { DEFAULT_REF, docsIndexUrl } from "../source.js";
 //
 // This is also where the deployed `e is not iterable` bug is fixed. `useCatalog` resolves to
 // an array of documents; the index iterates that array and nothing else.
-
-const SECTION_ORDER = ["Overview", "Specification", "Reference", "Standard library", "Decision records"];
-
-function sectionRank(name) {
-  const index = SECTION_ORDER.indexOf(name);
-  return index === -1 ? SECTION_ORDER.length : index;
-}
-
-/** Groups discovered documents by their repository section, preserving a stable order. */
-export function groupDocuments(docs) {
-  const groups = new Map();
-  for (const doc of docs) {
-    const key = doc.section || "Documentation";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(doc);
-  }
-  return [...groups.entries()]
-    .map(([section, entries]) => ({
-      section,
-      entries: entries.slice().sort((a, b) => a.path.localeCompare(b.path)),
-    }))
-    .sort((a, b) => sectionRank(a.section) - sectionRank(b.section) || a.section.localeCompare(b.section));
-}
 
 function Loading({ what }) {
   return h(

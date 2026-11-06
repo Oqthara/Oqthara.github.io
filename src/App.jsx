@@ -74,7 +74,15 @@ export function App({ path, search = "" }) {
 
   if (route) {
     const Page = route.component;
-    return h(Layout, { current: route.path }, h(Page, { query }));
+    // A document belongs to Docs and an example to Examples, so the header can mark where the
+    // reader actually is instead of showing no current item on those two routes.
+    const current =
+      route.path === "/document.html"
+        ? "/docs.html"
+        : route.path === "/example.html"
+          ? "/examples.html"
+          : route.path;
+    return h(Layout, { current }, h(Page, { query }));
   }
 
   return h(Layout, { current: "" }, h(NotFoundPage, { path }));

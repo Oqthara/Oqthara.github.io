@@ -1,7 +1,7 @@
 import { createElement as h, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeOptionId, keyAction, optionId, rankEntries } from "../search.js";
 
-import { loadCatalog, loadExamples } from "../github-docs.js";
+import { loadCatalog, loadExamples, loadText } from "../github-docs.js";
 import { DEFAULT_REF, documentRoute, exampleRoute, parseQuery, sectionForPath } from "../source.js";
 
 // Site search over dynamically discovered content.
@@ -17,16 +17,31 @@ function buildIndex(ref = DEFAULT_REF) {
   return Promise.all([
     loadCatalog(ref).catch(() => []),
     loadExamples(ref).catch(() => []),
-  ]).then(([docs, examples]) => {
+  ]).then(async ([docs, examples]) => {
     const entries = [];
-    for (const doc of docs) {
+
+    // The catalogue already shrank the documents' Markdown for their titles, so the bodies are
+    // in the cache. Indexing a short excerpt is what makes a search for a term that appears
+    // only in the text (a type name, a function) find the document at all.
+    const excerpts = await Promise.all(
+      docs.map(async (doc) => {
+        try {
+          const markdown = await loadText(ref, doc.path);
+          return excerpt(markdown);
+        } catch {
+          return "";
+        }
+      }),
+    );
+
+    docs.forEach((doc, index) => {
       entries.push({
         title: doc.title,
-        text: `${sectionForPath(doc.path)} ${doc.path}`,
+        text: `${sectionForPath(doc.path)} ${doc.path} ${excerpts[index]}`,
         url: documentRoute(doc.path, ref),
         kind: "Documentation",
       });
-    }
+    });
     for (const example of examples) {
       entries.push({
         title: `${example.name}.oq`,
@@ -37,6 +52,18 @@ function buildIndex(ref = DEFAULT_REF) {
     }
     return entries;
   });
+}
+
+const EXCERPT_CHARS = 1200;
+
+/** A trimmed window of document text, enough for matching without bloating the index. */
+function excerpt(markdown) {
+  return String(markdown ?? "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/[#>*_`|\[\]()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, EXCERPT_CHARS);
 }
 
 const indexCache = new Map();
