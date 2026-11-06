@@ -12,10 +12,26 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import GithubSlugger from "github-slugger";
+import rehypePrism from "rehype-prism-plus";
+import { ensureLanguages } from "./lib/highlight.js";
+import { inferLanguagePlugin } from "./lib/infer-language.js";
 import { CodeBlock } from "./components/Code.js";
 import { resolveImage, resolveRelative } from "./source.js";
 
+// Grammars are registered once, in `lib/highlight.js`, which is also what the hand-written
+// code samples use. Registering them here as well would let the two surfaces drift apart.
+ensureLanguages();
+
 const HEADINGS = ["h1", "h2", "h3", "h4", "h5", "h6"];
+
+/** Flattens React children to their text, which is what the copy button puts on the clipboard. */
+function textOf(node) {
+  if (node === null || node === undefined || node === false) return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (typeof node === "object" && node.props) return textOf(node.props.children);
+  return "";
+}
 
 /** Extends the default schema with the handful of attributes the documentation uses. */
 export const schema = {
@@ -43,7 +59,19 @@ export const schema = {
 };
 
 export const remarkPlugins = [remarkGfm];
-export const rehypePlugins = [rehypeRaw, [rehypeSanitize, schema], rehypeSlug];
+export const rehypePlugins = [
+  rehypeRaw,
+  // Most canonical documents fence their samples with no language at all (84 of 96 blocks),
+  // so a grammar is chosen from the content before highlighting runs. Blocks that already name
+  // a language, and all inline code, are left alone.
+  inferLanguagePlugin,
+  // Syntax highlighting runs before sanitisation: it rewrites fenced blocks into nested
+  // `token` spans, and the sanitizer would otherwise remove those classes (or the whole
+  // rewrite would be undone).
+  [rehypePrism, { ignoreMissing: true }],
+  [rehypeSanitize, schema],
+  rehypeSlug,
+];
 
 const EXTERNAL = /^(?:https?:)?\/\//i;
 
@@ -54,14 +82,20 @@ const EXTERNAL = /^(?:https?:)?\/\//i;
  */
 export function buildComponents({ path = "", ref = "main" } = {}) {
   return {
-    // Copy controls on fenced blocks. `pre` receives the `code` child, so the text is read
-    // from its props rather than the DOM, which keeps this working during server rendering.
+    // Copy controls on fenced blocks.
+    //
+    // The children arriving here are already highlighted (Prism ran in the rehype chain), so
+    // they are rendered as-is. Only the plain text is extracted for the clipboard, by walking
+    // the React children rather than reading the DOM, so this also works during SSR.
     pre({ node: _node, children, ...props }) {
+      // `rehype-prism-plus` has already replaced the block with `pre > code.code-highlight`,
+      // so the first child is the element to render. It must be passed through as the whole
+      // `pre` body: wrapping it in another `code` produced `pre > code > code`, and the inner
+      // element then matched the inline-code rule and was painted as a white pill.
       const codeChild = Array.isArray(children) ? children[0] : children;
-      const text = codeChild?.props?.children;
-      const raw = Array.isArray(text) ? text.join("") : text;
+      const raw = textOf(codeChild?.props?.children);
       const language = /language-([\w+-]+)/.exec(String(codeChild?.props?.className ?? ""))?.[1];
-      return h(CodeBlock, { code: typeof raw === "string" ? raw : "", label: language });
+      return h(CodeBlock, { code: raw, label: language, highlighted: codeChild });
     },
     // The page supplies the single h1; a document's own h1 becomes an h2 so heading order stays
     // valid and no page ever has two top-level headings.

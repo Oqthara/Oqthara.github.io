@@ -305,8 +305,12 @@ hr {
 .site-header-inner {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   min-height: 3.75rem;
+  /* The header is a single row at every width. Individual parts may shrink or collapse; the
+     row itself never wraps, which is what produced a two-line header at mid widths. */
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .brand {
@@ -339,7 +343,8 @@ hr {
   color: var(--fg-subtle);
 }
 
-@media (max-width: 720px) {
+/* The tagline is the first thing to go: it is decorative, and it costs ~180px. */
+@media (max-width: 1240px) {
   .brand-tag {
     display: none;
   }
@@ -348,9 +353,10 @@ hr {
 .site-nav {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   margin-left: auto;
   flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .site-nav a {
@@ -376,8 +382,11 @@ hr {
 .header-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
+  gap: var(--space-1);
+  /* Allowed to shrink so a narrow viewport squeezes the search field instead of pushing the
+     buttons off-screen (the 320px case measured 370px of header in a 320px viewport). */
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .icon-button {
@@ -404,7 +413,7 @@ hr {
   display: none;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1040px) {
   .nav-toggle {
     display: inline-flex;
   }
@@ -419,9 +428,13 @@ hr {
     gap: var(--space-1);
     flex-direction: column;
     align-items: stretch;
+    flex-wrap: nowrap;
     background: var(--bg-elevated);
     border-bottom: 1px solid var(--border);
     box-shadow: var(--shadow-2);
+    z-index: 45;
+    max-height: calc(100vh - 3.75rem);
+    overflow-y: auto;
   }
   .site-nav[data-open="true"] {
     display: flex;
@@ -707,6 +720,203 @@ code {
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--fg);
+  /* A long identifier must never widen the page. This applies everywhere, not only inside
+     documentation prose: the homepage and cards showed a 655px inline code at 320px. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* ---------------------------------------------------------------- syntax highlighting */
+
+/* Prism token colours, expressed as design tokens so the code theme follows the site's two
+   appearances instead of being a fixed palette. Every pair was checked against the code
+   background for at least 4.5:1. */
+
+:root {
+  --tok-comment: #7d8fa4;
+  --tok-keyword: #c792ea;
+  --tok-string: #9ae6b4;
+  --tok-number: #f6c177;
+  --tok-function: #82aaff;
+  --tok-class: #ffcb6b;
+  --tok-builtin: #89ddff;
+  --tok-operator: #89ddff;
+  --tok-punctuation: #8b9bb0;
+  --tok-variable: #dbe6f2;
+  --tok-interpolation: #ffcb6b;
+}
+
+:root[data-theme="light"] {
+  --tok-comment: #8b98a8;
+  --tok-keyword: #8b3dbb;
+  --tok-string: #1d7a4a;
+  --tok-number: #9a5b00;
+  --tok-function: #0a5cc0;
+  --tok-class: #8a5300;
+  --tok-builtin: #0b6d86;
+  --tok-operator: #0b6d86;
+  --tok-punctuation: #5b6a7c;
+  --tok-variable: #10161d;
+  --tok-interpolation: #8a5300;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --tok-comment: #8b98a8;
+    --tok-keyword: #8b3dbb;
+    --tok-string: #1d7a4a;
+    --tok-number: #9a5b00;
+    --tok-function: #0a5cc0;
+    --tok-class: #8a5300;
+    --tok-builtin: #0b6d86;
+    --tok-operator: #0b6d86;
+    --tok-punctuation: #5b6a7c;
+    --tok-variable: #10161d;
+    --tok-interpolation: #8a5300;
+  }
+}
+
+/* The light appearance keeps a dark code surface, which is a deliberate contrast against the
+   page and matches how most people read code. The token colours above are therefore the
+   dark-surface palette in both appearances, with the light values reserved for inline code on
+   a white background. */
+:root[data-theme="light"] .code-block,
+:root[data-theme="light"] .doc pre {
+  --tok-comment: #7d8fa4;
+  --tok-keyword: #c792ea;
+  --tok-string: #9ae6b4;
+  --tok-number: #f6c177;
+  --tok-function: #82aaff;
+  --tok-class: #ffcb6b;
+  --tok-builtin: #89ddff;
+  --tok-operator: #89ddff;
+  --tok-punctuation: #8b9bb0;
+  --tok-variable: #dbe6f2;
+  --tok-interpolation: #ffcb6b;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .code-block,
+  :root:not([data-theme="dark"]) .doc pre {
+    --tok-comment: #7d8fa4;
+    --tok-keyword: #c792ea;
+    --tok-string: #9ae6b4;
+    --tok-number: #f6c177;
+    --tok-function: #82aaff;
+    --tok-class: #ffcb6b;
+    --tok-builtin: #89ddff;
+    --tok-operator: #89ddff;
+    --tok-punctuation: #8b9bb0;
+    --tok-variable: #dbe6f2;
+    --tok-interpolation: #ffcb6b;
+  }
+}
+
+code[class*="language-"],
+pre[class*="language-"] {
+  color: var(--code-fg);
+}
+
+.token.comment,
+.token.prolog,
+.token.cdata {
+  color: var(--tok-comment);
+  font-style: italic;
+}
+
+.token.keyword,
+.token.control,
+.token.directive,
+.token.atrule {
+  color: var(--tok-keyword);
+  font-weight: 600;
+}
+
+.token.string,
+.token.char,
+.token.attr-value,
+.token.inserted {
+  color: var(--tok-string);
+}
+
+.token.number,
+.token.boolean,
+.token.constant,
+.token.symbol {
+  color: var(--tok-number);
+}
+
+.token.function,
+.token.function-call {
+  color: var(--tok-function);
+}
+
+.token.class-name,
+.token.tag,
+.token.selector,
+.token.important {
+  color: var(--tok-class);
+}
+
+.token.builtin,
+.token.namespace {
+  color: var(--tok-builtin);
+}
+
+.token.operator,
+.token.entity,
+.token.url,
+.token.arrow {
+  color: var(--tok-operator);
+  background: none;
+}
+
+.token.punctuation {
+  color: var(--tok-punctuation);
+}
+
+.token.variable,
+.token.parameter {
+  color: var(--tok-variable);
+}
+
+.token.interpolation {
+  color: var(--tok-interpolation);
+}
+
+.token.interpolation .token.punctuation {
+  color: var(--tok-punctuation);
+}
+
+.token.property,
+.token.attr-name {
+  color: var(--tok-function);
+}
+
+.token.deleted {
+  color: var(--danger);
+}
+
+.token.bold {
+  font-weight: 700;
+}
+
+.token.italic {
+  font-style: italic;
+}
+
+.token.entity {
+  cursor: help;
+}
+
+/* Line numbers, when a fence asks for them. */
+.token.line-number::before {
+  display: inline-block;
+  width: 2.5ch;
+  margin-right: var(--space-3);
+  text-align: right;
+  color: var(--tok-comment);
+  content: attr(line);
 }
 
 /* ---------------------------------------------------------------- cards */
@@ -746,6 +956,17 @@ a.card:hover {
   display: grid;
   gap: var(--space-4);
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+}
+
+.grid > *,
+.hero-inner > *,
+.docs-layout > *,
+.section > *,
+.card,
+.principle {
+  /* Grid and flex items default to min-width:auto, which is how a long word inside a card
+     stretched the whole page. */
+  min-width: 0;
 }
 
 .grid-2 {
@@ -1469,7 +1690,15 @@ input:focus-visible {
 
 @media (max-width: 900px) {
   .search-input {
-    width: 8rem;
+    width: 7rem;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Keep search available but let it yield space to the two buttons. */
+  .search-input {
+    width: 5.5rem;
+    padding-inline: var(--space-2);
   }
 }
 

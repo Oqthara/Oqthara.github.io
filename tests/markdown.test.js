@@ -80,7 +80,18 @@ test("renders fenced code with its language label and the real source", () => {
   const html = render(FIXTURE);
   // CodeBlock turns the fenced language into the visible label and keeps the text verbatim.
   assert.match(html, /<div class="code-label"><span>oq<\/span>/);
-  assert.match(html, /for n in 1 to 5/);
+  // Highlighting splits the source into token spans, so the text is compared with the tags
+  // removed. That is a stronger check than a substring match: it proves the source survives
+  // tokenisation character for character, including the two-space indentation.
+  const codeText = html
+    .replace(/<[^>]+>/g, "")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#x27;/g, "'");
+  assert.ok(codeText.includes("for n in 1 to 5"), "source text is preserved verbatim");
+  assert.ok(codeText.includes("  print n"), "indentation is preserved");
   assert.match(html, /<div class="code-block/);
   assert.match(html, /class="copy-button"/);
   // The raw fence markers must not leak into the output.
@@ -246,11 +257,16 @@ test("the plugin order parses raw HTML before sanitizing", async () => {
   const { default: rehypeRaw } = await import("rehype-raw");
   const { default: rehypeSanitize } = await import("rehype-sanitize");
   const { default: rehypeSlug } = await import("rehype-slug");
+  const { inferLanguagePlugin } = await import("../src/lib/infer-language.js");
   assert.deepEqual(remarkPlugins.map((plugin) => plugin.name), ["remarkGfm"]);
-  assert.equal(rehypePlugins.length, 3);
+  // raw HTML, language inference, Prism, sanitize, slug: highlighting and inference both run
+  // before the sanitizer so the classes they add are on the allowlist and survive.
+  assert.equal(rehypePlugins.length, 5);
   assert.equal(rehypePlugins[0], rehypeRaw);
-  assert.equal(rehypePlugins[1][0], rehypeSanitize);
-  assert.equal(rehypePlugins[2], rehypeSlug);
+  assert.equal(rehypePlugins[1], inferLanguagePlugin);
+  assert.equal(typeof rehypePlugins[2][0], "function");
+  assert.equal(rehypePlugins[3][0], rehypeSanitize);
+  assert.equal(rehypePlugins[4], rehypeSlug);
   // Schema allows the class names the docs use and no clobber prefix.
   assert.equal(schema.clobberPrefix, "");
   assert.ok(schema.attributes.code.includes("className"));
