@@ -67,10 +67,47 @@ describe("alpha-release-sync workflow", () => {
 
   it("records success only after the sync succeeds, and records failures without advancing", async () => {
     const text = await workflow(NAME);
-    assert.match(stepBody(text, "Record a successful sync"), /if: steps\.sync\.outcome == 'success'/);
+    assert.match(stepBody(text, "Record a successful sync"), /if: \$\{\{ !cancelled\(\) && steps\.sync\.outcome == 'success' \}\}/);
     const failed = stepBody(text, "Record a failed sync");
     assert.match(failed, /steps\.sync\.outcome != 'success'/);
     assert.match(failed, /--record=failed/);
+  });
+
+  it("a failed sync is recorded rather than skipped by an implicit success()", async () => {
+    // SECURITY/CORRECTNESS: an `if:` with no status function gets an implicit `success()`, which is
+    // false as soon as an earlier step fails. The step whose job is to describe a failure would
+    // therefore never run when there was one to describe, the state document would keep the last
+    // success, and the next poll would believe the failed release had already been mirrored.
+    const failed = stepBody(await workflow(NAME), "Record a failed sync");
+    assert.match(failed, /!cancelled\(\)/, "must run through a failed sync");
+    assert.doesNotMatch(failed, /^\s+if: (?!.*!cancelled)/m, "a bare if: is implicitly success()-gated");
+    assert.doesNotMatch(failed, /--record=ok/, "a failure must never advance the success pointer");
+  });
+
+  it("a forced dispatch reconciles every document instead of trusting hashes", async () => {
+    // The defect: `force` reran the incremental pass, whose hash comparison cannot see an edit
+    // made directly in Firestore - the bookkeeping hash still matches, so the damaged document is
+    // skipped. `force` is exactly the repair path for that damage, so it must select --full.
+    const text = await workflow(NAME);
+    const decide = stepBody(text, "Decide");
+    assert.match(decide, /mode=full/, "force must select a full reconciliation");
+    assert.match(decide, /inputs\.force/, "the mode must depend on the force input");
+
+    const sync = stepBody(text, "Synchronize the mirror");
+    assert.match(sync, /sync-firestore\.mjs --full/, "the full mode must reach the script");
+    assert.match(sync, /SYNC_MODE/);
+    assert.match(sync, /sync-firestore\.mjs\n/, "the incremental path must survive for scheduled polls");
+  });
+
+  it("scheduled polls stay incremental, so the 15-minute cadence is not a full rewrite", async () => {
+    const decide = stepBody(await workflow(NAME), "Decide");
+    assert.match(decide, /mode=incremental/);
+    // `full` must never be the default branch of the decision.
+    const modeBlock = decide.slice(decide.indexOf("FORCE"));
+    assert.ok(
+      modeBlock.indexOf("mode=full") < modeBlock.indexOf("mode=incremental"),
+      "full must be the guarded branch, not the fallback",
+    );
   });
 
   it("forwards the detection outputs through GITHUB_OUTPUT, not through the log", async () => {

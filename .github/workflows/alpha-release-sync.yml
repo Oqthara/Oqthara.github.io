@@ -163,12 +163,32 @@ jobs:
           echo "Add the service account JSON as a repository secret, or run this workflow manually with dry_run=true."
           exit 1
 
-      # `force` on a manual dispatch skips the comparison. The mirror is hash-based, so this
-      # rewrites only what differs; it exists to repair a mirror that was edited out of band.
+      # `force` on a manual dispatch skips the comparison, but it must NOT mean "rerun the
+      # incremental path": an incremental pass compares recorded hashes to source hashes, so a
+      # document edited out of band in Firestore still matches its bookkeeping hash and is
+      # skipped. That is the whole class of damage this input exists to repair, so `force`
+      # selects a full reconciliation instead.
       - name: Decide
         id: decide
         if: steps.detect.outputs.changed == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force)
-        run: echo "run=true" >> "$GITHUB_OUTPUT"
+        env:
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+          TAG: ${{ steps.detect.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$FORCE" = "true" ]; then
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=incremental" >> "$GITHUB_OUTPUT"
+          fi
+          # Recording a failure needs to name the release it failed on, and a forced run may not
+          # have gone through detection's "changed" path.
+          if [ -z "$TAG" ]; then
+            echo "tag=forced" >> "$GITHUB_OUTPUT"
+          else
+            printf 'tag=%s\n' "$TAG" >> "$GITHUB_OUTPUT"
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
 
       - name: No new release
         if: steps.detect.outputs.changed == 'false' && !(github.event_name == 'workflow_dispatch' && inputs.force)
@@ -182,14 +202,30 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          # Scheduled polls stay incremental; only an operator asking for `force` pays for a
+          # full rewrite. Both values come from `Decide`, so the mode is decided once.
+          SYNC_MODE: ${{ steps.decide.outputs.mode }}
         # The mirror reads `main`, which the detection step proved contains the release tag.
-        # `--full` is not used: incremental sync is hash-based and already correct.
-        run: node scripts/sync-firestore.mjs
+        run: |
+          set -euo pipefail
+          if [ "$SYNC_MODE" = "full" ]; then
+            echo "Forced run: reconciling every mirrored document, not just the changed ones."
+            node scripts/sync-firestore.mjs --full
+          else
+            node scripts/sync-firestore.mjs
+          fi
 
       # Both recording steps run even when the sync failed, so the failure is visible in state
       # and the next scheduled run retries instead of believing the mirror is current.
+      #
+      # The failure recorder needs `!cancelled()`: a step whose `if:` has no status function gets
+      # an implicit `success()`, which is false once any earlier step failed - so the recorder
+      # that exists to describe a failure would be skipped precisely when there is one to record,
+      # the state document would keep the previous success, and the next run would believe the
+      # mirror was current. `!cancelled()` instead keeps it running through a failed sync while
+      # still not running when the job itself was cancelled.
       - name: Record a successful sync
-        if: steps.sync.outcome == 'success'
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           OQ_RELEASE_TAG: ${{ steps.detect.outputs.tag }}
@@ -198,12 +234,14 @@ jobs:
         run: node scripts/check-upstream-release.mjs --record=ok
 
       - name: Record a failed sync
-        if: steps.decide.outputs.run == 'true' && steps.sync.outcome != 'success' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        if: ${{ !cancelled() && steps.decide.outputs.run == 'true' && steps.sync.outcome != 'success' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          OQ_RELEASE_TAG: ${{ steps.detect.outputs.tag }}
+          OQ_RELEASE_TAG: ${{ steps.decide.outputs.tag }}
           OQ_RELEASE_SHA: ${{ steps.detect.outputs.sha }}
           OQ_RELEASE_DETAIL: "the mirror sync did not succeed"
+        # `--record=failed` must never move the last-successful pointer, or the next poll would
+        # conclude the failed release had already been mirrored and stop retrying it.
         run: node scripts/check-upstream-release.mjs --record=failed
 
       # Detected values reach this step through `env:`, never interpolated into `run:`.
