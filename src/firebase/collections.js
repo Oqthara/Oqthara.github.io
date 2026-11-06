@@ -15,6 +15,15 @@
 
 import { normalizePath, normalizeRepoPath } from "../source.js";
 
+/**
+ * The readable record describing the mirror as a whole.
+ *
+ * `sync` holds the same facts but is operator-facing and not world-readable. The site needs to
+ * say which upstream commit it is showing, so the catalogue is mirrored into `metadata`, which
+ * is readable by the same rules that let a document be read at all.
+ */
+export const COLLECTION_CATALOG_ID = "catalog";
+
 export const COLLECTIONS = Object.freeze({
   documentation: "documentation",
   examples: "examples",

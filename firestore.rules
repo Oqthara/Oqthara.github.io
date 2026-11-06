@@ -52,6 +52,16 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Exactly one readable document: the catalogue, which states which upstream commit the
+    // mirrored content came from and when it was reconciled. That is public information - it is
+    // the commit of a public repository - and it is the only way a reader can check the site's
+    // claim about what it is serving. Everything else in this collection stays unreadable, and
+    // nothing here is writable from a client.
+    match /metadata/catalog {
+      allow read: if isPublished();
+      allow write: if false;
+    }
+
     // Reserved for future site metadata. Deny by default rather than leak an unscoped field.
     match /metadata/{docId} {
       allow read: if false;

@@ -1833,6 +1833,19 @@ input:focus-visible {
   color: var(--fg-subtle);
 }
 
+/* Which revision the mirror was built from. Quiet enough to sit under the content it describes,
+   but a real link, because the claim is only useful if it can be checked. */
+.provenance {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-2);
+}
+
+.provenance code {
+  font-size: inherit;
+}
+
 .tag {
   display: inline-flex;
   align-items: center;

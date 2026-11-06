@@ -2,7 +2,8 @@ import { createElement as h } from "react";
 import { hrefFor, PageHead } from "../components/Layout.jsx";
 import { ChannelBar } from "../components/ChannelSelect.jsx";
 import { SourceNote } from "../components/SourceNote.jsx";
-import { useCatalog, useChannels, resolveChannel } from "../use-docs.js";
+import { MirrorProvenance } from "../components/MirrorProvenance.jsx";
+import { useCatalog, useChannels, useMirrorCatalog, resolveChannel } from "../use-docs.js";
 import { DEFAULT_REF, docsIndexUrl } from "../source.js";
 import { groupDocuments } from "../lib/sections.js";
 
@@ -80,6 +81,10 @@ export function DocsPage({ query = {} }) {
   const { channels, status: channelStatus } = useChannels();
   const channel = resolveChannel(channels, query.ref);
   const { status, data, source, error, retry } = useCatalog(channel.ref);
+  // Only the development channel is mirrored. A release channel is read from GitHub at its tag,
+  // where the tag already is the provenance, so the mirror's commit would be misleading there.
+  const { status: catalogStatus, catalog } = useMirrorCatalog();
+  const showsMirror = channel.ref === DEFAULT_REF;
 
   return h(
     "div",
@@ -129,5 +134,6 @@ export function DocsPage({ query = {} }) {
       h("code", null, channel.ref === DEFAULT_REF ? "main" : channel.ref),
       h(SourceNote, { source }),
     ),
+    showsMirror ? h("p", { className: "meta-row" }, h(MirrorProvenance, { catalog, status: catalogStatus })) : null,
   );
 }

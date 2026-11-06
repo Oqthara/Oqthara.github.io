@@ -60,6 +60,7 @@ import {
   treeApiUrl,
 } from "../src/source.js";
 import {
+  COLLECTION_CATALOG_ID,
   COLLECTIONS,
   FIELDS,
   MIRRORED_REF,
@@ -723,21 +724,26 @@ export async function applyPlan(
   // One catalogue-level record so a later run can see when the mirror was last reconciled, and
   // from which upstream commit. `sourceRef` alone says "main" and never which main, so it cannot
   // answer whether the mirror is current.
-  await db.collection(COLLECTIONS.sync).doc("catalog").set(
-    {
-      [FIELDS.status]: "published",
-      [FIELDS.sourceRef]: MIRRORED_REF,
-      [FIELDS.sourceCommit]: commit,
-      [FIELDS.updatedAt]: now,
-      counts: {
-        written: plan.writes.length,
-        unchanged: plan.unchanged.length,
-        unpublished: plan.unpublish.length,
-        oversized: plan.oversized.length,
-      },
+  const catalog = {
+    [FIELDS.status]: "published",
+    [FIELDS.sourceRef]: MIRRORED_REF,
+    [FIELDS.sourceCommit]: commit,
+    [FIELDS.updatedAt]: now,
+    counts: {
+      written: plan.writes.length,
+      unchanged: plan.unchanged.length,
+      unpublished: plan.unpublish.length,
+      oversized: plan.oversized.length,
     },
-    { merge: true },
-  );
+  };
+  await db.collection(COLLECTIONS.sync).doc("catalog").set(catalog, { merge: true });
+  // Mirrored into the publicly readable collection as well. `sync` is operator-facing and not
+  // world-readable, so without this the one fact that makes the mirror auditable - which commit
+  // this content came from - is only visible to whoever holds the service account.
+  await db
+    .collection(COLLECTIONS.metadata)
+    .doc(COLLECTION_CATALOG_ID)
+    .set({ ...catalog, [FIELDS.updatedAt]: now }, { merge: true });
 
   return { operations: written };
 }

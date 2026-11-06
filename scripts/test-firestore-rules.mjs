@@ -76,6 +76,8 @@ async function seed() {
     ["examples", EXAMPLE, { path: "examples/hello.oq", title: "Hello", content: 'print "Hello, World!"', published: true }],
     ["sync", `documentation__${PUBLISHED}`, { published: true }],
     ["metadata", "site", { title: "Oqthara", published: true }],
+    // The one readable entry: the mirror catalogue.
+    ["metadata", "catalog", { sourceRef: "main", sourceCommit: "a".repeat(40), published: true }],
   ];
 
   for (const [name, id, data] of documents) {
@@ -142,6 +144,39 @@ record("sync collection is denied", "permission-denied", outcome(syncRead));
 
 const metadataRead = await attempt(() => getDoc(doc(db, "metadata", "site")));
 record("metadata collection is denied", "permission-denied", outcome(metadataRead));
+
+// Positive control. Without it the denial above would also pass if the whole collection were
+// simply unreachable, and the catalogue rule would be untested.
+const catalogRead = await attempt(() => getDoc(doc(db, "metadata", "catalog")));
+record("the mirror catalogue is readable", "allowed", outcome(catalogRead));
+// Being allowed is not the same as returning the record. A rule that permitted the read but
+// pointed at the wrong document would still pass the line above.
+record(
+  "the mirror catalogue returns its commit",
+  `commit=${"a".repeat(40)}`,
+  catalogRead.ok ? `commit=${catalogRead.value.data()?.sourceCommit}` : outcome(catalogRead),
+);
+
+// The rule tests `published`, and the only way to exercise that on a rule matched by document
+// id is to change the flag on the document the rule names. Seeding a second id would prove
+// nothing: `match /metadata/catalog` never matches it, so the catch-all denies regardless.
+const publishedCatalogRead = await attempt(() => getDoc(doc(db, "metadata", "catalog")));
+record("a published catalogue is readable", "allowed", outcome(publishedCatalogRead));
+
+const unpublishAdmin = initAdminApp({ projectId: PROJECT }, "rules-toggle");
+await getAdminFirestore(unpublishAdmin)
+  .collection("metadata")
+  .doc("catalog")
+  .set({ published: false }, { merge: true });
+await deleteAdminApp(unpublishAdmin);
+
+const catalogAfterUnpublish = await attempt(() => getDoc(doc(db, "metadata", "catalog")));
+record("an unpublished catalogue is denied", "permission-denied", outcome(catalogAfterUnpublish));
+
+const catalogWrite = await attempt(() =>
+  setDoc(doc(db, "metadata", "catalog"), { sourceCommit: "c".repeat(40) }),
+);
+record("the mirror catalogue is not writable from a client", "permission-denied", outcome(catalogWrite));
 
 // Writes: there is no client write path for published content.
 const create = await attempt(() => setDoc(doc(db, "documentation", "docs__guide__evil.md"), { published: true }));
