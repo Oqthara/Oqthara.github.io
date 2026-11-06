@@ -455,7 +455,8 @@ under test, not a stale tree.
 | 12 | `npm audit` | 19 total: 0 critical, 4 high, 15 moderate |
 | 13 | `npx playwright install firefox` | completed; launch still fails (see §12) |
 
-**CI.** `Pages` run **`42294840427`** — **success** on `8fbcb0f`, 4 m 4 s. Its log confirms
+**CI.** `Pages` run **`42294840427`** — **success** on `8fbcb0f`, 4 m 4 s. The tip is also green:
+run **`42301674528`** passed on `89bb31a`, which carries this report. Its log confirms
 `reading-modes.spec.js` executed, **182 passed / 4 skipped** for browser tests, and live source
 tests **0 skipped**.
 
@@ -509,7 +510,8 @@ authorization.**
 
 **Not deployed.** Production still serves the pre-change bundle.
 
-PR #2 is open and mergeable, with `Pages` run `42294840427` green on `8fbcb0f`. Green CI is not
+PR #2 is open and mergeable, with `Pages` runs `42294840427` and `42301674528` green on
+`8fbcb0f` and `89bb31a` respectively. Green CI is not
 a deployment; nothing was pushed to the Pages environment and no merge occurred.
 
 The deploy job's permissions were narrowed in `4879677` and its unused checkout removed, so the
