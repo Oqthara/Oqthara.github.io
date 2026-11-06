@@ -118,18 +118,17 @@ jobs:
 
       - name: Detect the newest upstream release
         id: detect
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         # A detection run must not report success over an unreadable state document: the
         # script exits 2 without a credential and 4 when Firestore cannot be read. Both are
         # real failures here, because "changed=false" would otherwise be a guess.
         if: steps.credential.outputs.present == 'true' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)
-        # Writes the `GITHUB_OUTPUT` protocol, so `changed`/`tag`/`sha` are set by the script
-        # itself and never re-parsed out of the log.
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          # The script writes the `GITHUB_OUTPUT` protocol itself, so `changed`/`tag`/`sha` are
+          # set by the script rather than re-parsed out of the log.
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
-        run: node scripts/check-upstream-release.mjs $DRY_RUN
+        run: node scripts/check-upstream-release.mjs ${DRY_RUN:+"$DRY_RUN"}
 
       - name: Report a missing credential
         if: steps.credential.outputs.present != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)

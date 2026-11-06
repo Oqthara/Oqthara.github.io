@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
+import YAML from "yaml";
 
 // The workflows are the deployment mechanism, so their shape is a contract worth pinning.
 // Adding a YAML parser to the dev dependencies to assert six properties is not a good trade;
@@ -238,5 +239,35 @@ describe("repository hygiene", () => {
     }
     // `.env.example` documents the variables and must stay committable.
     assert.ok(!rules.has(".env.*"), ".env.example would be ignored");
+  });
+});
+
+describe("workflow files are valid YAML", () => {
+  // A duplicate key is the quietest way to break a workflow: the file is syntactically
+  // plausible, `git diff` looks fine, and GitHub rejects the run before any step starts —
+  // so a scheduled sync simply never happens and nothing in the log says why. Text-level
+  // assertions cannot catch it, and a permissive parser hides it, so parse strictly.
+  it("every workflow parses with unique keys and a jobs mapping", async () => {
+    for (const name of ["alpha-release-sync.yml", "firebase-sync.yml", "firestore-rules.yml", "pages.yml"]) {
+      const text = await workflow(name);
+      let document;
+      assert.doesNotThrow(() => {
+        document = YAML.parse(text, { uniqueKeys: true });
+      }, `${name} is not valid YAML`);
+      assert.equal(typeof document, "object", `${name} did not parse to a mapping`);
+      assert.ok(document.jobs && typeof document.jobs === "object", `${name} has no jobs mapping`);
+      assert.ok(!text.includes("\ton"), `${name} must not use tabs`);
+    }
+  });
+
+  // `yaml` reads `on:` as the boolean `true` unless the 1.2 core schema is used, which is the
+  // classic way to lose a trigger list. Assert the triggers survive the parse.
+  it("keeps the `on:` trigger block as written rather than a boolean key", async () => {
+    for (const name of ["alpha-release-sync.yml", "firebase-sync.yml", "firestore-rules.yml", "pages.yml"]) {
+      const document = YAML.parse(await workflow(name), { uniqueKeys: true, version: "1.2" });
+      const triggers = document.on;
+      assert.ok(triggers && typeof triggers === "object", `${name}: on: did not parse to a mapping`);
+      assert.ok(Object.keys(triggers).length > 0, `${name}: on: has no triggers`);
+    }
   });
 });
