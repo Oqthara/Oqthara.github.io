@@ -1,6 +1,6 @@
 # Oqthara website — production readiness report
 
-Final HEAD `fa55d20f9b1c8b692782b2e5969d83577f8664cc` on
+Last code commit `8fbcb0f9b71773357d84b6667a157fc22ec43c69` on
 `feat/alpha-automation-and-hardening`. Baseline `3be0388e2d6bb41956c0c03482d2a40f847cc648`
 (`origin/main`). Pull request
 [#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) is **open and mergeable**.
@@ -16,18 +16,24 @@ here is merged, deployed, or written to production Firestore.
 | | Commit | Detail |
 |---|---|---|
 | Baseline | `3be0388e2d6bb41956c0c03482d2a40f847cc648` | `origin/main` at the time of the run |
-| Final | `fa55d20f9b1c8b692782b2e5969d83577f8664cc` | tip of `feat/alpha-automation-and-hardening` |
-| Delta | | 28 commits, 75 files, `+13,638 / −2,056` |
+| Last code commit | `8fbcb0f9b71773357d84b6667a157fc22ec43c69` | every gate in §13 ran here |
+| Report tip | `a5baac7b4471ea32a5443ad14bbdc6dfd00bd48a` | this file; no source change |
+| Code delta | | 27 commits, 75 files, `+13,702 / −2,065` |
+
+The delta is measured against `8fbcb0f`, not against the report tip, because the last two
+commits only edit this file. A total that counts its own report is a number that goes stale the
+moment it is written; this one does not move.
 
 ```
-$ git rev-parse HEAD
-fa55d20f9b1c8b692782b2e5969d83577f8664cc
+$ git log --oneline origin/main..8fbcb0f | wc -l
+27
 
-$ git log --oneline origin/main..HEAD | wc -l
-28
+$ git diff --shortstat origin/main..8fbcb0f
+ 75 files changed, 13702 insertions(+), 2065 deletions(-)
 
-$ git diff --shortstat origin/main..HEAD
- 75 files changed, 13638 insertions(+), 2056 deletions(-)
+$ git log --oneline 8fbcb0f..HEAD
+a5baac7 docs: count the report's own commit in its totals
+fa55d20 docs: report the work against the acceptance criteria it was given
 ```
 
 The working tree was clean (`git status --porcelain` → empty) at the time these gates ran.
@@ -68,6 +74,7 @@ Oldest first, as GitHub orders them on the PR.
 | `8c9291f` | `test(e2e)` — make the browser suite honest on every engine |
 | `8fbcb0f` | `docs(visual)` — recapture every surface after the redesign |
 | `fa55d20` | `docs` — report the work against the acceptance criteria it was given |
+| `a5baac7` | `docs` — anchor the report's totals to the last code commit |
 
 Every commit is focused on one concern and was gated before the next was started.
 
@@ -428,9 +435,9 @@ preference-enabled session.
 
 ## 13. Exact test commands and output summaries
 
-All run against a build produced by `npm run build` from `8fbcb0f`. The only change since is
-`fa55d20`, which edits this report and no source file — so these results describe the code under
-test, not a stale tree.
+All run against a build produced by `npm run build` from `8fbcb0f`. The only commits after it
+(`fa55d20`, `a5baac7`) edit this report and no source file — so these results describe the code
+under test, not a stale tree.
 
 | # | Command | Result |
 |---|---|---|
@@ -474,8 +481,16 @@ failures, all Firefox launch failures.
 
 **NOT VERIFIED.** Production synchronization has never been demonstrated.
 
-The recorded run `42252163291` was a **dry run** and printed `dry run: nothing was written`.
-It is not evidence of a production write and is not presented as such.
+The recorded run `42252163291` (head `89aa616`) was a **dry run** and its log says so:
+
+```
+upstream latest release: v0.1.0-alpha.2 at e1bf86805d91be82a6009f17914000be89880750
+dry run: nothing was written
+```
+
+Detection reached real upstream and resolved a real commit, which is worth distinguishing from
+the write path: the *reading* half works. It is not evidence of a production write and is not
+presented as such.
 
 What *has* run against real upstream: detection, pagination, latest-release selection, hash
 comparison, and the branch/dry-run gating. What has only run against the emulator and unit
