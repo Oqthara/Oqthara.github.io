@@ -1,11 +1,14 @@
 import { test, expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 
-// Browser tests against the real built site and the real Oqthara repository.
+// Browser tests against the real built site and the real upstream content. These are live:
+// they use whatever the production stack serves, with no fixtures and no interception.
 //
-// Content is discovered from GitHub at runtime, so these tests wait for the rendered result
-// (a document heading, an index entry) rather than for a network idle that may never settle.
-// No assertion depends on wall-clock time.
+// Which backend answers depends on the ref. `main` reads the Firestore mirror first and falls
+// back to GitHub; a pinned tag can only come from GitHub, because the mirror holds `main`
+// alone. So both paths are covered here, and the `data-source` badge is what reports which one
+// actually answered. Tests wait for the rendered result (a document heading, an index entry)
+// rather than for a network idle that may never settle. No assertion depends on wall-clock time.
 
 const DOC = (path, ref = "main") =>
   `/document.html?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`;
@@ -342,5 +345,18 @@ test.describe("site", () => {
     await page.goto("/docs/spec/language.html");
     await expect(page).toHaveURL(/\/document\.html\?path=docs%2Fspec%2Flanguage\.md/);
     await waitForArticle(page);
+  });
+
+  // Which backend answers is a production property, not a detail: `main` should come from the
+  // mirror, a pinned tag must come from GitHub. Asserting it here means a misconfigured mirror
+  // shows up as a test failure instead of silently degrading to GitHub and looking healthy.
+  test("25. main is served by the mirror and a pinned tag by GitHub", async ({ page }) => {
+    await page.goto(DOC("docs/spec/language.md"));
+    await waitForArticle(page);
+    await expect(page.locator(".content-source").first()).toHaveAttribute("data-source", "firestore");
+
+    await page.goto(DOC("docs/spec/language.md", "v0.1.0-alpha.2"));
+    await waitForArticle(page);
+    await expect(page.locator(".content-source").first()).toHaveAttribute("data-source", "github");
   });
 });
