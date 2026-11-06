@@ -1,0 +1,132 @@
+name: Firestore rules
+
+# Deploys `firestore.rules` to project oqthara. Kept separate from `firebase-sync.yml` on
+# purpose: content synchronization writes documents and needs the Admin SDK, while a rules
+# deployment calls the Firebase Rules API and needs `firebaserules.*`. One credential failing
+# must not block the other, and a content sync must never touch production security rules.
+#
+# Authorization boundary:
+#   - Only `main` may deploy. A run from any other ref is refused at the job level.
+#   - A manual dispatch defaults to `validate`, which compiles the rules and stops. Choosing
+#     `deploy` is the explicit request to change production.
+#   - A push that changes `firestore.rules` (or `firebase.json`, which points at it) deploys
+#     after the same validation. Pull requests never deploy: this workflow has no `pull_request`
+#     trigger, so a fork cannot reach the credential.
+#
+# Required secret: FIREBASE_SERVICE_ACCOUNT, the JSON key of
+# oqthara-github-sync@oqthara.iam.gserviceaccount.com. The account needs
+# `roles/firebaserules.admin` on project oqthara, which grants exactly the `firebaserules.*`
+# permissions this deployment uses. Viewer is not enough (no `rulesets.test`); Owner and Editor
+# are broader than the task and are not required. The key is never printed: the only fields that
+# appear in a log are `client_email` and `project_id`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "validate compiles the rules and stops; deploy releases them to production"
+        type: choice
+        options: [validate, deploy]
+        default: validate
+  push:
+    branches: [main]
+    paths:
+      - firestore.rules
+      - firebase.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firestore-rules
+  cancel-in-progress: false
+
+jobs:
+  rules:
+    name: Deploy Firestore security rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # `refs/heads/main` is the deployment boundary: a dispatch from a feature branch validates
+    # nothing and cannot change production, whatever the input says.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Check out the site repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # Node 22: superstatic, a firebase-tools dependency, declares "18 || 20 || 22".
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Check for the service account secret
+        id: credential
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVICE_ACCOUNT}" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT is not set, so no rules can be deployed."
+            exit 1
+          fi
+          node -e '
+            const raw = process.env.SERVICE_ACCOUNT;
+            let parsed;
+            try { parsed = JSON.parse(raw); } catch { console.error("::error::FIREBASE_SERVICE_ACCOUNT is not valid JSON"); process.exit(1); }
+            if (!parsed.client_email || !parsed.private_key) {
+              console.error("::error::FIREBASE_SERVICE_ACCOUNT is not a service account key");
+              process.exit(1);
+            }
+          '
+
+      - name: Verify the credential identity, IAM grants, and rule compilation
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        # Prints `client_email` and `project_id`, lists the deployment permissions that are
+        # actually granted, and compiles `firestore.rules` through `projects/oqthara:test` — the
+        # same non-destructive call `firebase deploy` makes first. It creates no ruleset and no
+        # release, and stops the job before anything can be changed when a check fails.
+        run: node scripts/check-firebase-access.mjs
+
+      - name: Validate the rules against the Firestore emulator
+        run: npm run test:rules
+
+      - name: Deploy Firestore security rules
+        if: github.event_name == 'push' || inputs.mode == 'deploy'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          # The key is written to a private temp file and removed on exit. It is never echoed;
+          # GitHub already masks secret values, and a multiline `::add-mask::` would only replay
+          # it into the log.
+          credentials="$(mktemp)"
+          trap 'rm -f "$credentials"' EXIT
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$credentials"
+          chmod 600 "$credentials"
+          export GOOGLE_APPLICATION_CREDENTIALS="$credentials"
+
+          # Confirm Application Default Credentials resolve to the identity that was just
+          # authorized, and print only the two non-secret fields. This is the file the Firebase
+          # CLI will read, so a mismatch here is a mismatch in the deploy itself.
+          test -r "$GOOGLE_APPLICATION_CREDENTIALS"
+          node -e '
+            const { readFileSync } = require("node:fs");
+            const parsed = JSON.parse(readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8"));
+            console.log(`GOOGLE_APPLICATION_CREDENTIALS client_email: ${parsed.client_email}`);
+            console.log(`GOOGLE_APPLICATION_CREDENTIALS project_id: ${parsed.project_id}`);
+            if (parsed.client_email !== "oqthara-github-sync@oqthara.iam.gserviceaccount.com") {
+              console.error("::error::the CLI would authenticate as an unexpected principal");
+              process.exit(1);
+            }
+            if (parsed.project_id !== "oqthara") {
+              console.error("::error::the CLI would deploy to an unexpected project");
+              process.exit(1);
+            }
+          '
+
+          npx --yes firebase-tools@13 deploy --only firestore:rules --project oqthara --non-interactive

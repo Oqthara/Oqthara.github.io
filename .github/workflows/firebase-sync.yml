@@ -6,13 +6,16 @@ name: Firebase sync
 # copies it. The site prefers the mirror and falls back to GitHub, so a failed run degrades
 # freshness, never correctness.
 #
-# Required secret: FIREBASE_SERVICE_ACCOUNT — the JSON key of a service account with the
-# "Cloud Datastore User" role in project oqthara (or Firebase Admin). Create it in the Firebase
-# console (Project settings -> Service accounts -> Generate new private key) and add the whole
-# file as a repository secret. It is never printed: only its presence is checked.
+# This workflow writes content and nothing else. It never calls the Firebase Rules API, so it
+# needs no `firebaserules.*` permission and a broken rules credential cannot block a sync.
+# Security rules have their own workflow: `.github/workflows/firestore-rules.yml`.
 #
-# Deployment credentials for `firebase deploy --only firestore:rules` are the same service
-# account, passed through `GOOGLE_APPLICATION_CREDENTIALS`.
+# Required secret: FIREBASE_SERVICE_ACCOUNT — the JSON key of the service account
+# oqthara-github-sync@oqthara.iam.gserviceaccount.com in project oqthara, with the
+# "Cloud Datastore User" role for the Admin SDK writes. Create it in the Firebase console
+# (Project settings -> Service accounts -> Generate new private key) and add the whole file as
+# a repository secret. The key is never printed and never committed; the only fields that appear
+# in a log are `client_email` and `project_id`, which are not secrets.
 
 on:
   workflow_dispatch:
@@ -50,7 +53,9 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          # Node 22, not 24: superstatic (a firebase-tools dependency) declares
+          # "18 || 20 || 22" and warns EBADENGINE on 24. The rest of CI already runs 22.
+          node-version: 22
           cache: npm
 
       - name: Install
@@ -67,7 +72,7 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Validate without printing: the file must be JSON with a private key.
+          # Validate, and report only the two non-secret identity fields.
           node -e '
             const raw = process.env.SERVICE_ACCOUNT;
             let parsed;
@@ -76,9 +81,18 @@ jobs:
               console.error("::error::FIREBASE_SERVICE_ACCOUNT is not a service account key");
               process.exit(1);
             }
-            console.log("service account key is present and well formed");
+            console.log(`client_email: ${parsed.client_email}`);
+            console.log(`project_id: ${parsed.project_id}`);
           '
           echo "present=true" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the credential identity and Cloud project
+        if: steps.credential.outputs.present == 'true'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        # Identity only: no Google API call, so a content sync never depends on Rules
+        # permissions. A mismatch stops the run instead of writing to the wrong project.
+        run: node scripts/check-firebase-access.mjs --identity-only
 
       - name: Fail closed when the credential is missing
         if: steps.credential.outputs.present != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
@@ -99,19 +113,3 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: node scripts/sync-firestore.mjs ${{ inputs.full && '--full' || '' }}
-
-      - name: Deploy Firestore security rules
-        if: steps.credential.outputs.present == 'true'
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-        run: |
-          set -euo pipefail
-          # The service account file is created inside the runner's temp directory, removed on
-          # exit, and never echoed. `::add-mask::` guards against an accidental later print.
-          credentials="$(mktemp)"
-          trap 'rm -f "$credentials"' EXIT
-          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$credentials"
-          chmod 600 "$credentials"
-          echo "::add-mask::$FIREBASE_SERVICE_ACCOUNT"
-          export GOOGLE_APPLICATION_CREDENTIALS="$credentials"
-          npx --yes firebase-tools@13 deploy --only firestore:rules --project oqthara --non-interactive
