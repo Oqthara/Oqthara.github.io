@@ -53,7 +53,7 @@ function Sidebar({ docs, currentPath, channel }) {
         ),
       ),
     ),
-    h("p", { style: { marginTop: "var(--space-4)" } },
+    h("p", { className: "flow-sm" },
       h("a", { href: hrefFor("/docs.html") + (channel.ref === DEFAULT_REF ? "" : `?ref=${encodeURIComponent(channel.ref)}`) }, "All documentation")),
   );
 }

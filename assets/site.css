@@ -1828,3 +1828,21 @@ input:focus-visible {
   border: 0;
   margin-block: var(--space-6);
 }
+
+/* Vertical rhythm helpers: keeps markup free of inline `style` attributes, which the
+   prerendered output cannot carry. Each maps to one step of the space scale. */
+.flow-sm {
+  margin-block-start: var(--space-4);
+}
+
+.flow-md {
+  margin-block-start: var(--space-5);
+}
+
+.flow-lg {
+  margin-block-start: var(--space-6);
+}
+
+.block-gap-sm {
+  height: var(--space-3);
+}

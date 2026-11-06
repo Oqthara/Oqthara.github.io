@@ -117,7 +117,7 @@ export function DocsPage({ query = {} }) {
 
     h(
       "p",
-      { className: "meta-row", style: { marginTop: "var(--space-6)" } },
+      { className: "meta-row flow-lg" },
       h("span", null, "Related:"),
       h("a", { href: hrefFor("/stdlib.html") }, "Standard library"),
       h("a", { href: hrefFor("/philosophy.html") }, "Philosophy"),

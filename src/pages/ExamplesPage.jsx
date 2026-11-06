@@ -104,7 +104,7 @@ export function ExamplesPage({ query = {} }) {
 
     h(
       "p",
-      { className: "meta-row", style: { marginTop: "var(--space-6)" } },
+      { className: "meta-row flow-lg" },
       h("a", { href: hrefFor("/docs.html") }, "Documentation"),
       h("a", { href: hrefFor("/tour.html") }, "Guided tour"),
       h("a", { href: treeUrl("examples", channel.ref === DEFAULT_REF ? "main" : channel.ref) }, "Browse on GitHub"),

@@ -80,11 +80,11 @@ export function HomePage() {
           h("p", null, "One command on macOS or Linux. The installer reads the latest published release, verifies the artifact before installing it, and can be pinned to a version with OQ_VERSION."),
         ),
         h(CodeBlock, { code: INSTALL_COMMAND, label: "macOS and Linux", language: "bash" }),
-        h("div", { style: { height: "var(--space-3)" } }),
+        h("div", { className: "block-gap-sm" }),
         h(CodeBlock, { code: INSTALL_COMMAND_WINDOWS, label: "Windows PowerShell", language: "bash" }),
         h(
           "p",
-          { className: "meta-row", style: { marginTop: "var(--space-4)" } },
+          { className: "meta-row flow-sm" },
           h("a", { href: documentRoute("docs/reference/cli.md") }, "CLI reference"),
           h("a", { href: "https://github.com/Oqthara/oqthara/releases" }, "All releases"),
         ),
@@ -115,7 +115,7 @@ export function HomePage() {
         ),
         h(
           "div",
-          { style: { marginTop: "var(--space-6)" } },
+          { className: "flow-lg" },
           h(CodeBlock, { code: TOUR_SNIPPET, label: "loops.oq", language: "oq" }),
         ),
       ),
@@ -148,7 +148,7 @@ export function HomePage() {
         ),
         h(
           "p",
-          { style: { marginTop: "var(--space-5)" } },
+          { className: "flow-md" },
           h("a", { className: "button button-secondary", href: hrefFor("/philosophy.html") }, "The full philosophy"),
         ),
       ),

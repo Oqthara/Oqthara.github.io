@@ -197,12 +197,28 @@ Every command below was executed in `.site-repo/`.
 | `npm run test:rules` | **13/13 rule assertions passed** |
 | `npm run build` | 10 static routes + `404.html` prerendered into `_site` |
 | `npm run verify` | **11 HTML files verified** |
+| `npx --yes html-validate@9 --formatter stylish _site/*.html` | **0 problems, exit 0** |
 | `npx playwright test` | **34 passed, 2 skipped, 0 failed** |
 | `npm run audit:visual` | **57/57 checks passed** |
 | `npm run screenshots` | **15 screenshots captured**, exit 0 |
 
 The visual audit takes approximately twelve minutes because it performs 55 real page loads with
 a settle step each.
+
+### Continuous integration
+
+`.github/workflows/pages.yml` runs `npm ci`, `npm test`, `npm run test:rules`, `npm run build`,
+`node verify.mjs`, `html-validate`, `npx playwright test`, `npm run test:live`, then uploads and
+deploys to Pages.
+
+`html-validate` only runs in CI, so it is not covered by `npm test` or `npm run verify`. The
+first push of this work (`4a96c30`) went red there: six `no-inline-style` errors, because four
+page components were still emitting `style` objects from `React.createElement`. The style
+objects were replaced with three classes in `assets/site.css` — `.flow-sm`, `.flow-md`,
+`.flow-lg` for vertical rhythm and `.block-gap-sm` for a spacer — and a repository-wide search
+now returns no `style: {` or `style="` occurrence in `src/`. The build and the validator were
+re-run and the regenerated screenshots are byte-identical, so the classes render exactly as the
+inline styles did.
 
 ---
 
