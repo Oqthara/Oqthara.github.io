@@ -159,6 +159,23 @@ describe("workflow permissions across the repository", () => {
     }
   });
 
+  it("a value interpolated into a command line is quoted", async () => {
+    // `run: node script.mjs $FULL` splits and globs on whitespace. The value here is a workflow
+    // input, so it is operator-supplied, and shellcheck flags it (SC2086) for good reason.
+    // `${V:+"$V"}` passes an argument only when the variable is set and non-empty.
+    for (const name of NAMES) {
+      const text = await workflow(name);
+      for (const line of text.split("\n")) {
+        const bare = line.match(/run:.*\s(\$[A-Z][A-Z0-9_]*)\s*$/);
+        if (!bare) continue;
+        assert.ok(
+          line.includes('${' + bare[1].slice(1) + ':+"'),
+          `${name} interpolates an unquoted variable: ${line.trim()}`,
+        );
+      }
+    }
+  });
+
   it("every workflow that writes the mirror shares one concurrency group", async () => {
     // Two workflows that each serialize only themselves still race: both read the mirror state at
     // the start and commit later, so one can publish an unpublish set computed before the other
