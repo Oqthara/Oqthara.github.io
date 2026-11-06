@@ -127,3 +127,27 @@ describe("firestore rules deployment stays separate from content mirroring", () 
     assert.deepEqual(owners, ["firestore-rules.yml"]);
   });
 });
+
+describe("third-party code is pinned, not floating", () => {
+  // A tag like `@v4` is a mutable pointer: whoever controls the action's repository can move it
+  // to different code and the next run executes that code with this repository's token. A
+  // commit SHA cannot be moved. The comment keeps the human-readable version discoverable so
+  // the pin stays maintainable — a bare SHA with no comment is a puzzle, not a policy.
+  it("every `uses:` is a full commit SHA with a readable version comment", async () => {
+    for (const name of ["alpha-release-sync.yml", "firebase-sync.yml", "firestore-rules.yml", "pages.yml"]) {
+      const text = await workflow(name);
+      for (const line of text.split("\n")) {
+        const match = /^\s*(?:- )?uses:\s*(\S+)(.*)$/.exec(line);
+        if (!match) continue;
+        const [, target, rest] = match;
+        if (target.startsWith("./")) continue;
+        assert.match(
+          target,
+          /@[0-9a-f]{40}$/,
+          `${name}: ${target} is not pinned to a commit SHA`,
+        );
+        assert.match(rest, /#\s*v\d+/, `${name}: ${target} has no version comment`);
+      }
+    }
+  });
+});
