@@ -18,6 +18,7 @@ suite, and the five-viewport visual audit.
 | A3 | P2 | `.github/workflows/firebase-sync.yml` | The fail-closed step excluded `workflow_dispatch`, so a manual run with `dry_run=false` and no `FIREBASE_SERVICE_ACCOUNT` finished green having written nothing. | Fixed — step now also covers manual non-dry-run dispatches |
 | A4 | P2 | `scripts/capture-screenshots.mjs` | The script required an externally started `python3 -m http.server`, which has **no `404.html` fallback**. The mandatory `not-found-desktop.png` was a capture of Python's own error page, not the site's 404. A test shim (`serveBuilt404`) masked the same defect in the Playwright suite. | Fixed — shared `scripts/lib/serve-site.mjs`; scripts and Playwright now self-serve Pages-like responses |
 | A5 | P3 | `assets/site.css` | `.toc a` links were 16px tall with a ~9.4px gap, so a 24px target circle overlapped its neighbour. WCAG 2.2 §2.5.8 spacing exception did not apply. | Fixed — 25px tall, 4px gap, 0 circle overlaps measured |
+| A6 | P2 | `src/pages/*.jsx`, `.github/workflows/pages.yml` | Seven page components emitted `style` objects through `React.createElement`, so the prerendered HTML carried inline styles. `html-validate` rejects these (`no-inline-style`) and runs **only** in CI, so `npm test` and `npm run verify` reported green while the Pages run failed at validation. | Fixed — classes in `assets/site.css`; no `style: {` or `style="` left in `src/`; validator 0 problems |
 
 No P0 findings.
 
@@ -72,8 +73,10 @@ page-level horizontal overflow and zero uncaught JavaScript errors. Apparent ove
 | `npm run test:rules` | 13/13 rule assertions passed |
 | `npm run build` | 10 static routes + `404.html` prerendered into `_site` |
 | `npm run verify` | 11 HTML files verified |
+| `npx --yes html-validate@9 --formatter stylish _site/*.html` | 0 problems, exit 0 |
 | `npx playwright test` | 34 passed, 2 skipped, 0 failed |
 | `npm run audit:visual` | 57/57 checks passed |
+| Pages run `42168174018` on `4bdc4ad` | success — all 12 build steps and the deploy
 
 ## Known blocker
 

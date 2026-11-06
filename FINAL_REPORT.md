@@ -3,7 +3,8 @@
 Repository: `Oqthara/Oqthara.github.io` (checked out at `.site-repo/` inside the canonical
 language repository `Oqthara/oqthara`, which was **not modified**).
 
-Branch `main`, base `origin/main` was `dfa963d`, HEAD at the time of writing `5648bad`.
+Branch `main`. Base `origin/main` was `dfa963d`; the delivered work is `4bdc4ad`, deployed
+green by Pages run `42168174018`.
 
 ---
 
@@ -214,11 +215,34 @@ deploys to Pages.
 `html-validate` only runs in CI, so it is not covered by `npm test` or `npm run verify`. The
 first push of this work (`4a96c30`) went red there: six `no-inline-style` errors, because four
 page components were still emitting `style` objects from `React.createElement`. The style
-objects were replaced with three classes in `assets/site.css` — `.flow-sm`, `.flow-md`,
-`.flow-lg` for vertical rhythm and `.block-gap-sm` for a spacer — and a repository-wide search
-now returns no `style: {` or `style="` occurrence in `src/`. The build and the validator were
-re-run and the regenerated screenshots are byte-identical, so the classes render exactly as the
-inline styles did.
+objects were replaced with classes in `assets/site.css` — `.flow-sm`, `.flow-md`, `.flow-lg` for
+vertical rhythm and `.block-gap-sm` for a spacer — and a repository-wide search now returns no
+`style: {` or `style="` occurrence in `src/`. Regenerated screenshots are byte-identical, so the
+classes render exactly as the inline styles did.
+
+Final run: **`42168174018`, conclusion `success`, on `4bdc4ad`.** Every step passed:
+
+| Step | Result |
+|------|--------|
+| Install | success |
+| Unit and integration tests | success |
+| Firestore security rules | success |
+| Build | success |
+| Verify the prerendered output | success |
+| Validate HTML | success |
+| Install Playwright Chromium | success |
+| Browser tests | success |
+| Live source tests | success |
+| Upload Pages artifact | success |
+| Deploy to GitHub Pages | success |
+| Smoke test the deployed site | success |
+
+The deployed site was then checked directly: nine routes returned `200` with no `style`
+attribute anywhere in the DOM, no horizontal overflow at 1440, 1024, 768, 390 or 320 px, real
+Prism tokens on the tour, status, philosophy and language-reference pages, the mobile drawer
+opening to 390×443 px with 25 visible links and closing on Escape with focus returned to the
+toggle, and `data-source="github"` on the content routes — the intended fallback, since no
+service-account secret exists yet.
 
 ---
 
@@ -253,8 +277,8 @@ links, Inter typeface — not the static server's error page.
 
 ## 10. Reviews
 
-- [`REVIEW_A_ENGINEERING_SECURITY.md`](./REVIEW_A_ENGINEERING_SECURITY.md) — 5 findings (2 P1,
-  2 P2, 1 P3), all fixed. No P0.
+- [`REVIEW_A_ENGINEERING_SECURITY.md`](./REVIEW_A_ENGINEERING_SECURITY.md) — 6 findings (2 P1,
+  3 P2, 1 P3), all fixed. No P0.
 - [`REVIEW_B_VISUAL_PRODUCT.md`](./REVIEW_B_VISUAL_PRODUCT.md) — 6 findings (4 P1, 2 P2), all
   fixed. No P0.
 
@@ -276,6 +300,7 @@ links, Inter typeface — not the static server's error page.
 | Playwright passes | Met — 34 passed |
 | Both reviews documented | Met |
 | Screenshots produced | Met — 16 files |
+| CI green and deployed | Met — run `42168174018` succeeded end to end |
 
 One criterion is met with a documented external blocker rather than a green production run: live
 synchronisation needs a credential only the repository owner can provide.
