@@ -20,8 +20,8 @@ here is merged, deployed, or written to production Firestore.
 | Report tip | `a5baac7b4471ea32a5443ad14bbdc6dfd00bd48a` | this file; no source change |
 | Code delta | | 27 commits, 75 files, `+13,702 / −2,065` |
 
-The delta is measured against `8fbcb0f`, not against the report tip, because nothing after it
-changes site behaviour. A total that counts its own report is a number that goes stale the
+The delta is measured against `8fbcb0f` rather than the branch tip because the commits after it
+touch the report and one audit script; no shipped page, component, or style changed. A total that counts its own report is a number that goes stale the
 moment it is written; this one does not move.
 
 ```
@@ -32,6 +32,7 @@ $ git diff --shortstat origin/main..8fbcb0f
  75 files changed, 13702 insertions(+), 2065 deletions(-)
 
 $ git log --oneline 8fbcb0f..HEAD
+57cfc81 fix(visual): stop the audit overwriting the committed screenshots
 6062ee7 docs: cite the run that verifies this report, not just the one before it
 89bb31a docs: anchor the report's totals to the last code commit
 a5baac7 docs: count the report's own commit in its totals
@@ -76,7 +77,10 @@ Oldest first, as GitHub orders them on the PR.
 | `8c9291f` | `test(e2e)` — make the browser suite honest on every engine |
 | `8fbcb0f` | `docs(visual)` — recapture every surface after the redesign |
 | `fa55d20` | `docs` — report the work against the acceptance criteria it was given |
-| `a5baac7` | `docs` — anchor the report's totals to the last code commit |
+| `a5baac7` | `docs` — count the report's own commit in its totals |
+| `89bb31a` | `docs` — anchor the report's totals to the last code commit |
+| `6062ee7` | `docs` — cite the run that verifies this report, not just the one before it |
+| `57cfc81` | `fix(visual)` — stop the audit overwriting the committed screenshots |
 
 Every commit is focused on one concern and was gated before the next was started.
 
