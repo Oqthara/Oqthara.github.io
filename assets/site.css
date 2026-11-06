@@ -87,6 +87,9 @@
   --measure: 72ch;
   --content: 1180px;
   --sidebar: 250px;
+  /* Height of one header row. The sticky header, the mobile menu's scroll area and the sticky
+     documentation rails all key off it, so they cannot drift apart. */
+  --header-h: 3.75rem;
 
   --focus: 2px solid var(--link);
   --focus-offset: 2px;
@@ -306,7 +309,7 @@ hr {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-height: 3.75rem;
+  min-height: var(--header-h);
   /* The header is a single row at every width. Individual parts may shrink or collapse; the
      row itself never wraps, which is what produced a two-line header at mid widths. */
   flex-wrap: nowrap;
@@ -323,7 +326,7 @@ hr {
   color: var(--fg);
   text-decoration: none;
   letter-spacing: -0.02em;
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 .brand:hover {
@@ -334,21 +337,11 @@ hr {
   color: var(--accent);
 }
 
-.brand-tag {
-  margin-left: var(--space-3);
-  font-family: var(--font-sans);
-  font-size: var(--step--1);
-  font-weight: 500;
-  letter-spacing: 0;
-  color: var(--fg-subtle);
-}
-
-/* The tagline is the first thing to go: it is decorative, and it costs ~180px. */
-@media (max-width: 1240px) {
-  .brand-tag {
-    display: none;
-  }
-}
+/* There used to be a brand tagline here. Eight links, a search field and two buttons need
+   ~845px of header at their most compact, and the tagline alone cost ~190px, so every width
+   from 1180 to 1920 was over budget and the links were silently squeezed below their text
+   width (measured: 596px of links in a 586px box). The tagline told the reader nothing the
+   homepage and footer do not, so it is gone rather than fought with. */
 
 .site-nav {
   display: flex;
@@ -360,6 +353,8 @@ hr {
 }
 
 .site-nav a {
+  /* Links keep their text width; the row has the space for it once the tagline is gone. */
+  flex: 0 0 auto;
   padding: var(--space-2) clamp(var(--space-2), 0.8vw, var(--space-3));
   border-radius: var(--radius-sm);
   color: var(--fg);
@@ -389,11 +384,19 @@ hr {
   min-width: 0;
 }
 
+.header-actions > .search {
+  /* The field yields before anything else does; the buttons never shrink. */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
 .icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* 40px minimum touch target. */
+  /* 40px minimum touch target. `flex-shrink: 0` because the shrink above used to squeeze these
+     to 31.7px at 320px: a touch target must not be negotiable. */
+  flex: 0 0 auto;
   width: 2.5rem;
   height: 2.5rem;
   padding: 0;
@@ -413,7 +416,13 @@ hr {
   display: none;
 }
 
-@media (max-width: 1040px) {
+/* One deliberate collapse point.
+ *
+ * Eight links plus the brand, the search field and two 40px buttons need ~800px of header
+ * content, which the site has above ~960px. Below that the row is replaced by the menu button;
+ * there are no intermediate overrides, so there is no width where a link can be squeezed or
+ * clipped. */
+@media (max-width: 960px) {
   .nav-toggle {
     display: inline-flex;
   }
@@ -424,7 +433,7 @@ hr {
     right: 0;
     top: 100%;
     margin: 0;
-    padding: var(--space-3);
+    padding: var(--space-3) clamp(var(--space-4), 4vw, var(--space-7));
     gap: var(--space-1);
     flex-direction: column;
     align-items: stretch;
@@ -433,14 +442,20 @@ hr {
     border-bottom: 1px solid var(--border);
     box-shadow: var(--shadow-2);
     z-index: 45;
-    max-height: calc(100vh - 3.75rem);
+    /* The panel scrolls when it is taller than what is left of the viewport, so the last link
+       is always reachable. `dvh` tracks the browser chrome on mobile; `vh` is the fallback. */
+    max-height: calc(100vh - var(--header-h));
+    max-height: calc(100dvh - var(--header-h));
     overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .site-nav[data-open="true"] {
     display: flex;
   }
   .site-nav a {
     padding: var(--space-3);
+    /* Touch-sized rows: 44px including the vertical padding. */
+    min-height: 2.75rem;
     font-size: var(--step-0);
   }
 }
@@ -1356,6 +1371,17 @@ input:focus-visible {
   }
 }
 
+/* The tour reuses the documentation shell: the same right-hand rail, the same reading
+   measure. These rules only add the rhythm between its sections, which a Markdown document
+   gets from the prose styles but a hand-built page does not. */
+.tour-section + .tour-section {
+  margin-top: var(--space-7);
+}
+
+.tour-body > section > h2 {
+  margin-top: 0;
+}
+
 /* ---------------------------------------------------------------- prose */
 
 .doc {
@@ -1622,10 +1648,17 @@ input:focus-visible {
 
 .search {
   position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
-.search-input {
-  width: 12rem;
+/* Scoped to `.search` on purpose. `input[type="search"]` further up sets `width: 100%` and is
+   more specific than a bare `.search-input`, so the header field silently ignored the widths
+   its own media queries asked for and was squeezed by flexbox instead (measured 134px at
+   320px). The field now has one width that scales with the viewport and no media queries. */
+.search .search-input {
+  width: clamp(6.5rem, 18vw, 12rem);
+  min-width: 0;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1647,6 +1680,20 @@ input:focus-visible {
   box-shadow: var(--shadow-2);
   z-index: 50;
   padding: var(--space-2);
+}
+
+/* The field is only ~100px wide on a phone, so a panel anchored to its right edge started
+   86px off the left of the screen at 320px. Below the menu breakpoint the panel is pinned to
+   the viewport instead, which is also where it reads best. */
+@media (max-width: 560px) {
+  .search-panel {
+    position: fixed;
+    left: var(--space-4);
+    right: var(--space-4);
+    top: calc(var(--header-h) + var(--space-2));
+    width: auto;
+    max-height: calc(100dvh - var(--header-h) - var(--space-5));
+  }
 }
 
 .search-status {

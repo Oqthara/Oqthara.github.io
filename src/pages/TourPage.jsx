@@ -176,31 +176,43 @@ print "days: {today.toEpochDay() - start.toEpochDay()}"`,
 export function TourPage() {
   return h(
     "div",
-    null,
+    { className: "content" },
     h(PageHead, {
       eyebrow: "Tour",
       title: "Learn Oqthara in one sitting",
       lead: "Everything below is real, runnable Oqthara. Start at the top and work down; nothing needs explaining twice.",
     }),
 
+    // Same shell as a documentation page: the table of contents is the right-hand rail at wide
+    // widths and sits above the text when there is no room for a rail. The tour used to render
+    // its root without a `.content` container, so its prose and code blocks ran to the edges of
+    // the viewport, and its table of contents stretched the full width of the screen.
     h(
-      "nav",
-      { className: "toc", "aria-label": "On this page" },
-      h("strong", null, "On this page"),
+      "div",
+      { className: "doc-with-toc tour-layout" },
       h(
-        "ul",
-        null,
-        SECTIONS.map((section) => h("li", { key: section.id }, h("a", { href: `#${section.id}` }, section.title))),
+        "nav",
+        { className: "toc", "aria-label": "On this page" },
+        h("strong", null, "On this page"),
+        h(
+          "ul",
+          null,
+          SECTIONS.map((section) => h("li", { key: section.id }, h("a", { href: `#${section.id}` }, section.title))),
+        ),
       ),
-    ),
 
-    SECTIONS.map((section) =>
       h(
-        "section",
-        { key: section.id },
-        h("h2", { id: section.id }, section.title),
-        h(Code, null, section.code),
-        section.body ?? null,
+        "div",
+        { className: "doc-article tour-body" },
+        SECTIONS.map((section) =>
+          h(
+            "section",
+            { className: "tour-section", key: section.id },
+            h("h2", { id: section.id }, section.title),
+            h(Code, null, section.code),
+            section.body ?? null,
+          ),
+        ),
       ),
     ),
 

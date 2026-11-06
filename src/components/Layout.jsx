@@ -119,7 +119,6 @@ export function Layout({ current, children }) {
           { className: "brand", href: hrefFor("/"), "aria-label": "Oqthara home" },
           h("span", { className: "brand-mark" }, "oq"),
           "thara",
-          h("span", { className: "brand-tag" }, "a small language for the JVM"),
         ),
         h(
           "nav",
