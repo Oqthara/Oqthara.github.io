@@ -206,6 +206,141 @@ describe("workflow permissions across the repository", () => {
   });
 });
 
+describe("a credential-bearing job only ever runs reviewed code", () => {
+  // SECURITY: `workflow_dispatch` accepts a `--ref`, so a maintainer (or anything holding a token
+  // that can dispatch) can start this workflow against a branch that has not been reviewed. Without
+  // a guard the `sync` job checks that branch out and runs its `scripts/*.mjs` with
+  // FIREBASE_SERVICE_ACCOUNT in scope - so a pull request could exfiltrate a production admin key
+  // by editing a single script. A comment is not a control; these assertions are.
+  const SECRET_JOB_INPUTS = ["force", "dry_run"];
+
+  const jobs = async () => YAML.parse(await workflow("alpha-release-sync.yml"), { uniqueKeys: true, version: "1.2" }).jobs;
+
+  const jobUsingSecret = async () => {
+    const parsed = await jobs();
+    const found = Object.entries(parsed).filter(([, job]) =>
+      JSON.stringify(job).includes("secrets.FIREBASE_SERVICE_ACCOUNT"));
+    assert.equal(found.length, 1, "expected exactly one job to reach for the service account");
+    return found[0];
+  };
+
+  it("the job that reads FIREBASE_SERVICE_ACCOUNT is restricted to refs/heads/main", async () => {
+    const [name, job] = await jobUsingSecret();
+    assert.equal(job.if, "github.ref == 'refs/heads/main'", `${name} may run on an unreviewed ref`);
+  });
+
+  it("that job checks out main explicitly rather than the dispatching ref", async () => {
+    const [name, job] = await jobUsingSecret();
+    const checkout = job.steps.find((step) => String(step.uses ?? "").startsWith("actions/checkout@"));
+    assert.ok(checkout, `${name} has no checkout step`);
+    // `actions/checkout` defaults to github.ref for workflow_dispatch, which is the branch under
+    // test. Anything other than a literal `main` reintroduces the defect.
+    assert.equal(checkout.with?.ref, "main", `${name} checks out the dispatching ref`);
+    assert.notEqual(checkout.with?.["persist-credentials"], true);
+  });
+
+  it("a dispatch from another ref fails with an explanation instead of silently doing nothing", async () => {
+    const parsed = await jobs();
+    const refusers = Object.entries(parsed).filter(([, job]) =>
+      typeof job.if === "string" && /github\.ref\s*!=\s*'refs\/heads\/main'/.test(job.if));
+    assert.equal(refusers.length, 1, "expected one job whose whole purpose is refusing other refs");
+    const [, refuser] = refusers[0];
+
+    const script = JSON.stringify(refuser);
+    assert.match(script, /::error::/, "the refusal must be visible as an annotation");
+    assert.match(script, /exit 1/, "a refusal must fail the run, not pass it");
+    assert.match(script, /--ref main/, "the message must say how to run it correctly");
+
+    // The refusal job runs the explanation, not the credentialed work.
+    assert.doesNotMatch(script, /secrets\.|sync-firestore\.mjs/);
+  });
+
+  it("scheduled runs are unaffected, because they are already on the default branch", async () => {
+    const parsed = await jobs();
+    const [name, job] = await jobUsingSecret();
+    // `github.ref` for a schedule event is the default branch, so an equality guard is satisfied
+    // there. Asserting the negative keeps someone from "fixing" the guard into something that
+    // only matches workflow_dispatch.
+    assert.match(job.if, /github\.ref == 'refs\/heads\/main'/);
+    assert.doesNotMatch(job.if, /github\.event_name/, `${name} must not special-case the trigger`);
+    assert.ok(parsed.sync, "the guarded job should be the sync job");
+  });
+
+  it("the credential reaches scripts through env, never through argv or the log", async () => {
+    const [name, job] = await jobUsingSecret();
+    for (const step of job.steps) {
+      if (typeof step.run !== "string") continue;
+      assert.doesNotMatch(step.run, /\$\{\{/, `${name}: ${step.name} interpolates an expression into shell source`);
+      assert.doesNotMatch(step.run, /echo\s+\$\{?FIREBASE_SERVICE_ACCOUNT/, `${name}: ${step.name} echoes the key`);
+      assert.doesNotMatch(step.run, />>?\s*\S*\.json/, `${name}: ${step.name} writes a file next to the key`);
+    }
+    const env = job.env ?? {};
+    assert.equal(env.FIREBASE_SERVICE_ACCOUNT, undefined,
+      "a job-level env would put the key in scope of every step including third-party actions");
+  });
+
+  it("still exposes exactly the manual inputs the recovery path needs", async () => {
+    const parsed = YAML.parse(await workflow("alpha-release-sync.yml"), { uniqueKeys: true, version: "1.2" });
+    const dispatch = parsed.on.workflow_dispatch;
+    const declared = Object.keys(dispatch.inputs ?? {});
+    assert.deepEqual(declared.sort(), [...SECRET_JOB_INPUTS].sort());
+  });
+});
+
+describe("every job that checks out has read access to contents", () => {
+  // SECURITY: job-level `permissions:` REPLACE the workflow-level block instead of merging with
+  // it. A job that declares only `pages: write` therefore has no `contents: read`, and its
+  // `actions/checkout` fails - or, worse, silently produces an empty tree if the token behaviour
+  // ever changes. Rather than trust each job, pin the invariant: checkout implies contents: read.
+  const NAMES = ["alpha-release-sync.yml", "firebase-sync.yml", "firestore-rules.yml", "pages.yml"];
+
+  const parsedWorkflow = async (name) =>
+    YAML.parse(await workflow(name), { uniqueKeys: true, version: "1.2" });
+
+  const checkouts = (job) => (job.steps ?? []).filter((step) =>
+    String(step.uses ?? "").startsWith("actions/checkout@"));
+
+  it("no job runs actions/checkout without contents: read in scope", async () => {
+    for (const name of NAMES) {
+      const document = await parsedWorkflow(name);
+      const workflowPermissions = document.permissions ?? {};
+      for (const [jobName, job] of Object.entries(document.jobs)) {
+        if (checkouts(job).length === 0) continue;
+        const effective = job.permissions ?? workflowPermissions;
+        assert.equal(effective.contents, "read",
+          `${name}:${jobName} checks out with contents=${effective.contents}; job permissions replace the workflow block`);
+      }
+    }
+  });
+
+  it("the Pages deploy job publishes without checking anything out", async () => {
+    // The site arrives as a build artifact. A checkout there would need `contents: read`, which
+    // would widen the publishing job's token for no reason.
+    const document = await parsedWorkflow("pages.yml");
+    const deploy = document.jobs.deploy;
+    assert.ok(deploy, "pages.yml has no deploy job");
+    assert.equal(checkouts(deploy).length, 0, "the deploy job checks out the repository");
+    assert.equal(deploy.permissions.pages, "write");
+    assert.equal(deploy.permissions["id-token"], "write");
+    assert.equal(deploy.permissions.contents, undefined,
+      "granting contents to a job that never checks out is unnecessary privilege");
+    assert.equal(deploy.needs, "build");
+  });
+
+  it("the deploy job still runs after the artifact it publishes", async () => {
+    const document = await parsedWorkflow("pages.yml");
+    const build = document.jobs.build;
+    assert.ok(
+      build.steps.some((step) => String(step.uses ?? "").startsWith("actions/upload-pages-artifact@")),
+      "the build job no longer produces the artifact the deploy job needs",
+    );
+    const deploy = document.jobs.deploy;
+    const names = deploy.steps.map((step) => step.name ?? step.uses ?? "");
+    assert.ok(names.some((n) => n.includes("deploy-pages")), "the deploy job lost its deploy step");
+    assert.ok(names.some((n) => /smoke/i.test(n)), "the deploy job lost its post-deploy smoke test");
+  });
+});
+
 describe("firestore rules deployment stays separate from content mirroring", () => {
   it("only firestore-rules.yml references the rules release target", async () => {
     const owners = [];

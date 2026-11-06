@@ -75,6 +75,12 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Job-level permissions replace the workflow-level ones rather than adding to them, so this
+    # job must list everything it needs. It needs exactly two things: `pages: write` to publish
+    # and `id-token: write` for the OIDC exchange deploy-pages performs. It deliberately does
+    # NOT grant `contents: read`, because there is no checkout here any more - the site comes
+    # from the artifact the build job uploaded. `tests/workflow-contract.test.js` pins that
+    # pairing, so a checkout cannot reappear without `contents: read`.
     permissions:
       pages: write
       id-token: write
@@ -82,11 +88,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          # No job here pushes, so the job token has no reason to stay readable in .git/config.
-          persist-credentials: false
-
       - id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
 

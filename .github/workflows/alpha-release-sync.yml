@@ -64,14 +64,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A manual dispatch can name any branch. The `sync` job below holds the Firestore admin key,
+  # so if it ran the selected ref it would execute that branch's scripts with production
+  # credentials. `sync` is therefore pinned to `refs/heads/main` and checks out `main`
+  # explicitly, so the code that touches the key is always code that was reviewed on main.
+  # This job exists only to say why a dispatch elsewhere did nothing.
+  refused:
+    name: Explain why this ref is not allowed to synchronize
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::Alpha release sync only runs from refs/heads/main (got ${REF})."
+          echo "This job holds FIREBASE_SERVICE_ACCOUNT and refuses to run scripts from an unreviewed ref."
+          echo "To recover, re-run the workflow from main: gh workflow run alpha-release-sync.yml --ref main"
+          exit 1
+
   sync:
     name: Detect and synchronize the newest Alpha release
+    # Scheduled runs are always on the default branch. A manual dispatch is the only way to
+    # reach another ref, and this is the check that stops it before the secret is ever in scope.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Check out the site repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          # Always `main`, never the dispatching ref: this job carries the Firestore admin key
+          # and must only ever execute reviewed code.
+          ref: main
           # No job here pushes, so the job token has no reason to stay readable in .git/config.
           persist-credentials: false
 
