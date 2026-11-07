@@ -250,3 +250,74 @@ it needs to be re-run once that allowance resets. Both activation gates are unse
   needs one.
 - It does not modify the `Oqthara/oqthara` source repository.
 - It does not treat a successful build as a completed deployment.
+
+---
+
+## 8. Where the read quota actually goes
+
+The reconciliation has now missed its window twice, both times on `8 RESOURCE_EXHAUSTED` before
+any write. Re-running it into the same consumption would exhaust the next window as well, so the
+consumption is worth identifying. What follows is measured; where it stops short of a conclusion
+it says so.
+
+### The site reads on every page view
+
+`src/firebase/firestore.js` caches for `CACHE_TTL_MS` (five minutes) in a module-level `Map`. That
+cache lives in one page's JavaScript context, so it helps a reader who navigates within five
+minutes and nobody else: **every new page load is a cold read**.
+
+Measured cost of one cold load, from the collection sizes and the `limit()` bounds in
+`src/repositories/*.repository.js`:
+
+| Route | Reads | Composition |
+| --- | --- | --- |
+| `/docs.html` | ~22 | 19 documents + 2 releases + 1 mirror catalogue |
+| `/examples.html` | ~39 | 37 examples + 2 releases |
+| `/document.html` | ~22 | 1 document + 19 catalogue + 2 channels |
+| `/` (and the other static pages) | 0 | prerendered |
+
+A real browser load of the built `/docs.html` issued four Firestore requests and resolved
+`data-source="firestore"`, so these reads are real, they are billable, and they currently succeed.
+
+### The browser suite reads production too
+
+`e2e/a11y.spec.js` and `e2e/theme.spec.js` are the only specs that call `page.goto()` without
+`page.route()`. They were written to check rendered accessibility and appearance, and the two
+runtime routes they open (`/document.html`, `/example.html`) only render with real content, so
+they were left unmocked deliberately.
+
+`pages.yml` runs `npx playwright test` in the build job and again in the engine job, so one push
+runs those specs **twice**, and the engine job runs four projects (chromium, firefox, webkit,
+mobile-chromium). Listing the tests gives four `/docs.html` loads and four `/examples.html` loads
+per project across both themes. At the costs above that is roughly **1,000 document reads per
+push**. There were 38 Pages runs on 2026-11-07.
+
+### What this does and does not establish
+
+It establishes that CI is a large, avoidable, in-repository consumer of the same quota the
+reconciliation needs, and that it is the one this repository can turn off without touching
+production.
+
+It does **not** establish that CI caused the exhaustion. Human traffic against a 59-document
+mirror is equally consistent with tens of thousands of reads a day, and nothing measured here
+separates the two populations. Reporting CI as the cause would be a guess dressed as a finding.
+
+### Not fixed here, on purpose
+
+Mocking Firestore in those two specs is the obvious remedy and is deliberately **not** part of
+this change. It alters what the accessibility and theme suites assert — the runtime routes would
+then be checking fixture content rather than the mirror — and making that change in the same
+breath as a quota investigation would leave no way to tell which of the two moved the number. It
+should be its own change, with its own before-and-after measurement.
+
+### A correction to the expected reconciliation size
+
+The 10:08 scheduled run (`42362663385`) ran with a real credential and reported
+`would write 0, skip 59 unchanged`. Production therefore **already holds all 59 records** at
+upstream `7ffb675`. That run's commit is `3be0388`, which does not contain `aa72387`, so the
+content was written by the catalogue writer that omitted `published: true`.
+
+The consequence for the plan above is narrow but real: step 2 is a **repair of the catalogue
+record**, not the first population of an empty mirror. Whether the repair is needed at all is
+exactly what the audit has to establish, and the audit cannot currently run — it fails on
+`listCollectionIds` with the same `429` while ordinary document reads succeed from the browser.
