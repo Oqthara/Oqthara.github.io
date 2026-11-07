@@ -10,14 +10,17 @@ acceptance is **NOT VERIFIED** until a maintainer writes a decision into §6.
 | Repository | `Oqthara/Oqthara.github.io` |
 | Pull request | [#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) |
 | Branch | `feat/alpha-automation-and-hardening` |
-| Branch HEAD at review time | `e43d418` |
+| Branch HEAD when the captures were made | `e43d418` |
+| Merge state | **merged into `main` as `9d9a41a`**, by the maintainer, after the captures |
+| Commit under review | `9d9a41a` — the squash of this branch, and what the links below resolve against |
 | Screenshots captured in | `4ed134a` — 29 files captured, 17 of them changed; 1 of the 30 was not in the run (§5 V1) |
 | Screenshot count | 30 files, 30 tracked, 0 duplicates |
 
-**Gallery:** https://github.com/Oqthara/Oqthara.github.io/tree/feat/alpha-automation-and-hardening/artifacts/visual-audit
+**Gallery:** https://github.com/Oqthara/Oqthara.github.io/tree/main/artifacts/visual-audit
 
-Every image below is linked individually. GitHub renders PNGs in the browser, so the links
-open the actual pixels.
+Every image below is linked individually against `main`. GitHub renders PNGs in the browser,
+so the links open the actual pixels. All 30 files are byte-identical between `e43d418` and
+`main`, so which of the two is used does not change what a reviewer sees.
 
 ## 2. Inventory
 
@@ -35,36 +38,36 @@ background colour instead: pure `#ffffff` against `#fbfaf7` on every other light
 
 | # | File | Page | Viewport | Theme | Pixels | CSS | Size |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | [`home-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/home-desktop.png) | / | desktop | light | 2880×2000 | 1440×1000 | 518.9 KB |
-| 2 | [`home-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/home-desktop-dark.png) | / | desktop | dark | 2880×2000 | 1440×1000 | 540.8 KB |
-| 3 | [`home-mobile.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/home-mobile.png) | / | mobile | light | 780×1688 | 390×844 | 267.2 KB |
-| 4 | [`home-mobile-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/home-mobile-dark.png) | / | mobile | dark | 780×1688 | 390×844 | 311.7 KB |
-| 5 | [`navigation-mobile-open.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/navigation-mobile-open.png) | / (menu expanded) | mobile | light | 780×1688 | 390×844 | 82.7 KB |
-| 6 | [`navigation-mobile-open-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/navigation-mobile-open-dark.png) | / (menu expanded) | mobile | dark | 780×1688 | 390×844 | 77.2 KB |
-| 7 | [`docs-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/docs-desktop.png) | /docs.html | desktop | light | 2880×2000 | 1440×1000 | 234.8 KB |
-| 8 | [`docs-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/docs-desktop-dark.png) | /docs.html | desktop | dark | 2880×2000 | 1440×1000 | 235.1 KB |
-| 9 | [`docs-mobile.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/docs-mobile.png) | /docs.html | mobile | light | 780×1688 | 390×844 | 150.7 KB |
-| 10 | [`docs-mobile-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/docs-mobile-dark.png) | /docs.html | mobile | dark | 780×1688 | 390×844 | 151.6 KB |
-| 11 | [`doc-page-code-highlighting.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/doc-page-code-highlighting.png) | /document.html?path=docs/spec/language.md | desktop | light | 2880×2000 | 1440×1000 | 294.2 KB |
-| 12 | [`doc-page-code-highlighting-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/doc-page-code-highlighting-dark.png) | /document.html?path=docs/spec/language.md | desktop | dark | 2880×2000 | 1440×1000 | 293.7 KB |
-| 13 | [`doc-page-mobile.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/doc-page-mobile.png) | /document.html?path=docs/spec/language.md | mobile | light | 780×1688 | 390×844 | 107.2 KB |
-| 14 | [`doc-page-mobile-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/doc-page-mobile-dark.png) | /document.html?path=docs/spec/language.md | mobile | dark | 780×1688 | 390×844 | 106.8 KB |
-| 15 | [`examples-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/examples-desktop.png) | /examples.html | desktop | light | 2880×2000 | 1440×1000 | 252.3 KB |
-| 16 | [`examples-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/examples-desktop-dark.png) | /examples.html | desktop | dark | 2880×2000 | 1440×1000 | 252.7 KB |
-| 17 | [`example-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/example-desktop.png) | /example.html?path=examples/anagrams.oq | desktop | light | 2880×2000 | 1440×1000 | 216.7 KB |
-| 18 | [`example-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/example-desktop-dark.png) | /example.html?path=examples/anagrams.oq | desktop | dark | 2880×2000 | 1440×1000 | 215.7 KB |
-| 19 | [`stdlib-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/stdlib-desktop.png) | /stdlib.html | desktop | light | 2880×2000 | 1440×1000 | 276.2 KB |
-| 20 | [`stdlib-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/stdlib-desktop-dark.png) | /stdlib.html | desktop | dark | 2880×2000 | 1440×1000 | 276 KB |
-| 21 | [`changelog-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/changelog-desktop.png) | /changelog.html | desktop | light | 2880×2000 | 1440×1000 | 287.2 KB |
-| 22 | [`changelog-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/changelog-desktop-dark.png) | /changelog.html | desktop | dark | 2880×2000 | 1440×1000 | 288.2 KB |
-| 23 | [`status-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/status-desktop.png) | /status.html | desktop | light | 2880×2000 | 1440×1000 | 290.3 KB |
-| 24 | [`status-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/status-desktop-dark.png) | /status.html | desktop | dark | 2880×2000 | 1440×1000 | 292 KB |
-| 25 | [`philosophy-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/philosophy-desktop.png) | /philosophy.html | desktop | light | 2880×2000 | 1440×1000 | 325.4 KB |
-| 26 | [`philosophy-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/philosophy-desktop-dark.png) | /philosophy.html | desktop | dark | 2880×2000 | 1440×1000 | 329.5 KB |
-| 27 | [`tour-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/tour-desktop.png) | /tour.html | desktop | light | 2880×2000 | 1440×1000 | 278.4 KB |
-| 28 | [`tour-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/tour-desktop-dark.png) | /tour.html | desktop | dark | 2880×2000 | 1440×1000 | 277.6 KB |
-| 29 | [`not-found-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/not-found-desktop.png) | /no-such-page.html | desktop | light | 2880×2000 | 1440×1000 | 231.5 KB |
-| 30 | [`firebase-content-loaded.png`](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/firebase-content-loaded.png) | /document.html?path=docs/spec/language.md (emulator build) | desktop | light | 2880×2000 | 1440×1000 | 281.7 KB |
+| 1 | [`home-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/home-desktop.png) | / | desktop | light | 2880×2000 | 1440×1000 | 518.9 KB |
+| 2 | [`home-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/home-desktop-dark.png) | / | desktop | dark | 2880×2000 | 1440×1000 | 540.8 KB |
+| 3 | [`home-mobile.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/home-mobile.png) | / | mobile | light | 780×1688 | 390×844 | 267.2 KB |
+| 4 | [`home-mobile-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/home-mobile-dark.png) | / | mobile | dark | 780×1688 | 390×844 | 311.7 KB |
+| 5 | [`navigation-mobile-open.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/navigation-mobile-open.png) | / (menu expanded) | mobile | light | 780×1688 | 390×844 | 82.7 KB |
+| 6 | [`navigation-mobile-open-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/navigation-mobile-open-dark.png) | / (menu expanded) | mobile | dark | 780×1688 | 390×844 | 77.2 KB |
+| 7 | [`docs-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/docs-desktop.png) | /docs.html | desktop | light | 2880×2000 | 1440×1000 | 234.8 KB |
+| 8 | [`docs-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/docs-desktop-dark.png) | /docs.html | desktop | dark | 2880×2000 | 1440×1000 | 235.1 KB |
+| 9 | [`docs-mobile.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/docs-mobile.png) | /docs.html | mobile | light | 780×1688 | 390×844 | 150.7 KB |
+| 10 | [`docs-mobile-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/docs-mobile-dark.png) | /docs.html | mobile | dark | 780×1688 | 390×844 | 151.6 KB |
+| 11 | [`doc-page-code-highlighting.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/doc-page-code-highlighting.png) | /document.html?path=docs/spec/language.md | desktop | light | 2880×2000 | 1440×1000 | 294.2 KB |
+| 12 | [`doc-page-code-highlighting-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/doc-page-code-highlighting-dark.png) | /document.html?path=docs/spec/language.md | desktop | dark | 2880×2000 | 1440×1000 | 293.7 KB |
+| 13 | [`doc-page-mobile.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/doc-page-mobile.png) | /document.html?path=docs/spec/language.md | mobile | light | 780×1688 | 390×844 | 107.2 KB |
+| 14 | [`doc-page-mobile-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/doc-page-mobile-dark.png) | /document.html?path=docs/spec/language.md | mobile | dark | 780×1688 | 390×844 | 106.8 KB |
+| 15 | [`examples-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/examples-desktop.png) | /examples.html | desktop | light | 2880×2000 | 1440×1000 | 252.3 KB |
+| 16 | [`examples-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/examples-desktop-dark.png) | /examples.html | desktop | dark | 2880×2000 | 1440×1000 | 252.7 KB |
+| 17 | [`example-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/example-desktop.png) | /example.html?path=examples/anagrams.oq | desktop | light | 2880×2000 | 1440×1000 | 216.7 KB |
+| 18 | [`example-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/example-desktop-dark.png) | /example.html?path=examples/anagrams.oq | desktop | dark | 2880×2000 | 1440×1000 | 215.7 KB |
+| 19 | [`stdlib-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/stdlib-desktop.png) | /stdlib.html | desktop | light | 2880×2000 | 1440×1000 | 276.2 KB |
+| 20 | [`stdlib-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/stdlib-desktop-dark.png) | /stdlib.html | desktop | dark | 2880×2000 | 1440×1000 | 276 KB |
+| 21 | [`changelog-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/changelog-desktop.png) | /changelog.html | desktop | light | 2880×2000 | 1440×1000 | 287.2 KB |
+| 22 | [`changelog-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/changelog-desktop-dark.png) | /changelog.html | desktop | dark | 2880×2000 | 1440×1000 | 288.2 KB |
+| 23 | [`status-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/status-desktop.png) | /status.html | desktop | light | 2880×2000 | 1440×1000 | 290.3 KB |
+| 24 | [`status-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/status-desktop-dark.png) | /status.html | desktop | dark | 2880×2000 | 1440×1000 | 292 KB |
+| 25 | [`philosophy-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/philosophy-desktop.png) | /philosophy.html | desktop | light | 2880×2000 | 1440×1000 | 325.4 KB |
+| 26 | [`philosophy-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/philosophy-desktop-dark.png) | /philosophy.html | desktop | dark | 2880×2000 | 1440×1000 | 329.5 KB |
+| 27 | [`tour-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/tour-desktop.png) | /tour.html | desktop | light | 2880×2000 | 1440×1000 | 278.4 KB |
+| 28 | [`tour-desktop-dark.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/tour-desktop-dark.png) | /tour.html | desktop | dark | 2880×2000 | 1440×1000 | 277.6 KB |
+| 29 | [`not-found-desktop.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/not-found-desktop.png) | /no-such-page.html | desktop | light | 2880×2000 | 1440×1000 | 231.5 KB |
+| 30 | [`firebase-content-loaded.png`](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/firebase-content-loaded.png) | /document.html?path=docs/spec/language.md (emulator build) | desktop | light | 2880×2000 | 1440×1000 | 281.7 KB |
 
 **30 files across 13 page groups.** Viewports present: **desktop 1440×1000** (22 captures)
 and **mobile 390×844** (8 captures). See §5 for the tablet gap.
@@ -179,7 +182,7 @@ With `shot.theme` undefined, `applied` resolves to `"auto"` and this throws. Rec
 needs `OQ_AUDIT_FIREBASE=1` against an emulator-seeded build **and** a `theme` value added
 to that entry. Neither is done here.
 
-![firebase-content-loaded](https://github.com/Oqthara/Oqthara.github.io/blob/feat/alpha-automation-and-hardening/artifacts/visual-audit/firebase-content-loaded.png)
+![firebase-content-loaded](https://github.com/Oqthara/Oqthara.github.io/blob/main/artifacts/visual-audit/firebase-content-loaded.png)
 
 **Effect on this review:** the 29 ordinary captures are current. This one is historical. Do
 not judge the current design from it. Whether to recapture or drop it is a maintainer
@@ -213,6 +216,12 @@ geometry assertions, contrast ratios and browser test results are all evidence t
 renders as specified. None of them is evidence that it looks right. In this environment the
 image viewer returns `Viewed image file successfully` without delivering pixel content, so
 even the agent preparing this package has not seen these images.
+
+**The merge changed what a review decides.** PR #2 was merged and deployed while this package
+was being assembled, so the 30 captures now describe the live site rather than a pending
+branch. A review that finds a defect therefore no longer blocks a merge — it schedules a
+follow-up fix against `main`. That makes V1 and V2 less urgent than they would have been
+beforehand, and it does not make them less true.
 
 A maintainer must open the gallery and fill this in:
 
@@ -256,19 +265,32 @@ authorization, and it does not unlock the blocked data work.
 | --- | --- | --- |
 | `OQTHARA_PRODUCTION_SYNC` | **unset — writes disabled** | maintainer, in repository settings |
 | `OQTHARA_DEPLOY_FIRESTORE_RULES` | **unset — deploys disabled** | maintainer, in repository settings |
-| Production Firestore writes | **NOT PERFORMED** | maintainer authorization required, separately |
+| Production Firestore writes | **NOT PERFORMED by this branch's tooling** | maintainer authorization required, separately |
 | Document-level reconciliation plan | **NOT APPROVED** | maintainer review, separately |
-| Merge of PR #2 | **NOT DONE** | maintainer |
-| Deploy | **NOT DONE** | maintainer |
+| Merge of PR #2 | **DONE — merged by the maintainer as `9d9a41a`** | already happened, outside this review |
+| Deploy | **DONE — GitHub Pages deployed `9d9a41a`** | already happened, outside this review |
 
-Visual approval does not change any row above. In particular:
+The last two rows were false when this package was drafted and are corrected here. While the
+review package was being assembled, the maintainer merged PR #2 (2026-11-07T13:55:59Z) and
+the Pages workflow deployed the merge commit; `https://oqthara.github.io/` answers `200` and
+serves the new palette (`--bg:#fbfaf7` light, `#070b0e` dark). Nothing in this branch did
+either of those things, and no gate below was opened by the review.
 
-- It does not authorize writing production records. The production data plane currently
-  returns `429 RESOURCE_EXHAUSTED` on every document read, so the current state cannot be
-  read; no reconciliation can be planned without it.
+Visual approval does not change the remaining rows:
+
+- It does not authorize writing production records, and it opens no variable. Both activation
+  variables remain unset, and `firebase-sync.yml` on `main` still runs its write step only
+  when `steps.gate.outputs.enabled == 'true'`.
+- **One correction to earlier reporting:** production reads are not currently blocked. When
+  this package was drafted the data plane returned `429 RESOURCE_EXHAUSTED`, but a scheduled
+  run afterwards read production successfully. Its log reports `read 59 source records` from
+  GitHub and then `skip 59 unchanged` — and a record can only be classified unchanged by
+  comparing its `contentHash` against the stored document, which means all 59 Firestore
+  documents were read from the `oqthara` project. A fresh unauthenticated probe now answers
+  `403`, not `429`. So the state *can* be read; what remains outstanding is the
+  document-level reconciliation plan, which is still unapproved.
 - It does not make the credential-free dry run meaningful. That run has no credential, sees
   an empty mirror, and reports a plan that understates the change by the entire dataset.
-- It does not merge or deploy anything. Nothing in this package pushes to `main`.
 
 ## 8. How this package was verified
 
