@@ -1,8 +1,12 @@
 # Oqthara website — production readiness report
 
-Branch `feat/alpha-automation-and-hardening` at `770ac82`. Baseline
+Branch `feat/alpha-automation-and-hardening` at `c6434bc`. Baseline
 `3be0388e2d6bb41956c0c03482d2a40f847cc648` (`origin/main`). Pull request
 [#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) is **open and mergeable**.
+
+The report states the tip it describes on purpose: a document that names a commit it has drifted
+past is a document nobody can check. Earlier revisions named `770ac82`, and the CI and
+production-write findings below have moved since.
 
 Every claim below is backed by a command that was executed and whose output is quoted. Where
 a requirement was not exercised, it says **NOT VERIFIED** and names the next action. Nothing
@@ -632,11 +636,20 @@ under test, not a stale tree.
 | 11 | `actionlint` | **exit 0** |
 | 12 | `npm audit` | 19 total: 0 critical, 4 high, 15 moderate |
 | 13 | `npx playwright install --with-deps firefox` | installs; launches on Linux, fails on macOS (see §12) |
+| 14 | gate contract tests (`tests/workflow-contract.test.js`) | **7 tests, all pass**; un-gating any workflow fails them |
 
-**CI.** `Pages` run **`42320823948`** concluded **success** on `770ac82`: `Build the static
-site` passed, `Cross-browser suite` passed, and `Deploy to GitHub Pages` was skipped, as it is
-for every non-`main` branch. The four engines were confirmed inside that run —
-`chromium`, `mobile-chromium`, `firefox`, and `webkit` each report **93 tests, 0 failures**.
+**CI.** `Pages` run **`42330983084`** concluded **success** on `c6434bc`, the current tip:
+`Build the static site` passed, `Cross-browser suite` passed, and `Deploy to GitHub Pages` was
+skipped, as it is for every non-`main` branch. The four engines were confirmed inside that run —
+`chromium`, `mobile-chromium`, `firefox`, and `webkit` each report **93 tests, 0 failures**. The
+immediately preceding runs `42329827908` (`e4316ab`) and `42325998978` (`0b85925`) were also
+green, so the gate change and the documentation correction were each verified by CI rather than
+assumed.
+
+CI reports 296 unit tests with 283 passing and 13 skipped, against 292 passing and 4 skipped
+locally. The difference is the emulator and live-source suites, which those jobs do not start;
+`Firestore security rules` runs separately in the same job and reports **18/18 rule assertions
+passed**.
 
 Runs `42319837893`, `42319080680`, and `42317021081` were the three iterations that built the
 cross-browser job: the first proved Firefox passes on Linux while Chromium was still missing,
@@ -744,6 +757,45 @@ a deployment; nothing was pushed to the Pages environment and no merge occurred.
 
 The deploy job's permissions were narrowed in `4879677` and its unused checkout removed, so the
 path it will take is now the narrower one — but it has not been taken.
+
+### What a merge would trigger, verified from the workflow files
+
+| property | value | source |
+| --- | --- | --- |
+| Trigger | `push` to `refs/heads/main` only | `pages.yml`, `deploy.if` |
+| Gate on artifact | `needs: build`; publishes the uploaded artifact, not a rebuild | `pages.yml` |
+| Checkout in deploy job | none; `contents: read` deliberately not granted | `pages.yml:117-122` |
+| Permissions | `pages: write`, `id-token: write` only | `pages.yml:120-122` |
+| Environment | `github-pages` | `pages.yml:123-125` |
+| Post-deploy check | smoke test over 11 routes after `deploy-pages` | `pages.yml:139` |
+| Implicit production write | **none** — the deploy job has no Firestore step | `pages.yml` |
+
+The last row is the one that needed checking separately. Deploying the site and writing the
+Firestore mirror are different workflows, and gating one without the other would have left a path
+open. `pages.yml` contains no `sync-firestore.mjs` invocation and no service-account secret.
+
+Its only Firestore reference is `npm run test:rules` in the **build** job (`pages.yml:48`), which
+runs the emulator and asserts authorization rules. That is read-only with respect to production:
+it starts a local emulator, exercises 18 rule assertions against it, and exits. The distinction is
+worth stating because "pages.yml mentions Firestore" and "merging writes to production" are
+different facts, and a reviewer grepping for one should not mistake it for the other.
+
+A merge therefore deploys the site and nothing else writes production unless a maintainer enables
+an activation variable.
+
+### Deployment readiness checklist
+
+| # | Item | State |
+| --- | --- | --- |
+| 1 | Build artifact produced by `build` job and reused, not rebuilt | **READY** — `upload-pages-artifact` / `deploy-pages` pairing |
+| 2 | Deploy permissions minimal | **READY** — two scopes, pinned by a contract test |
+| 3 | No checkout in the deploy job | **READY** — removed in `4879677`, pinned |
+| 4 | Environment declared | **READY** — `github-pages` |
+| 5 | Post-deploy smoke test | **READY** — 11 routes, retries the root then fails closed |
+| 6 | No implicit production write on deploy | **READY** — no Firestore step in `pages.yml` |
+| 7 | CI green on the exact deploy commit | **PASS** — run `42330983084` on `c6434bc` |
+| 8 | Human visual acceptance | **NOT VERIFIED** — see §10; nobody has looked at the screenshots |
+| 9 | Maintainer authorization to merge | **NOT GRANTED** — and deliberately not requested by this report |
 
 ---
 
