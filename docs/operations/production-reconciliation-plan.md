@@ -1,13 +1,31 @@
 # Production Firestore reconciliation plan
 
-Status: **PLAN APPROVED — EXECUTION NOT AUTHORIZED**. Nothing in this document has been applied.
+Status: **STEP 1 EXECUTED — STEP 2 BLOCKED ON QUOTA**. The rules are deployed; the content sync is
+not.
 
 The repository maintainer replied `APPROVED` on 2026-11-07 in response to a report that stated this
-plan was awaiting approval. That approves the plan as a description of what would be done. It is
-**not** authorization to do it: §6 fixes a four-step sequence in which no step implies the next, and
-approving this document does not enable either activation gate. As of this writing both
-`OQTHARA_PRODUCTION_SYNC` and `OQTHARA_DEPLOY_FIRESTORE_RULES` remain unset, no production
-document has been written, and no ruleset has been deployed.
+plan was awaiting approval. That approved the plan as a description of what would be done; it was
+**not** by itself authorization to execute it, because §6 fixes a four-step sequence in which no
+step implies the next.
+
+Execution was subsequently authorized as a whole, and §6 step 1 is complete:
+
+| §6 step | Status | Evidence |
+| --- | --- | --- |
+| 1. Deploy the rules | **DONE** | run [42402867146](https://github.com/Oqthara/Oqthara.github.io/actions/runs/42402867146); active ruleset `7702f82f-8c66-4a17-9c27-dba94aca02fb`, 2961 bytes, sha256 `095758f5e447b1476172bac9a91ca0bcb0517ce381a6f50d49c62ef4b6fabd55`, `updateTime 2026-11-07T18:46:10.144458Z` |
+| 2. Run one authorized full sync | **BLOCKED** | run [42402982695](https://github.com/Oqthara/Oqthara.github.io/actions/runs/42402982695) failed on `8 RESOURCE_EXHAUSTED: Quota exceeded` while *reading* sync state, before any write |
+| 3. Read back independently | **NOT REACHED** | every data-plane read currently answers `429`, so neither the read-back nor an inventory is possible |
+| 4. Disable the gate again | **DONE** | `OQTHARA_PRODUCTION_SYNC` and `OQTHARA_DEPLOY_FIRESTORE_RULES` are both unset |
+
+The step 2 blocker is the free-tier daily read allowance described in `FINAL_REPORT.md` §14.1,
+which recovers on its own daily boundary and cannot be raised while billing is disabled. It is not
+a credential, permission, or code failure: the same run authenticated as
+`oqthara-github-sync@oqthara.iam.gserviceaccount.com`, passed the activation gate, and read all 59
+source records from `Oqthara/oqthara@main` at `7ffb675` before the Firestore read failed.
+
+**No production document has been written.** The failure occurred at `scripts/sync-firestore.mjs:881`,
+inside `readSyncState`, which is upstream of `planSync` and of every write. The content sync must be
+re-run after the quota boundary.
 
 This plan compares the live Firestore database in project `oqthara` against the canonical content in
 `Oqthara/oqthara`. It is a read-only result: the audit that produced it has no write path, and every
@@ -23,7 +41,7 @@ activation gate remains unset.
 | Content documents in production | 59 |
 | Bookkeeping records in production | 60 |
 | Production writes performed | **none** |
-| Firestore rules deployed | **none** |
+| Firestore rules deployed | **yes** — ruleset `7702f82f-8c66-4a17-9c27-dba94aca02fb`, 2026-11-07T18:46:10Z |
 
 Reproduce with:
 
@@ -210,8 +228,9 @@ read, which is a worse state than its current absence because it would look reco
 
 Each step needs its own authorization. None is implied by approving this document.
 
-**Step 1 is the next actionable item and it is still unauthorized.** Approving this plan was not a
-request to deploy rules, so the deploy gate stays unset until that step is asked for by name.
+**Step 1 is complete and step 2 is the next actionable item.** The rules are deployed and verified
+by read-back; the content sync last failed on the free-tier read quota before writing anything, so
+it needs to be re-run once that allowance resets. Both activation gates are unset again.
 
 ---
 

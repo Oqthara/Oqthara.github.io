@@ -1231,7 +1231,8 @@ an activation variable.
 
 | Item | Status | Next action |
 |---|---|---|
-| First production Firestore write | **BLOCKED** | Complete §14 items 1–7, present the plan, obtain maintainer authorization |
+| Firestore security rules deployment | **DONE** | Ruleset `7702f82f-8c66-4a17-9c27-dba94aca02fb` released in run `42402867146`; read-back matches the local file byte for byte (§18) |
+| First production Firestore write | **BLOCKED on the free-tier daily read quota** | Run `42402982695` failed on `429` at `readSyncState`, before any write; re-run the full sync after the daily reset (§18) |
 | CSP and security response headers | **BLOCKED** | GitHub Pages serves fixed headers with no `_headers` support; requires a host that allows header configuration |
 | Firebase App Check enforcement | **BLOCKED** | Requires console authorization not granted to this work; prepared but not enforced |
 | Firefox verification | **PASS on Linux, blocked on macOS** | 92 passed / 2 skipped in `42387062654` (Firefox 159.0, `ubuntu-latest`), re-confirmed by the same job on every push since; macOS launcher fails before any assertion (§12) |
@@ -1447,3 +1448,94 @@ It will not claim the site looks good, that Firefox works on macOS, that product
 verified, or that anything was deployed. Each of those has a row above marked **NOT VERIFIED**,
 and each will stay marked that way until evidence exists — because the failure mode that produced
 the corrections in this report was stating a plausible thing as though it had been checked.
+
+---
+
+## 18. Authorized execution against production, 2026-11-07
+
+This section records what was actually executed after the reconciliation plan was authorized, in the
+order it happened. Two things were attempted. One succeeded; the other is blocked by a quota that
+this repository cannot change.
+
+### 18.1 The rules deployment blocker, and how it was resolved
+
+`firebase deploy --only firestore:rules` had failed with
+`HTTP Error: 403, Permission denied to get service [firestore.googleapis.com]`. That error is
+produced by `firebase-tools`' own enablement precheck in `lib/ensureApiEnabled.js`, which calls
+Service Usage before it touches the Rules API. It needs `serviceusage.services.get`; the deployment
+service account does not hold it, and the CLI never reached the rules release at all.
+
+The documented remedy — granting the content-mirroring service account a broader role — would have
+traded a real security boundary for a permission the deployment does not use. The Rules API needs
+none of it. `scripts/deploy-firestore-rules.mjs` performs the two documented writes directly:
+compile via `projects/{project}:test`, create a ruleset, update the `cloud.firestore` release.
+
+| | |
+| --- | --- |
+| First attempt | run `42402691528` — ruleset `86050b71-7aef-4182-883d-36cb2440f553` created, release rejected `400 Unknown name "rulesetName"` |
+| Cause | `PATCH .../releases/{id}` takes an `UpdateReleaseRequest`; the body must wrap the release under a `release` key |
+| Blast radius | none — no release pointed at that ruleset, so production kept serving `b9a97879` |
+| Second attempt | run `42402867146` — **success** |
+
+Evidence from run `42402867146`:
+
+```
+local rules: 2961 bytes, sha256 095758f5e447b1476172bac9a91ca0bcb0517ce381a6f50d49c62ef4b6fabd55
+active ruleset: b9a97879-6727-4274-9c4e-e31b5a7eb7df (2431 bytes, ...)
+metadata/catalog block present: false
+compile: accepted
+ruleset created: 7702f82f-8c66-4a17-9c27-dba94aca02fb
+release cloud.firestore updated -> 7702f82f-8c66-4a17-9c27-dba94aca02fb
+active ruleset now: 7702f82f-... (2961 bytes, sha256 095758f5..., updated 2026-11-07T18:46:10.144458Z)
+metadata/catalog block present: true
+read-back confirms the deployed rules match the local file byte for byte
+```
+
+The deployed rules are the same bytes `npm run test:rules` exercises with 18/18 assertions passing,
+so the `match /metadata/catalog` grant that the catalogue writer depends on is now live. The
+deployment is a rules release only: no Firestore document was read or written by it, and no IAM
+binding was added.
+
+The workflow no longer calls `firebase deploy --only firestore:rules`, because that path can never
+succeed for this service account without a permission it does not need. `updateMask=rulesetName`
+restricts the PATCH to that one field, and the script re-reads the active release afterwards so a
+release still pointing at an older ruleset is reported as failure rather than success.
+
+### 18.2 The content sync is blocked on the free-tier read quota
+
+With the activation gate enabled for one run, `firebase-sync.yml` run `42402982695` authenticated
+correctly and read the canonical source, then failed before writing:
+
+```
+client_email: oqthara-github-sync@oqthara.iam.gserviceaccount.com
+project_id: oqthara
+Production synchronization is ENABLED by the OQTHARA_PRODUCTION_SYNC variable.
+read 59 source records from Oqthara/oqthara@main at 7ffb675
+Could not read the Firestore sync state: 8 RESOURCE_EXHAUSTED: Quota exceeded.
+```
+
+This is the condition already diagnosed in §14.1: the project is on the Firestore free tier, its
+read allowances are `50000` **per day** per project, their `quotaIncreaseEligibility` is
+`NOT_SUPPORTED` while billing is disabled, and the exhaustion is therefore transient but not
+repairable from this repository. A direct REST read of `sync/catalog` with an OAuth token
+independently returns `HTTP 429`, confirming the limit is on the data plane rather than on the
+Admin SDK or the credential.
+
+**No production document was written by this run.** The failure is at
+`scripts/sync-firestore.mjs:881`, inside `readSyncState`, which is upstream of `planSync` and of
+every write; the script returns `EXIT.writeFailed` without calling the batch writer. That is a
+property of the code path, not an inference from the log.
+
+Both activation gates were returned to unset immediately:
+
+```
+gh variable list
+  (no variables)
+```
+
+### 18.3 What remains
+
+Step 2 of the reconciliation plan must be re-run after the daily quota boundary. It is a re-dispatch
+of the same workflow with `OQTHARA_PRODUCTION_SYNC=true`, followed by the independent read-back in
+step 3. Until that read-back exists, production synchronization stays **NOT VERIFIED**, the
+catalogue stays absent, and this report does not claim otherwise.
