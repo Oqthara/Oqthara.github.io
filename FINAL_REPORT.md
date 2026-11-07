@@ -1,8 +1,7 @@
 # Oqthara website — production readiness report
 
-Last code commit `8fbcb0f9b71773357d84b6667a157fc22ec43c69` on
-`feat/alpha-automation-and-hardening`. Baseline `3be0388e2d6bb41956c0c03482d2a40f847cc648`
-(`origin/main`). Pull request
+Branch `feat/alpha-automation-and-hardening` at `770ac82`. Baseline
+`3be0388e2d6bb41956c0c03482d2a40f847cc648` (`origin/main`). Pull request
 [#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) is **open and mergeable**.
 
 Every claim below is backed by a command that was executed and whose output is quoted. Where
@@ -15,23 +14,38 @@ here is merged, deployed, or written to production Firestore.
 
 | | Commit | Detail |
 |---|---|---|
-| Baseline | `3be0388e2d6bb41956c0c03482d2a40f847cc648` | `origin/main` at the time of the run |
-| Last code commit | `8fbcb0f9b71773357d84b6667a157fc22ec43c69` | every gate in §13 ran here |
-| Commits after it | | this report, plus one audit-script fix and its guard test |
-| Code delta | | 27 commits, 75 files, `+13,702 / −2,065` |
+| Baseline | `3be0388e2d6bb41956c0c03482d2a40f847cc648` | `origin/main` when this work began |
+| Security and release work | `..8fbcb0f` | the 27 commits §3–§9 evidence |
+| Typography and spacing work | `8fbcb0f..dfea46f` | six commits: tokens, tests, cross-browser CI, screenshots |
+| Report commits | `35df02f..770ac82` | prose and one end-to-end timeout fix; no site CSS |
+| Branch total at `770ac82` | 43 commits | 76 files, `+13,963 / −2,103` |
 
-The delta is measured against `8fbcb0f`, not the branch tip, because the commits after it change
-this file and one developer script. No shipped page, component, or style moved. A total that
-counts its own report goes stale the moment it is written; this one does not.
+Counts are stated against an explicit SHA on purpose. A branch total is a snapshot, and a report
+that quotes one without saying when it was true becomes wrong on its own next commit. The
+figures below were read at `770ac82`:
 
 ```
-$ git log --oneline origin/main..8fbcb0f | wc -l
-27
+$ git log --oneline origin/main..HEAD | wc -l
+43
 
-$ git diff --shortstat origin/main..8fbcb0f
- 75 files changed, 13702 insertions(+), 2065 deletions(-)
+$ git diff --shortstat origin/main..HEAD
+ 76 files changed, 13963 insertions(+), 2103 deletions(-)
+
+$ git diff --shortstat origin/main..dfea46f
+ 76 files changed, 13963 insertions(+), 2103 deletions(-)
 
 $ git log --oneline 8fbcb0f..HEAD
+770ac82 Give the route sweep the time it actually needs
+ace1cc6 Install every engine the cross-browser job asks for
+dfea46f Refresh the committed screenshots after the token work
+f7a7b3f Install both engines in the cross-browser job
+82c7ed8 Give Firefox a supported environment to prove itself on
+5d5b27c Add design-token contract tests to keep the scale honest
+24e0203 Wire the typography and spacing tokens into the components that ignored them
+0a60328 docs: cite the run that verifies this report on its current commit
+e801804 docs: correct what the CI history actually shows
+f60e637 docs: stop the report naming a tip that is no longer the tip
+35df02f docs: record the screenshot separation in the report
 57cfc81 fix(visual): stop the audit overwriting the committed screenshots
 6062ee7 docs: cite the run that verifies this report, not just the one before it
 89bb31a docs: anchor the report's totals to the last code commit
@@ -39,7 +53,8 @@ a5baac7 docs: count the report's own commit in its totals
 fa55d20 docs: report the work against the acceptance criteria it was given
 ```
 
-The working tree was clean (`git status --porcelain` → empty) at the time these gates ran.
+The working tree was clean (`git status --porcelain` → empty) before each of the seven gates in
+§13 was run.
 
 ---
 
@@ -81,6 +96,17 @@ Oldest first, as GitHub orders them on the PR.
 | `89bb31a` | `docs` — anchor the report's totals to the last code commit |
 | `6062ee7` | `docs` — cite the run that verifies this report, not just the one before it |
 | `57cfc81` | `fix(visual)` — stop the audit overwriting the committed screenshots |
+| `35df02f` | `docs` — record the screenshot separation in the report |
+| `f60e637` | `docs` — stop the report naming a tip that is no longer the tip |
+| `e801804` | `docs` — correct what the CI history actually shows |
+| `0a60328` | `docs` — cite the run that verifies this report on its current commit |
+| `24e0203` | `feat(css)` — wire the typography and spacing tokens into the components that ignored them |
+| `5d5b27c` | `test(css)` — add design-token contract tests to keep the scale honest |
+| `82c7ed8` | `ci` — give Firefox a supported environment to prove itself on |
+| `f7a7b3f` | `ci` — install both engines in the cross-browser job |
+| `ace1cc6` | `ci` — install every engine the cross-browser job asks for |
+| `dfea46f` | `docs(visual)` — refresh the committed screenshots after the token work |
+| `770ac82` | `test(e2e)` — give the route sweep the time it actually needs |
 
 Every commit is focused on one concern and was gated before the next was started.
 
@@ -348,6 +374,28 @@ ok  home-mobile.png                  390x844   /
 29 captured, all ok
 ```
 
+**What was and was not inspected visually.** This distinction matters because a generated
+screenshot proves only that a browser rendered a page, not that the result looks right.
+
+The author of this report could **not** view the PNGs in this environment: the image-reading
+tool reported success without delivering pixel content, so no human or model eye ever confirmed
+what the images show. Rather than claim otherwise, the visual claims above rest on measurements
+that do not require eyes:
+
+- computed styles read from the live page (type sizes, leading, weights, tracking, padding);
+- browser-measured element geometry, 100 comparisons across themes, 0 differences;
+- character-per-line counts from real rendered paragraph boxes;
+- a 4px-grid audit of every distinct spacing value;
+- full-page screenshots from a 10-route × 2-theme × 4-viewport sweep, checked programmatically
+  for horizontal overflow and clipped text, with zero of either;
+- `npm run audit:visual` 57/57 passing, which asserts contrast, focus visibility, tap-target
+  size, and layout invariants.
+
+That is stronger than a glance in every dimension except aesthetic judgement. **Aesthetic
+judgement was not exercised and is NOT VERIFIED.** A maintainer should still look at
+`artifacts/visual-audit/*.png` before merge; the numbers narrow what to look for but cannot
+replace looking.
+
 **A rendering-determinism question was investigated and closed.** Consecutive captures appeared
 to differ by 1,296,000 px — exactly 2880×450, the header band. `backdrop-filter: blur(12px)` on
 the sticky header was the first hypothesis and it was **wrong**: isolated in-process and
@@ -362,6 +410,92 @@ diagnostics rather than reviewed artifacts. A test in `tests/site.test.js` parse
 output directories and fails if they ever match again — confirmed by reverting the fix and
 watching it fail with *"audit-visual.mjs writes to artifacts/visual-audit, which collides with
 the committed screenshots"*.
+
+### Typography and spacing system
+
+The typescale and spacing ladder already existed in `assets/site.css` before this pass. What it
+did **not** have was consumers: 24 of its 133 tokens were declared and never referenced by any
+rule, and several components hardcoded raw `rem`/`ch` values that duplicated a token sitting
+right above them. A token nobody reads is documentation, not a design system. `24e0203` made the
+system load-bearing.
+
+**What changed.** Dead and duplicated tokens were removed — `--code-keyword`, `--code-string`,
+`--code-number`, `--code-comment` (identical values to the live `--tok-*` block), `--step-5`
+(never referenced; the 1.2 scale skips it deliberately), `--ring`, `--shadow-1`, `--measure`,
+`--sidebar`, `--space-section-tight`, `--band-tight`, `--doc-gutter`, `--gap-group-loose`. The
+call sites that should have been reading tokens now do: `html { scroll-padding-top }`,
+`.content { padding-inline }`, prose measures, `.section` bands, the hero, sidebar and table-of-
+contents offsets, form controls, buttons, badges, notes, status blocks, principles, empty states.
+Control padding was split from button padding (`--pad-control-*` 12×8, `--pad-button-*` 24×12)
+because forcing a text field and a primary button through one pair either shrinks the button or
+inflates the field.
+
+Seven hover rules moved from the opaque `--surface-2` to the translucent `--state-hover`. The
+author's intent was already visible in the stylesheet: `--state-active` was live at
+`a.card:active`, so transient states use overlays and static fills (`inline code`, `th`, `.retry`)
+keep `--surface-2`. `a.card:hover` still keeps its `transform: translateY(-2px)`, which
+`e2e/reading-modes.spec.js` asserts under reduced motion.
+
+**Two real defects surfaced while wiring.** First, `code { font-size: var(--text-inline-code) }`
+(0.9em) applied to *every* `code` element including those inside `pre`, so block code rendered at
+12px and silently overruled `--text-code`'s 13px. Measured `{"size":12}` before, `{"size":13,
+"lh":22}` after; the ratio now lives only on `:not(pre) > code`. Second, `--shadow-lift` carried
+two layers but is consumed through `drop-shadow()`, which accepts exactly one — the whole filter
+was being discarded. It is now a single layer.
+
+**Guard tests.** Seven contract tests in `tests/site.test.js` keep this from drifting back: every
+declared token must be consumed; the spacing ladder must be an exact 4px scale with all twelve
+rungs; each of twelve typographic roles must resolve to a modular step or an `em` ratio; light,
+dark, and system blocks must declare the same colour tokens; no rule may set a type size or
+leading outside the scale. All seven were proven falsifiable by planting regressions and watching
+the intended test fail — a raw `font-size: 13px` on `code`, a deleted `--fg-muted` from the light
+block, and an orphaned `--space-13`.
+
+One trap is worth recording: the stylesheet quotes token names inside explanatory comments, so a
+naive scan reads those as declarations. The light block's contrast-ratio comment contains
+`--fg`, which made the parity test fail on a token that was present all along. The tests strip
+comments before parsing.
+
+**Evidence the system is applied, not just declared.** Computed styles were read from a live page
+across route, theme, and viewport: `h1` 76px/82 desktop and 48px/52 mobile via `clamp`, `h2`
+28px/36, `h3` 22px/29, body 18px/31, `pre code` 13px/22 monospace, nav 13px (16px on mobile) at
+weight 550, buttons 16px on 12/24 padding, badges 12px. A sweep of 10 routes × 2 themes × 4
+viewports (320/390/768/1440) found zero horizontal overflow and zero clipped text.
+
+**Reading measure, measured rather than assumed.** Wrapped prose tops out at **69 characters per
+line** at 1024, 768, and 1440px — consistent with `--measure-prose: 68ch` — falling to 46 at 390px
+and 42 at 320px, where the viewport rather than the token sets the limit. That is inside the
+45–75 character band long-form guidance recommends.
+
+```
+viewport 1440px   max chars/line in wrapped prose = 69   (/tour.html)
+viewport 1024px   max chars/line in wrapped prose = 69   (/tour.html)
+viewport  768px   max chars/line in wrapped prose = 69   (/tour.html)
+viewport  390px   max chars/line in wrapped prose = 46   (/releases.html)
+viewport  320px   max chars/line in wrapped prose = 42   (/philosophy.html)
+```
+
+Note the distinction the first pass got wrong: `/tour.html` contains single-line paragraphs of
+110–115 characters, which is a *sentence length*, not a measure problem — no line wraps there.
+Only wrapped paragraphs constrain measure, and none of them exceeds 69.
+
+**Light and dark are geometrically identical, not merely similar.** Every element on ten routes
+was compared across themes on twelve computed properties — position, size, `font-size`,
+`line-height`, `font-weight`, `letter-spacing`, and all four box paddings/margins:
+
+```
+100 element comparisons across 10 routes x 2 themes, 0 differing
+```
+
+A pixel-histogram heuristic run first reported ten "structural mismatches"; that measurement was
+wrong, not the site. It keyed on row-ink thresholds, so dark-mode gradient panels and card fills
+registered as text bands that do not exist. The browser-geometry comparison above is the
+authoritative check and it is exact.
+
+**Spacing is on the 4px grid, with the fluid values stated as such.** 25 distinct non-zero
+spacing values appear on the home page; exactly one is off-grid, `section.hero`'s `86.4px`
+top padding, and that is `--space-page-top`'s `clamp()` mid-point at 1440px (`6vw`), not a
+hardcoded value. The ladder's endpoints are all multiples of four.
 
 ---
 
@@ -398,24 +532,39 @@ The audit runs on every page in both palettes.
 
 | Engine | Result | Verdict |
 |---|---|---|
-| Chromium (desktop) | 91 passed, 2 skipped | **PASS** |
-| Chromium (Pixel 7) | 91 passed, 2 skipped | **PASS** |
-| WebKit (Desktop Safari) | 91 passed, 2 skipped | **PASS** |
-| Firefox (Desktop Firefox) | **91 failed at launch** | **NOT VERIFIED** |
+| Chromium (desktop) | 93 tests, passed | **PASS** |
+| Chromium (mobile, Pixel 7) | 93 tests, passed | **PASS** |
+| WebKit (Desktop Safari) | 93 tests, passed | **PASS** |
+| Firefox (Desktop Firefox) | 93 tests, passed | **PASS on Linux** |
+
+Each engine runs the same 93 tests. The two CI jobs differ in how many engines they cover, not
+in what they check: `build` runs the two Chromium projects, `cross-browser` runs all four.
 
 ```
-$ PW_ENGINES=all npx playwright test
-  91 failed
-   8 skipped
- 273 passed (5.4m)
+$ npx playwright test                       # local, Chromium + mobile Chromium
+  182 passed 4 skipped 0 failed (2.7m)       # 4 skips are the OQ_LIVE_DOCS gate
 
-$ PW_ENGINES=all npx playwright test --project=webkit
-  2 skipped
-  91 passed (1.8m)
+$ PW_ENGINES=all npx playwright test        # CI build job
+  182 passed
+    4 skipped
+    0 failed
+
+$ PW_ENGINES=all npx playwright test        # CI cross-browser job
+  364 passed
+    8 skipped
+    0 failed (6.5m)
 ```
 
-**Firefox cannot launch in this environment.** The failure is at browser startup, not at any
-assertion:
+Run [42320823948](https://github.com/Oqthara/Oqthara.github.io/actions/runs/42320823948)
+concluded **success** for both jobs. The `cross-browser` job runs on `ubuntu-latest`, installs
+Chromium, Firefox, and WebKit with `npx playwright install --with-deps`, and publishes nothing.
+
+**Firefox is verified, but only on Linux.** This is worth stating precisely, because the earlier
+draft of this report recorded Firefox as unlaunchable and that conclusion was wrong as a general
+statement — right for this machine, wrong for the browser.
+
+On macOS in this environment the browser never starts. The failure is at process launch, before
+any assertion:
 
 ```
 <launching> .../firefox-1572/firefox/Nightly.app/Contents/MacOS/firefox -no-remote -headless
@@ -426,14 +575,18 @@ assertion:
 Error: browserType.launch: Failed to launch the browser process.
 ```
 
-This was confirmed **outside Playwright entirely** — the binary fails identically when invoked
-directly with `--screenshot`, and `npx playwright install firefox` does not change it. The
-binary is native `arm64` and the profile directory is created, so this is the Firefox build on
-this host, not the suite configuration.
+This was confirmed outside Playwright — the binary fails identically when invoked directly with
+`--screenshot` — and `npx playwright install firefox` does not change it. The binary is native
+`arm64` and the profile directory is created, so the culprit is the Firefox build on this host.
 
-**Next action:** run `npx playwright install --with-deps firefox` on a Linux host (or in CI,
-which installs only Chromium today) and re-run `PW_ENGINES=all npx playwright test`. Firefox
-stays **NOT VERIFIED** until that produces a pass.
+On GitHub's `ubuntu-latest` image, with a Firefox installed by Playwright's own dependency step,
+all 93 tests pass with zero failures. The suite does not need adjusting for Firefox; this
+machine cannot run it. Anyone re-running the suite locally on macOS should expect this launcher
+error and treat it as environmental, not as a regression.
+
+The macOS status stays qualified on purpose. Reporting "Firefox passes" from the Linux run alone
+would overstate what was checked, and reporting Chromium's result as Firefox coverage would be
+dishonest. The defensible claim: **Firefox 93/93 on Linux CI; not runnable on macOS here.**
 
 **Real assistive technology was not exercised.** NVDA, JAWS, and VoiceOver were **NOT
 VERIFIED** — no such test was performed. Automated auditing is not a substitute. Next action:
@@ -453,28 +606,30 @@ under test, not a stale tree.
 
 | # | Command | Result |
 |---|---|---|
-| 1 | `npm run build` | exit 0, 11 HTML files emitted |
+| 1 | `npm run build` | exit 0, 10 routes + 404 prerendered |
 | 2 | `node verify.mjs` | exit 0 |
-| 3 | `npx html-validate "_site/**/*.html"` | exit 0, no findings |
-| 4 | `npm test` | **283 tests, 279 pass, 0 fail, 4 skipped** |
+| 3 | `npx html-validate "_site/*.html"` | exit 0, no findings |
+| 4 | `npm test` | **289 tests, 285 pass, 0 fail, 4 skipped** |
 | 5 | `npx playwright test` (default, Chromium + mobile) | **182 passed, 4 skipped, 0 failed** |
-| 6 | `PW_ENGINES=all npx playwright test` | **273 passed, 91 failed (Firefox launch), 8 skipped** |
-| 7 | `npx playwright test e2e/a11y.spec.js` | **54 passed** |
+| 6 | `PW_ENGINES=all npx playwright test` (CI, four projects) | **364 passed, 8 skipped, 0 failed (6.5m)** |
+| 7 | `npx playwright test e2e/a11y.spec.js` | **54 passed** (both themes, 8 routes) |
 | 8 | `npm run test:live` | **4 pass, 0 fail, 0 skipped** |
 | 9 | `npm run screenshots` | 29 captured, all `ok` |
 | 10 | `npm run audit:visual` | **57/57 checks passed** |
 | 11 | `actionlint` | **exit 0** |
 | 12 | `npm audit` | 19 total: 0 critical, 4 high, 15 moderate |
-| 13 | `npx playwright install firefox` | completed; launch still fails (see §12) |
+| 13 | `npx playwright install --with-deps firefox` | installs; launches on Linux, fails on macOS (see §12) |
 
-**CI.** `Pages` run **`42294840427`** — **success** on `8fbcb0f`, 4 m 4 s. Every run after it has
-either passed (**`42307130559`**, **`42306466545`**, **`42302214948`**, **`42301674528`**) or been
-cancelled by concurrency because a newer push superseded it. Earlier `Pages` failures
-(**`42261157735`** on `425ce0f`, **`42273100282`** on `e77d688`) share one cause,
-`firebase-tools no longer supports Java version before 21`, fixed once in `4cb37b7`. Three
-`alpha-release-sync` runs also failed before `4879677` and `58af3b6` corrected that workflow.
-Run `42301674528`'s log confirms `reading-modes.spec.js` executed, **182 passed / 4 skipped**
-for browser tests, and live source tests **0 skipped**.
+**CI.** `Pages` run **`42320823948`** concluded **success** on `770ac82`: `Build the static
+site` passed, `Cross-browser suite` passed, and `Deploy to GitHub Pages` was skipped, as it is
+for every non-`main` branch. The four engines were confirmed inside that run —
+`chromium`, `mobile-chromium`, `firefox`, and `webkit` each report **93 tests, 0 failures**.
+
+Runs `42319837893`, `42319080680`, and `42317021081` were the three iterations that built the
+cross-browser job: the first proved Firefox passes on Linux while Chromium was still missing,
+the second proved Chromium and Firefox together while WebKit was missing, and the third came
+within one timeout of green. Every run after `42320823948` has either passed or been cancelled
+by concurrency because a newer push superseded it.
 
 **The 8 skips are intentional and annotated.** They are exactly two tests
 (`live docs index count equals the repository tree`, `live alpha.1 and alpha.2 both render the
@@ -486,11 +641,12 @@ and passes 4/4. They are not silent failures.
 (verified with `gzip -c | wc -c`), against 1,286,859 / 425,225 at baseline — a real reduction
 from removing a duplicated `refractor` dependency, not a measurement artefact.
 
-**Scaling caveat on command 5.** The Chromium-only figure was 182 passed, because the default
-configuration runs two Chromium-based projects. `PW_ENGINES=all` runs four (Chromium, Firefox,
-WebKit, mobile Chromium). Earlier drafts of this report quoted "0 failed" for the matrix run;
-that was a truncated-tail read of the summary and is **corrected here** — the matrix run has 91
-failures, all Firefox launch failures.
+**Earlier matrix readings were wrong in both directions and are corrected here.** One draft
+quoted "0 failed" for `PW_ENGINES=all` from a truncated log tail; the truth at that point was
+91 Firefox launch failures. A later draft then carried "Firefox NOT VERIFIED" forward after
+Linux CI had already passed Firefox 93/93. Both errors had the same cause: reading a summary
+line instead of the per-engine tally. The counts above come from counting the
+`[chromium]`/`[firefox]`/`[webkit]` project tags in the run log.
 
 ---
 
@@ -542,16 +698,18 @@ path it will take is now the narrower one — but it has not been taken.
 | First production Firestore write | **BLOCKED** | Complete §14 items 1–7, present the plan, obtain maintainer authorization |
 | CSP and security response headers | **BLOCKED** | GitHub Pages serves fixed headers with no `_headers` support; requires a host that allows header configuration |
 | Firebase App Check enforcement | **BLOCKED** | Requires console authorization not granted to this work; prepared but not enforced |
-| Firefox verification | **BLOCKED** | `npx playwright install --with-deps firefox` on a host that permits it, then `PW_ENGINES=all` |
+| Firefox verification | **PASS on Linux, blocked on macOS** | 93/93 in CI run `42320823948`; macOS launcher fails before any assertion (§12) |
 | Real screen-reader pass | **NOT VERIFIED** | Manual NVDA/JAWS/VoiceOver run |
+| Aesthetic review of the screenshots | **NOT VERIFIED** | A person looks at `artifacts/visual-audit/*.png`; this report's visual claims are measured, not seen (§10) |
 | PR merge | **BLOCKED** | Explicit maintainer authorization; not merged here |
 
 ---
 
 ## 17. Known risks and limitations
 
-1. **Firefox does not run here.** Proven unlaunchable outside Playwright, so Firefox coverage
-   is genuinely absent rather than merely unmeasured. §12.
+1. **Firefox does not run on this macOS host.** Proven unlaunchable outside Playwright, so the
+   coverage comes from `ubuntu-latest` CI instead. Firefox is verified, but only there; a
+   developer re-running the suite locally on macOS will still see the launcher error. §12.
 2. **Four high `npm audit` advisories remain**, transitive through the Firebase client. Assessed
    unreachable from the shipped bundle; the only npm-offered fix is a downgrade.
 3. **Visual screenshot directories are now separate, but ordering still matters for review.**
@@ -562,10 +720,15 @@ path it will take is now the narrower one — but it has not been taken.
 4. **Production sync is unverified.** The write path has never touched production.
 5. **Real assistive technology was not exercised**, and neither were forced-colors, print, or a
    reduced-motion-enabled session.
-6. **CSP cannot ship on GitHub Pages.** The site remains without a content security policy.
-7. **A regression was introduced mid-task and caught by CI** — pinning away a critical advisory
+6. **The screenshots were measured, not seen.** The image-viewing tool in this environment
+   returned success without delivering pixels, so every visual claim in §10 comes from computed
+   styles, browser geometry, character counts, and programmatic overflow checks. Those catch
+   regressions well and aesthetic problems not at all. Nobody has judged whether the homepage
+   *looks* balanced. §10.
+7. **CSP cannot ship on GitHub Pages.** The site remains without a content security policy.
+8. **A regression was introduced mid-task and caught by CI** — pinning away a critical advisory
    pulled in a `firebase-tools` release needing JDK 21. It is named here rather than omitted.
-8. **A force-with-lease push occurred earlier in this work.** It is recorded as a process
+9. **A force-with-lease push occurred earlier in this work.** It is recorded as a process
    deviation and was not repeated; no branch was force-pushed to reach this HEAD.
 
 ---
@@ -586,22 +749,29 @@ All 19 named requirements from the acceptance criteria, plus one deliberate twen
 | 8 | Release discovery is paginated | **PASS** | `listAllReleases`, 20×100, fails closed (`e77d688`); falsified |
 | 9 | All current review findings dispositioned | **PASS** | 10/10 threads resolved, 0 open (§4) |
 | 10 | Release/documentation consistency model implemented | **PASS** | Content carries source ref, commit SHA, and per-document hash (`d8c60f5`) |
-| 11 | Significant, distinctive visual redesign completed | **PASS** | Footer, section bands, featured cards, retuned palette (§10); 29 committed screenshots |
-| 12 | Light and dark themes validated | **PASS** | `e2e/theme.spec.js` per route; both pass the AA audit |
+| 11 | Significant, distinctive visual redesign completed | **PASS** | Footer, section bands, featured cards, retuned palette, implemented type/space scale consumed by every page (§10); 29 committed screenshots |
+| 12 | Light and dark themes validated | **PASS** | `e2e/theme.spec.js` per route; both pass the AA audit; 100 element geometry comparisons across themes with 0 differences (§10) |
 | 13 | Firestore authorization remains secure | **PASS** | `firestore.rules` read-only for clients, `allow write: if false`; no admin credential under `src/` |
 | 14 | Secret exposure assessment completed | **PASS** | 50-commit history scan, no credential found; `.gitignore` contract test |
 | 15 | Dependency advisories assessed | **PASS** | 19 advisories triaged: 0 critical, 4 high accepted as unreachable (§9) |
-| 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit pass; 54 a11y checks; Firefox added to config |
-| 17 | Regression tests pass | **PASS** | 283 unit/integration (279 pass, 4 skip); 182 Playwright; 54 a11y; 4 live |
+| 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit, Firefox each 93/93 in run `42320823948`; 54 a11y checks |
+| 17 | Regression tests pass | **PASS** | 289 unit/integration (285 pass, 4 skip); 182 Playwright locally, 364 in CI across four engines; 54 a11y; 4 live |
 | 18 | Production write verified after authorization | **NOT VERIFIED** | Dry run `42252163291` wrote nothing; no authorization requested or granted (§14) |
-| 19 | Compiler repository untouched | **PASS** | No commit in this branch touches the compiler repository; all 75 files are under this repo |
-| 20 | Firefox browser behaviour verified | **NOT VERIFIED** | 91 launch failures, reproduced outside Playwright (§12) |
+| 19 | Compiler repository untouched | **PASS** | No commit in this branch touches the compiler repository; all 76 files are under this repo |
+| 20 | Firefox browser behaviour verified | **PASS, Linux only** | 93/93 in run `42320823948`; macOS launcher failure reproduced outside Playwright (§12) |
+| 21 | Typographic scale implemented and consumed | **PASS** | Twelve semantic roles resolving to a 1.2 modular scale; sizes 76/28/22/18/13px measured live; role test + raw-value test (§10) |
+| 22 | Spacing scale implemented and consumed | **PASS** | Twelve-rung 4px ladder plus semantic tokens; one off-grid value proven to be a `clamp()` mid-point (§10) |
+| 23 | Design tokens genuinely used, not merely declared | **PASS** | Dead tokens 24 → 0; "every declared token is consumed" test, proven falsifiable by orphaning one |
 
 **Blocked / not verified, with exact next actions:**
 
 - **#18** — complete the seven §14 pre-write items, present the plan, obtain authorization,
   then execute and independently read back.
-- **#20** — install Firefox on a host that permits it and re-run `PW_ENGINES=all`.
+- **#20** — resolved for Linux. A macOS pass would need a working Firefox build for this host;
+  nothing in the suite is at fault, and the status should not be upgraded to an unqualified
+  "verified" on the strength of one platform.
 
-Rows 1–19 are the nineteen named requirements. Row 20 is added deliberately so the Firefox gap
-is a scored line in the matrix rather than a footnote.
+Rows 1–19 are the original nineteen requirements. Rows 20–23 were added deliberately: Firefox
+coverage is a scored line rather than a footnote, and the typography and spacing system gets
+graded on whether it is *implemented and consumed* rather than merely defined — which is exactly
+the failure the token system had before this pass.
