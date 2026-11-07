@@ -12,10 +12,11 @@
 // Safety
 // ------
 // Every call is a read-only Firestore operation (`GET` on a document, `POST …:listCollectionIds`
-// to enumerate collections). There is no write path: no `PATCH`, no document `POST`, no `DELETE`
-// and no batch object is ever created. `listCollectionIds` is a POST because it takes a request
-// body, not because it mutates; it is a read method. A defect in this file can produce a wrong
-// report, not a mutated database.
+// to enumerate collections). The guarantee is not that every request uses the GET verb — it is
+// that this client exposes no mutation method and performs no document write. There is no write
+// path: no `PATCH`, no document `POST`, no `DELETE` and no batch object is ever created.
+// `listCollectionIds` is a POST because it carries a request body, not because it mutates; it is
+// a read method. A defect in this file can produce a wrong report, not a mutated database.
 //
 // Credentials
 // -----------
@@ -167,7 +168,8 @@ export function bytesOf(content) {
  *
  * Deliberately has no `write`, `set`, `commit` or `delete` method. The "read-only" claim in the
  * header is enforced by the shape of this object: the only operations it can perform are the two
- * read methods below, one of which happens to use HTTP POST.
+ * read methods below, one of which uses HTTP POST because `listCollectionIds` carries a body.
+ * The guarantee is the absence of mutation methods and document writes, not the absence of POST.
  */
 export function readOnlyClient({ token, project = PROJECT, fetchImpl = globalThis.fetch }) {
   const base = `${FIRESTORE}/projects/${project}/databases/(default)/documents`;
@@ -359,6 +361,92 @@ export function compareSyncRecord(syncFields, contentFields, collection = "") {
 }
 
 // ---------------------------------------------------------------------------
+// Release-watch state
+// ---------------------------------------------------------------------------
+
+/** The document `scripts/check-upstream-release.mjs` owns and only it writes. */
+export const RELEASE_WATCH_DOC_ID = "upstream-release";
+
+const SHA40 = /^[0-9a-f]{40}$/;
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+
+/**
+ * Validates `sync/upstream-release` against the schema `buildStateUpdate()` actually writes.
+ *
+ * This document is not mirrored-content bookkeeping: it is the Alpha release watcher's own state
+ * record, and its schema is deliberately different — it has no `collection` and no `path`,
+ * because it describes a release rather than a document. Auditing it with the content-bookkeeping
+ * validator reported a permanently INVALID record that was in fact correct, and that false alarm
+ * would have justified "repairing" a healthy production document.
+ *
+ * Both shapes `buildStateUpdate()` can produce are accepted, and they are distinguished rather
+ * than merged: a successful sync keeps the pointer fields (`tag`, `commitSha`, `releaseHash`, ...)
+ * plus `status: "ok"`, while a failed attempt writes only `status: "failed"`, `lastCheckedAt`, and
+ * `lastAttempt`. The pointer is preserved across a failure precisely so the last known good
+ * release is not lost, so a failed record may legitimately still carry those fields from an
+ * earlier success.
+ */
+export function auditReleaseWatch(fields) {
+  const problems = [];
+  if (!fields || typeof fields !== "object") {
+    return { present: false, valid: false, status: null, problems: ["sync/upstream-release does not exist"] };
+  }
+
+  const status = fields.status ?? null;
+  if (status !== "ok" && status !== "failed") {
+    problems.push(`status is ${JSON.stringify(status)}, expected "ok" or "failed"`);
+  }
+
+  // `lastAttempt` is written on every outcome, so its absence means the record was not produced
+  // by buildStateUpdate() at all.
+  const attempt = fields.lastAttempt;
+  if (!attempt || typeof attempt !== "object") {
+    problems.push("lastAttempt is missing, so this record was not written by buildStateUpdate()");
+  } else {
+    if (!isNonEmptyString(attempt.tag)) problems.push("lastAttempt.tag is missing");
+    if (!SHA40.test(String(attempt.commitSha ?? ""))) problems.push(`lastAttempt.commitSha is not a 40-character hex SHA: ${JSON.stringify(attempt.commitSha)}`);
+    if (attempt.result !== "ok" && attempt.result !== "failed") problems.push(`lastAttempt.result is ${JSON.stringify(attempt.result)}, expected "ok" or "failed"`);
+    if (typeof attempt.detail !== "string") problems.push("lastAttempt.detail is not a string");
+    if (attempt.detail && attempt.detail.length > 400) problems.push(`lastAttempt.detail is ${attempt.detail.length} characters, longer than the 400 it is truncated to`);
+    if (!ISO_UTC.test(String(attempt.finishedAt ?? ""))) problems.push(`lastAttempt.finishedAt is not an ISO-8601 UTC timestamp: ${JSON.stringify(attempt.finishedAt)}`);
+  }
+
+  if (!ISO_UTC.test(String(fields.lastCheckedAt ?? ""))) {
+    problems.push(`lastCheckedAt is not an ISO-8601 UTC timestamp: ${JSON.stringify(fields.lastCheckedAt)}`);
+  }
+
+  // The successful-sync pointer. A failed-only record has none and is still valid, so these are
+  // required only when the record claims a successful state.
+  const hasPointer = isNonEmptyString(fields.tag) || isNonEmptyString(fields.commitSha);
+  if (status === "ok" && !hasPointer) {
+    problems.push("status is \"ok\" but the record carries no tag/commitSha pointer");
+  }
+  if (hasPointer) {
+    if (!isNonEmptyString(fields.tag)) problems.push("tag is missing while a pointer is present");
+    if (!SHA40.test(String(fields.commitSha ?? ""))) problems.push(`commitSha is not a 40-character hex SHA: ${JSON.stringify(fields.commitSha)}`);
+    if (!ISO_UTC.test(String(fields.syncedAt ?? ""))) problems.push(`syncedAt is not an ISO-8601 UTC timestamp: ${JSON.stringify(fields.syncedAt)}`);
+    if (fields.prerelease !== undefined && typeof fields.prerelease !== "boolean") problems.push(`prerelease is ${typeof fields.prerelease}, expected a boolean`);
+    if (fields.releaseId !== undefined && !Number.isFinite(fields.releaseId)) problems.push(`releaseId is ${JSON.stringify(fields.releaseId)}, expected a number`);
+  }
+
+  return {
+    present: true,
+    valid: problems.length === 0,
+    status,
+    // Reported so the final report can name the last good release and the last attempt outcome
+    // without re-reading production.
+    tag: fields.tag ?? null,
+    commitSha: fields.commitSha ?? null,
+    syncedAt: fields.syncedAt ?? null,
+    lastCheckedAt: fields.lastCheckedAt ?? null,
+    lastAttempt: attempt && typeof attempt === "object"
+      ? { tag: attempt.tag ?? null, result: attempt.result ?? null, finishedAt: attempt.finishedAt ?? null, detail: attempt.detail ?? "" }
+      : null,
+    problems,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Audit
 // ---------------------------------------------------------------------------
 
@@ -476,6 +564,10 @@ export async function auditProduction({ client, desired, commit, generatedAt }) 
   const syncDispositions = [];
   for (const [id, fields] of syncRecords) {
     if (id === COLLECTION_CATALOG_ID) continue;
+    // The release watcher owns this document and gives it a different schema. Auditing it with
+    // the content validator below reported a permanently INVALID record that was in fact
+    // correct; it is validated separately against buildStateUpdate().
+    if (id === RELEASE_WATCH_DOC_ID) continue;
     const collection = fields?.[FIELDS.collection] ?? "";
     const path = fields?.[FIELDS.path] ?? "";
     if (!collection || !path) {
@@ -513,7 +605,13 @@ export async function auditProduction({ client, desired, commit, generatedAt }) 
     countsByCollection,
     tally,
     dispositions,
-    sync: { records: syncRecords.size, dispositions: syncDispositions.filter((entry) => entry.differences?.length) },
+    sync: {
+      // The release-watch record is counted here for the total but validated in `releaseWatch`,
+      // so a reader is not left wondering whether it was silently skipped.
+      records: syncRecords.size,
+      dispositions: syncDispositions.filter((entry) => entry.differences?.length),
+    },
+    releaseWatch: auditReleaseWatch(syncRecords.get(RELEASE_WATCH_DOC_ID)),
     catalog: {
       sync: describeCatalog(syncCatalog),
       metadata: describeCatalog(metadataCatalog),
@@ -607,6 +705,19 @@ export function formatReport(report) {
   for (const entry of badSync.slice(0, 20)) {
     lines.push(`  ${entry.id}`);
     for (const difference of entry.differences) lines.push(`    - ${difference}`);
+  }
+  // Reported apart from content bookkeeping because it is a different schema describing a
+  // different thing: the last release the watcher saw, not a mirrored document.
+  const watch = report.releaseWatch;
+  if (!watch.present) {
+    lines.push("Release watch: absent (the Alpha release watcher has not recorded state)");
+  } else {
+    const pointer = watch.tag ? `${watch.tag} at ${watch.commitSha.slice(0, 7)} synced ${watch.syncedAt}` : "no successful release recorded";
+    lines.push(`Release watch: ${watch.valid ? "valid" : "INVALID"} (status ${JSON.stringify(watch.status)}; ${pointer})`);
+    if (watch.lastAttempt) {
+      lines.push(`  last attempt: ${watch.lastAttempt.result} for ${watch.lastAttempt.tag} at ${watch.lastAttempt.finishedAt}${watch.lastAttempt.detail ? ` — ${watch.lastAttempt.detail}` : ""}`);
+    }
+    for (const problem of watch.problems) lines.push(`  - ${problem}`);
   }
   lines.push("");
   lines.push(`Catalogue sync: ${report.catalog.sync.exists ? `${report.catalog.sync.sourceCommit?.slice(0, 7) || "(no commit)"} at ${report.catalog.sync.updatedAt || "(no time)"}` : "absent"}`);

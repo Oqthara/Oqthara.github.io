@@ -397,3 +397,150 @@ test("the report states whether a client could read the catalogue", async () => 
   const rendered = formatReport(report);
   assert.match(rendered, /Catalogue readable by a client: NO/);
 });
+
+// ---------------------------------------------------------------------------
+// Release-watch state
+// ---------------------------------------------------------------------------
+
+// `sync/upstream-release` is written by `scripts/check-upstream-release.mjs`, not by the content
+// sync, and it has no `collection` or `path` because it describes a release rather than a
+// document. Auditing it with the content-bookkeeping validator reported a permanent INVALID
+// record that was in fact correct. These cases pin the real schema so that false alarm cannot
+// return, and so a genuinely broken record is still caught.
+
+const SYNCED_AT = "2026-11-06T12:00:00.000Z";
+const SHA = "a".repeat(40);
+
+function successfulState() {
+  return {
+    tag: "v0.1.0-alpha.2",
+    commitSha: SHA,
+    releaseHash: "49d578a36ff2",
+    releaseId: 123456,
+    publishedAt: "2026-11-05T00:00:00Z",
+    prerelease: true,
+    url: "https://github.com/Oqthara/oqthara/releases/tag/v0.1.0-alpha.2",
+    syncedAt: SYNCED_AT,
+    lastCheckedAt: SYNCED_AT,
+    lastAttempt: { tag: "v0.1.0-alpha.2", commitSha: SHA, result: "ok", detail: "", finishedAt: SYNCED_AT },
+    status: "ok",
+  };
+}
+
+function failedState() {
+  return {
+    status: "failed",
+    lastCheckedAt: SYNCED_AT,
+    lastAttempt: {
+      tag: "v0.1.0-alpha.2",
+      commitSha: SHA,
+      result: "failed",
+      detail: "sync exited 4",
+      finishedAt: SYNCED_AT,
+    },
+  };
+}
+
+test("a successful release-watch record is valid without collection or path", async () => {
+  const { auditReleaseWatch } = await import("../scripts/audit-production.mjs");
+  const result = auditReleaseWatch(successfulState());
+
+  assert.equal(result.present, true);
+  assert.equal(result.valid, true, result.problems.join("; "));
+  assert.deepEqual(result.problems, []);
+  assert.equal(result.tag, "v0.1.0-alpha.2");
+  assert.equal(result.commitSha, SHA);
+  assert.equal(result.lastAttempt.result, "ok");
+});
+
+test("a failed release-watch record is valid and keeps the failure detail", async () => {
+  const { auditReleaseWatch } = await import("../scripts/audit-production.mjs");
+  const result = auditReleaseWatch(failedState());
+
+  assert.equal(result.valid, true, result.problems.join("; "));
+  assert.equal(result.status, "failed");
+  assert.equal(result.tag, null);
+  assert.equal(result.lastAttempt.result, "failed");
+  assert.equal(result.lastAttempt.detail, "sync exited 4");
+});
+
+test("a failed record that still carries the last good pointer stays valid", async () => {
+  const { auditReleaseWatch } = await import("../scripts/audit-production.mjs");
+  // buildStateUpdate merges with `{ merge: true }`, so the pointer from an earlier success
+  // survives a later failure. That is deliberate — losing it would lose the last known good
+  // release — and must not be reported as a contradiction.
+  const result = auditReleaseWatch({ ...successfulState(), status: "failed", lastAttempt: failedState().lastAttempt });
+
+  assert.equal(result.valid, true, result.problems.join("; "));
+  assert.equal(result.tag, "v0.1.0-alpha.2");
+});
+
+test("an absent release-watch record is reported as absent, not as invalid", async () => {
+  const { auditReleaseWatch } = await import("../scripts/audit-production.mjs");
+  assert.deepEqual(auditReleaseWatch(undefined), {
+    present: false,
+    valid: false,
+    status: null,
+    problems: ["sync/upstream-release does not exist"],
+  });
+});
+
+test("a record with no lastAttempt was not written by buildStateUpdate and is invalid", async () => {
+  const { auditReleaseWatch } = await import("../scripts/audit-production.mjs");
+  const result = auditReleaseWatch({ status: "ok", tag: "v1", commitSha: SHA, syncedAt: SYNCED_AT, lastCheckedAt: SYNCED_AT });
+  assert.equal(result.valid, false);
+  assert.match(result.problems.join(" "), /lastAttempt is missing/);
+});
+
+test("a bad SHA, unknown status, or non-UTC timestamp is caught", async () => {
+  const { auditReleaseWatch } = await import("../scripts/audit-production.mjs");
+
+  const badSha = auditReleaseWatch({ ...successfulState(), commitSha: "not-a-sha" });
+  assert.equal(badSha.valid, false);
+  assert.match(badSha.problems.join(" "), /commitSha is not a 40-character hex SHA/);
+
+  const badStatus = auditReleaseWatch({ ...successfulState(), status: "synced" });
+  assert.equal(badStatus.valid, false);
+  assert.match(badStatus.problems.join(" "), /expected "ok" or "failed"/);
+
+  const badTime = auditReleaseWatch({ ...successfulState(), syncedAt: "2026-11-06 12:00:00" });
+  assert.equal(badTime.valid, false);
+  assert.match(badTime.problems.join(" "), /syncedAt is not an ISO-8601 UTC timestamp/);
+
+  const badResult = auditReleaseWatch({ ...successfulState(), lastAttempt: { ...successfulState().lastAttempt, result: "maybe" } });
+  assert.equal(badResult.valid, false);
+  assert.match(badResult.problems.join(" "), /lastAttempt.result is "maybe"/);
+});
+
+test("status ok with no pointer is a contradiction", async () => {
+  const { auditReleaseWatch } = await import("../scripts/audit-production.mjs");
+  const state = successfulState();
+  delete state.tag;
+  delete state.commitSha;
+  const result = auditReleaseWatch(state);
+  assert.equal(result.valid, false);
+  assert.match(result.problems.join(" "), /no tag\/commitSha pointer/);
+});
+
+test("the report separates the release watch from content bookkeeping", async () => {
+  const { auditReleaseWatch, formatReport } = await import("../scripts/audit-production.mjs");
+  const report = {
+    generatedAt: NOW,
+    project: "oqthara",
+    canonical: { commit: SHA, shortCommit: "aaaaaaa", records: 0 },
+    collections: [COLLECTIONS.documentation],
+    unexpectedCollections: [],
+    countsByCollection: {},
+    tally: {},
+    dispositions: [],
+    sync: { records: 1, dispositions: [] },
+    releaseWatch: auditReleaseWatch(successfulState()),
+    catalog: { sync: { exists: false }, metadata: { exists: false }, contract: { readable: false, problems: [] } },
+    metadata: { documents: [] },
+  };
+  const text = formatReport(report);
+
+  assert.match(text, /Bookkeeping records: 1, all consistent/);
+  assert.match(text, /Release watch: valid \(status "ok"; v0\.1\.0-alpha\.2 at aaaaaaa synced/);
+  assert.match(text, /last attempt: ok for v0\.1\.0-alpha\.2/);
+});
