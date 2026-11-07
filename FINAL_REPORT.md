@@ -1,6 +1,6 @@
 # Oqthara website — production readiness report
 
-Branch `feat/alpha-automation-and-hardening` at `c6434bc`. Baseline
+Branch `feat/alpha-automation-and-hardening` at `332ed84`. Baseline
 `3be0388e2d6bb41956c0c03482d2a40f847cc648` (`origin/main`). Pull request
 [#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) is **open and mergeable**.
 
@@ -702,13 +702,14 @@ under test, not a stale tree.
 | 13 | `npx playwright install --with-deps firefox` | installs; launches on Linux, fails on macOS (see §12) |
 | 14 | gate contract tests (`tests/workflow-contract.test.js`) | **7 tests, all pass**; un-gating any workflow fails them |
 
-**CI.** `Pages` run **`42330983084`** concluded **success** on `c6434bc`, the current tip:
-`Build the static site` passed, `Cross-browser suite` passed, and `Deploy to GitHub Pages` was
-skipped, as it is for every non-`main` branch. The four engines were confirmed inside that run —
-`chromium`, `mobile-chromium`, `firefox`, and `webkit` each report **93 tests, 0 failures**. The
-immediately preceding runs `42329827908` (`e4316ab`) and `42325998978` (`0b85925`) were also
-green, so the gate change and the documentation correction were each verified by CI rather than
-assumed.
+**CI.** `Pages` run **`42332279851`** concluded **success** on `332ed84`, the current tip:
+`Build the static site` passed, `Cross-browser suite` passed (364 tests across four engines), and
+`Deploy to GitHub Pages` was skipped, as it is for every non-`main` branch. The four engines were
+confirmed inside that run — `chromium`, `mobile-chromium`, `firefox`, and `webkit` each report
+**93 tests, 0 failures**. The immediately preceding runs `42330983084` (`c6434bc`),
+`42329827908` (`e4316ab`) and `42325998978` (`0b85925`) were also green, so the gate change, the
+production-write correction, the deployment-readiness section, the visual acceptance package and
+this handoff were each verified by CI rather than assumed.
 
 CI reports 296 unit tests with 283 passing and 13 skipped, against 292 passing and 4 skipped
 locally. The difference is the emulator and live-source suites, which those jobs do not start;
@@ -857,7 +858,7 @@ an activation variable.
 | 4 | Environment declared | **READY** — `github-pages` |
 | 5 | Post-deploy smoke test | **READY** — 11 routes, retries the root then fails closed |
 | 6 | No implicit production write on deploy | **READY** — no Firestore step in `pages.yml` |
-| 7 | CI green on the exact deploy commit | **PASS** — run `42330983084` on `c6434bc` |
+| 7 | CI green on the exact deploy commit | **PASS** — run `42330983084` on `c6434bc`; re-confirmed by `42332279851` on `332ed84` |
 | 8 | Human visual acceptance | **NOT VERIFIED** — see §10; nobody has looked at the screenshots |
 | 9 | Maintainer authorization to merge | **NOT GRANTED** — and deliberately not requested by this report |
 
@@ -952,3 +953,86 @@ graded on whether it is *implemented and consumed* rather than merely defined �
 the failure the token system had before this pass. Row 24 records the authorization boundary:
 whether merging this branch can write production. It is scored as a line of its own because that
 is the one property here whose failure is irreversible.
+
+---
+
+## 19. Handoff
+
+**This report ends without merging, without deploying, and without enabling a production write.**
+Everything below is a state a maintainer can verify, not an action taken on their behalf.
+
+### The one finding that changes how this is reviewed
+
+Everything else here was already reported. This was not:
+
+> **Production Firestore has already been written, by a workflow run no maintainer authorized.**
+> Run [`42221327714`](https://github.com/Oqthara/Oqthara.github.io/actions/runs/42221327714)
+> printed `service account key is present and well formed`, then `wrote 118 operations to
+> oqthara`. Two later runs read back `would write 0, skip 59 unchanged`. Production holds 59
+> mirrored records.
+
+Three documents in this branch previously said production had never been written and that the
+service-account secret was unconfigured. Those statements were false, and they were not merely
+out of date — a maintainer reading them would have concluded that a merge was safe when the write
+path had already fired and this branch's 15-minute cron would have kept firing it.
+
+The claims survived because the run was read by its **conclusion**. It is marked `failure`; it
+failed on the *next* step, when the rules deployment was refused with a 403. `failure` is not
+evidence that nothing was written. `wrote 118 operations` is.
+
+What changed as a result: every production-writing step in all three workflows now requires a
+repository variable to be the literal string `true`, both variables are unset, and seven contract
+tests pin that — including the negative case, which was checked by removing a guard and watching
+the suite fail.
+
+### State of the branch
+
+| property | value |
+| --- | --- |
+| Head | `332ed84` |
+| Commits ahead of `main` | 52 as of `332ed84` — the commit carrying this file adds a 53rd, which is why the count is pinned to a SHA and not to "now" |
+| Working tree | clean |
+| Mergeable | yes, per GitHub |
+| Latest CI on this head | `42332279851` — **success**; `Build the static site` success, `Cross-browser suite` success (364 passed, 4 engines), `Deploy to GitHub Pages` skipped |
+| Review threads | 10 resolved, 0 open |
+
+### Verdict matrix
+
+| Area | Verdict | Basis |
+| --- | --- | --- |
+| Typography scale implemented and consumed | **PASS** | 12 roles on a 1.2 scale; 122 tokens declared, 122 used, 0 orphans |
+| Spacing scale implemented and consumed | **PASS** | exact 4px ladder, no missing rung; one `clamp()` mid-point justified |
+| Applied across all routes, both themes | **PASS** | computed styles on 10 routes × 2 themes; 100 comparisons, 0 differences |
+| Responsive, no overflow | **PASS** | programmatic check at 1440/1024/768/390/320 |
+| Accessibility | **PASS** | 54 checks; three baseline AA violations → zero |
+| Unit, integration, emulator | **PASS** | 296 tests (292 pass, 4 skip); 18/18 rule assertions |
+| Browser suite | **PASS** | 182 local; 364 in CI across four engines |
+| Firefox | **PASS on Linux; NOT VERIFIED on macOS** | 93/93 on `ubuntu-latest`; macOS launcher fails before any assertion |
+| Screenshot collision fix | **PASS** | audit → `visual-audit-routes/`; committed set untouched by a run |
+| **Aesthetic quality** | **NOT VERIFIED** | **no human has looked at the screenshots** (§10) |
+| **Production sync verified by authorized write + independent read-back** | **NOT VERIFIED** | production was written without authorization; no authorized write exists (§14) |
+| **Firefox on this host** | **NOT VERIFIED** | launcher failure reproduced outside Playwright (§12) |
+| Deployment | **READY, not performed** | checklist in §15; deploy job skips on non-`main` |
+| Merging safely | **READY for maintainer decision** | writes gated; CI green; requires human visual acceptance first |
+
+### What a maintainer is being asked to do
+
+In this order, because the order matters:
+
+1. **Look at the screenshots.** `artifacts/visual-audit/`, indexed in §10 with eight questions.
+   Nothing in this report substitutes for that, and the report says so rather than implying
+   otherwise.
+2. **Decide about the unauthorized write.** Production already holds 59 records. Whether to
+   reconcile, republish, or leave them is a product decision, not an engineering one.
+3. **If production sync should run, enable it deliberately.** Set `OQTHARA_PRODUCTION_SYNC` (and
+   `OQTHARA_DEPLOY_FIRESTORE_RULES` if the rules change should ship) in repository settings, then
+   dispatch with `dry_run` first and read the plan before running it for real.
+4. **Merge when satisfied.** Merging no longer starts a write on its own.
+5. **Deploy.** The Pages job runs on merge to `main` and smoke-tests 11 routes afterwards.
+
+### What this report will not claim
+
+It will not claim the site looks good, that Firefox works on macOS, that production sync is
+verified, or that anything was deployed. Each of those has a row above marked **NOT VERIFIED**,
+and each will stay marked that way until evidence exists — because the failure mode that produced
+the corrections in this report was stating a plausible thing as though it had been checked.
