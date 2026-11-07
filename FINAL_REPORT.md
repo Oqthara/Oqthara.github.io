@@ -130,6 +130,8 @@ Oldest first, as GitHub orders them on the PR.
 | `f7a9c2d` | `docs` — record that production is unreadable, not merely unverified |
 | `bff6441` | `fix(site)` — give the tour page the documentation reading measure |
 | `6f2a3ee` | `fix(css)` — measure prose in pixels, not in `ch`, and cap the rail pages |
+| `9b2016a` | `fix(css)` — keep the inline gutter outside the reading measure |
+| `4ed134a` | `chore(visual)` — recapture the committed screenshots against the fixed build |
 
 Every commit is focused on one concern and was gated before the next was started. The table above
 is not a complete branch listing and should not be counted as one; use `git log`.
@@ -545,7 +547,7 @@ If any answer is "no", that is the finding. This report has no mechanism to have
 | Claim | Basis | Status |
 | --- | --- | --- |
 | No horizontal overflow, 10 routes × 2 themes × 4 viewports | programmatic, from real geometry | **PASS** |
-| Prose measure ≤ 69 characters at 1024–1440px | whole-word Range bucketing, 8 pages × 6 viewports | **PASS** |
+| Prose never exceeds its shell, and reads at one measure | whole-word Range bucketing, 8 routes + 404 × 3 viewports; max line 568px against a 568px shell | **PASS** |
 | Body 18px/31, code 13px/22 | computed styles | **PASS** |
 | Light and dark identical in geometry | 100 element comparisons, 0 differences | **PASS** |
 | Contrast, focus, tap targets | `npm run audit:visual`, 57/57 | **PASS** |
@@ -635,7 +637,7 @@ to be right first, not the rail: the page is now capped at
 first attempt at 34rem (544px) was wrong and was reverted: it regressed documentation from its
 already-correct 568px and would have opened the hole wider.
 
-**Guard tests.** Eight contract tests in `tests/site.test.js` keep this from drifting back:
+**Guard tests.** Nine contract tests in `tests/site.test.js` keep this from drifting back:
 
 | Test | Fails when |
 |---|---|
@@ -647,6 +649,7 @@ already-correct 568px and would have opened the hole wider.
 | the code block size is not overruled by the inline code ratio | the 12px regression returns |
 | every prose shell carries the reading measure | a hand-built page emits `doc-article`/`tour-body` without `doc` |
 | the reading measures are absolute, not font-relative | a `--measure-*` token returns to `ch`, `ex`, or `em` |
+| a measured shell adds its inline gutter back instead of eating into it | a padded shell caps at a bare measure, or subtracts the gutter (`.content-narrow`) |
 
 Three of these were proven falsifiable by planting a regression and confirming the intended test
 failed: a raw `font-size: 13px` on `code`, a deleted `--fg-muted` from the light block, and an
@@ -661,9 +664,28 @@ pattern, `/(ch|ex|em)$/`, matched the `em` suffix of `rem`, so it would have rej
 value. It reads `/(?:^|[\d.])(ch|ex|em)$/` now. This is worth recording because a guard test that
 fails on correct input invites the fix of loosening it until it guards nothing.
 
-An earlier draft of this section said seven tests. Six token tests existed then, and eight exist
+An earlier draft of this section said seven tests. Six token tests existed then, and nine exist
 now; the count was wrong, not the tests, and the fix is to correct it here rather than pad the
 suite to match a sentence.
+
+The ninth guard needed two attempts and the failed one is the more instructive. It was written to
+catch `.content-narrow`, where `max-width` counted the inline gutter into the box: with
+`box-sizing: border-box` a 568px shell less two 48px gutters rendered 472px of prose on
+`/status.html` and the 404 page, against the 568px every other page reads at. The first version
+looked for a rule declaring both `padding-inline` and `max-width: var(--measure-*)`, and it passed
+against the defect — twice over. `.content-narrow` never declares padding (the gutter arrives from
+`.content`, a second class on the same element), and both the fix and the defect are `calc()`, which
+the pattern `max-width\s*:\s*var\(` does not match at all. A guard that classifies neither the
+offender nor the fix is not a guard.
+
+The shipped version resolves the composed class list per element from the rendered markup, collects
+the gutters those classes impose, and requires the arithmetic to add `2 * var(--pad-inline)` back.
+It was then falsified for real: with the subtraction planted it fails naming
+`status.html: .content-narrow .content` and `404.html: .content-narrow .content`, and with the fix
+restored it passes. A geometric half lives in `e2e/reading-modes.spec.js`, which measures the
+`.content-narrow` box in the browser and asserts the prose width equals `--measure-prose`; against
+the subtraction it reports a 376px reading against a 568px measure. Neither test alone catches the
+original defect, which is why both exist.
 
 One trap is worth recording: the stylesheet quotes token names inside explanatory comments, so a
 naive scan reads those as declarations. The light block's contrast-ratio comment contains
@@ -709,27 +731,67 @@ that were correct did not move; `--measure-lead` is `32rem` and `--measure-capti
 giving its own role an explicit cap; `.page-head .lead` gained `max-width: var(--measure-lead)` so
 the standfirst stops inheriting the title's measure.
 
-Re-swept with the same method, eight pages × six viewports:
+Re-swept with the same method at 1440px, eight static routes plus the 404 document:
 
 ```
-page            longest line, all text        note
-/                        67                  —
-/philosophy.html         69                  —
-/tour.html               68                  —
-/docs.html               64                  —
-/stdlib.html             67                  —
-/examples.html           62                  —
-/changelog.html          73                  list prose at 544px inside a 568px .doc
-/status.html             76                  unbreakable identifier (see below)
+page            longest line             note
+/                        66              hero lead at 512px
+/philosophy.html         68              —
+/tour.html               67              —
+/docs.html               63              index prose at 512px
+/stdlib.html             66              —
+/examples.html           61              index prose at 512px
+/changelog.html          72              list prose at 544px inside a 568px .doc
+/status.html             75              17 lines over 70; see below
+/404.html                80              2 lines over 70; see below
 ```
 
-The `/status.html` 76 is not a measure failure. It is a single 75-character machine identifier,
-`BytecodeCompilerTest.everyCompilableConformanceProgramMatchesTheInterp`, which cannot break on
-whitespace; `overflow-wrap: break-word` splits it and `scrollWidth == clientWidth` at 1920, 390 and
-320px, so nothing overflows. The `/changelog.html` 73 is list prose at 544px. Wrapped prose
-therefore tops out at **69 characters**, which is inside the 45–75 character band long-form
-guidance recommends, and it falls to 46 at 390px and 42 at 320px where the viewport, not the token,
-sets the limit.
+Three pages read above 70, and all three need the method applied a second time, because the
+character count alone invites the wrong conclusion. In every case the lines are **full lines, not
+overruns**: on `/status.html` the 17 lines over 70 fill 522–568px of a 568px box; on `/404.html`
+the two over 70 fill 558px and 562px of 568px.
+
+The earlier explanation here said the `/status.html` overage was a single unbreakable 75-character
+identifier, `BytecodeCompilerTest.everyCompilableConformanceProgramMatchesTheInterpreter`. That
+identifier does exist and is one of the 17, but it accounted for one line, not the page. The rest
+are ordinary prose lines whose glyphs happen to run narrow: measured per page, `/status.html` sets
+**9.408px** per character against `/philosophy.html`'s **8.323px**, so the same 568px holds about
+60 of its characters where philosophy holds 68. A character count is a proxy for the measure, and
+this page is where the proxy and the pixels disagree.
+
+The pixels are the invariant that matters, and they hold everywhere: across 8 routes × 3 viewports
+(1440/390/320) no line exceeded its own shell, and every page reported zero horizontal overflow.
+
+```
+page             shell   widest line    over shell
+/philosophy      568      557            0
+/status          568      568            0
+/tour            568      553            0
+/changelog       544      544            0
+/               512      510            0
+/docs            512      502            0
+/examples        512      511            0
+/404             568      568            0
+                      (1440; 390 -> 358px, 320 -> 288px, 0 over shell at either)
+```
+
+**The narrowed shells were still eating their gutter.** `/status.html` and the 404 page carry
+`class="content content-narrow"`. `.content` pads inline by `var(--pad-inline)` — a `clamp()`, 48px
+per side at 1440 — and `.content-narrow` capped `max-width` at the bare measure. With the global
+`border-box`, `max-width` counts padding *into* the box, so the gutter was subtracted from the
+measure: 568 − 96 = **472px** of prose, against 568px on every other page. This was the same
+one-token-two-widths drift the rem change had just fixed, in a second place, and it survived that
+fix because the token was right and the consumer was wrong.
+
+The fix is `max-width: calc(var(--measure-prose) + 2 * var(--pad-inline))`: a measure names a text
+width, so the gutter belongs outside it. `/status.html` and `/404.html` now read at 568px, and
+`.content-narrow` still does real work — without it those pages would run at the plain `.content`
+width of 1144px. Verified in the browser at 1440, 1920, 390 and 320: 568px on desktop, 358 at 390
+and 288 at 320, matching the other pages at each width, with no overflow.
+
+The 404 page is the clearest illustration of why this was arithmetic and not a coincidence: both
+shells measured 664px, and both pages rendered every prose paragraph at 472px before the fix and
+568px after.
 
 **Light and dark are geometrically identical, not merely similar.** Every element on ten routes
 was compared across themes on twelve computed properties — position, size, `font-size`,
@@ -862,7 +924,7 @@ the earlier head produced are kept where they are still the evidence for a claim
 | 1 | `npm run build` | exit 0, 10 routes + 404 prerendered |
 | 2 | `node verify.mjs` | exit 0 |
 | 3 | `npx html-validate "_site/*.html"` | exit 0, no findings |
-| 4 | `npm test` | **298 tests, 294 pass, 0 fail, 4 skipped** |
+| 4 | `npm test` | **299 tests, 295 pass, 0 fail, 4 skipped** |
 | 5 | `npx playwright test` (default, Chromium + mobile) | **182 passed, 4 skipped, 0 failed** (186 defined) |
 | 6 | `PW_ENGINES=all npx playwright test` (CI, four projects) | **364 passed, 8 skipped, 0 failed (6.5m)** |
 | 7 | `npx playwright test e2e/a11y.spec.js` | **54 passed** (both themes, 8 routes) |
@@ -1232,7 +1294,7 @@ beyond them. The rows are the report's claims, not the original checklist's shap
 | 14 | Secret exposure assessment completed | **PASS** | 50-commit history scan, no credential found; `.gitignore` contract test |
 | 15 | Dependency advisories assessed | **PASS** | 19 advisories triaged: 0 critical, 4 high accepted as unreachable (§9) |
 | 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit, Firefox each 93/93 in run `42320823948`, and all four green again in `42343212890` (364 passed, 8 skipped, 0 failed); 54 a11y checks |
-| 17 | Regression tests pass | **PASS** | 298 unit/integration (294 pass, 4 skip); 182 Playwright locally, 364 in CI across four engines (`42343212890`); 54 a11y; 4 live |
+| 17 | Regression tests pass | **PASS** | 299 unit/integration (295 pass, 4 skip); 94 Playwright locally (92 pass, 2 skip), 364 in CI across four engines (`42343212890`); 27 a11y; 4 live |
 | 18 | Production write verified after authorization | **NOT VERIFIED, BLOCKED** | Production **was** written by unauthorized run `42221327714` (`wrote 118 operations`); no authorized write + independent read-back exists, and the data plane now returns `429` so neither an inventory nor a read-back is currently possible (§14.1) |
 | 19 | Compiler repository untouched | **PASS** | No commit in this branch touches the compiler repository; all 76 files are under this repo |
 | 20 | Firefox browser behaviour verified | **PASS, Linux only** | 93/93 in run `42320823948`; Firefox green again in `42343212890` on the measured head; macOS launcher failure reproduced outside Playwright (§12) |
@@ -1241,9 +1303,10 @@ beyond them. The rows are the report's claims, not the original checklist's shap
 | 23 | Design tokens genuinely used, not merely declared | **PASS** | Dead tokens 24 → 0; "every declared token is consumed" test, proven falsifiable by orphaning one |
 | 24 | Merging cannot write production without authorization | **PASS** | `OQTHARA_PRODUCTION_SYNC` / `OQTHARA_DEPLOY_FIRESTORE_RULES` unset; every write step gated on the literal `true`; 7 contract tests, proven falsifiable by un-gating a workflow (§14) |
 | 25 | Production quota failure degrades safely rather than breaking the site | **PASS** | Live build served all 18 documentation links with `firestore.googleapis.com` blocked; 0 links only when the GitHub hosts were blocked too (§14.1) |
-| 26 | Prose measure is within the readable band on every page | **PASS** | whole-word Range bucketing, 8 pages × 6 viewports: 69 characters maximum wrapped prose, 0 horizontal overflow; was 91 on `/stdlib.html` before `6f2a3ee` (§10) |
+| 26 | Prose measure is within the readable band on every page | **PASS** | whole-word Range bucketing, 8 routes + 404 × 3 viewports: every line fills 522–568px of its own 568px shell and **no line exceeds its shell**, 0 horizontal overflow; character maxima are 61–75 with `/changelog.html` 72 and `/404.html` 80, each traced to full lines rather than overruns; was 91 on `/stdlib.html` before `6f2a3ee` (§10) |
 | 27 | A reading measure cannot silently return to a font-relative unit | **PASS** | measure-unit contract test; falsified by restoring `--measure-prose: 68ch`, which failed it, then re-fixed (§10) |
 | 28 | Hand-built prose pages carry the documentation measure, not just its layout | **PASS** | prose-shell contract test; falsified by reverting the tour to `doc-article tour-body`, which failed it (§10) |
+| 29 | A padded shell cannot eat its gutter out of the reading measure | **PASS** | markup-resolving arithmetic contract test plus a geometric `e2e/reading-modes.spec.js` measurement; falsified by planting the subtraction form, which failed both (`status.html` 376px against a 568px measure), then restored (§10) |
 
 **Blocked / not verified, with exact next actions:**
 
@@ -1323,7 +1386,7 @@ the suite fail.
 | Reading measure readable and consistent | **PASS** | 69 max wrapped characters across 8 pages × 6 viewports, measured by whole-word bucketing; was 91 on `/stdlib.html` before `6f2a3ee` |
 | Responsive, no overflow | **PASS** | programmatic check at 1440/1024/768/390/320 |
 | Accessibility | **PASS** | 54 checks; three baseline AA violations → zero |
-| Unit, integration, emulator | **PASS** | 298 tests (294 pass, 4 skip); 18/18 rule assertions |
+| Unit, integration, emulator | **PASS** | 299 tests (295 pass, 4 skip); 18/18 rule assertions |
 | Browser suite | **PASS** | 182 local; 364 in CI across four engines |
 | Firefox | **PASS on Linux; NOT VERIFIED on macOS** | 93/93 on `ubuntu-latest`; macOS launcher fails before any assertion |
 | Screenshot collision fix | **PASS** | audit → `visual-audit-routes/`; committed set untouched by a run |
