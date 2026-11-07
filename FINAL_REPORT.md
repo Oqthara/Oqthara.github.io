@@ -253,6 +253,64 @@ the other is concurrently mutating.
 **Idempotence.** A re-run with unchanged upstream input decides `NOOP` and writes nothing, so a
 retry after a transient failure cannot duplicate or reorder published content.
 
+### 5.1 Read-only production sync plan
+
+This is a **reconciliation against state that already exists**, not a first write. Production
+holds 59 mirrored records written on 2026-11-06T12:55Z by run `42221327714`, a run no maintainer
+authorized (§14). The plan below says what a correct sync would do to that state, derived
+entirely from evidence already quoted in this report — no new production read was performed to
+produce it.
+
+**What the 59 records are.** The count is reproducible from the source tree, not asserted:
+
+| Contribution | Count | Source of truth |
+|---|---|---|
+| `docs/**/*.md` | 18 | tree listing at `7ffb675`, 18 paths including `docs/README.md` |
+| `CHANGELOG.md` | 1 | `CHANGELOG_PATH` routes to the `documentation` collection |
+| `docs/stdlib/reference.md`, second copy | 1 | mirrored into `documentation` **and** `stdlib` |
+| `examples/**/*.oq` | 37 | tree listing at `7ffb675` |
+| Published releases | 2 | `GET /repos/Oqthara/oqthara/releases`, 2 of 2 non-draft |
+| **Total** | **59** | matches `read 59 source records` in runs `42221327714` and `42226044682` |
+
+**What a sync would write.** `would write 0, skip 59 unchanged, unpublish 0, skip 0 oversized`,
+as read back by run `42226044682` at 2026-11-06T13:30Z. The source has not moved since: `main`
+is still `7ffb675` (2026-11-05T22:33:39Z), and the latest upstream release is still
+`v0.1.0-alpha.2` (tag object `63c379d`, published 2026-11-05T22:18:19Z). Every input to the
+plan is therefore unchanged, so re-deriving it now cannot produce a different answer.
+
+**Why `wrote 118 operations` for 59 records** — so the two numbers are not mistaken for a
+mismatch. `applyPlan` emits, per written document, the content record **and** a `sync`
+bookkeeping record carrying the content hash and byte length; 59 × 2 = 118. The `written`
+counter tallies only those batched operations, so the two catalog documents written afterwards
+(`sync/catalog` and `metadata/catalog`) are **not** included in the 118. The read-back path does
+not need the bookkeeping records, which is why later runs report 59 unchanged rather than 118.
+
+**The limitation that matters most, and that earlier drafts of this plan got wrong.** The
+workflow's `Dry run (no credentials required)` step cannot see production. With no credential,
+`sync-firestore.mjs` never calls `readSyncState`, sets `stateAvailable = false`, and prints
+`sync state: unavailable (no credentials) — assuming nothing is mirrored yet` before a plan
+that assumes an empty database. Run `42224994749` shows exactly this: it planned
+`would write 59` against a production that already held 59. **That dry run is not a
+reconciliation preview, and reading it as one would have understated the change by the entire
+dataset.** A true read-only reconciliation requires a credential, and there is no
+`--read-only` mode in the script and no workflow input that supplies a credential to a dry run.
+
+**Therefore, to obtain a real read-only plan**, one of these is required, and neither is done
+here:
+
+1. Dispatch `firebase-sync.yml` with `dry_run: false` and `OQTHARA_PRODUCTION_SYNC` **unset**.
+   The gate refuses the `Sync` step (`skipped`), so nothing is written — but this also produces
+   **no plan**, because the gated step is what computes it. Note the trap in the conclusion:
+   `firebase-sync.yml` has no failure recorder, so that run reports **success while writing
+   nothing**. A green check there proves the gate held and proves nothing about content.
+2. Add a credentialed read-only path. That is a code change to `sync-firestore.mjs`, out of
+   scope for a documentation-sync plan, and is recorded here as the gap rather than worked
+   around.
+
+**Nothing in this section is verified beyond what is cited.** The plan is a reconciliation
+prediction assembled from prior run logs. It is **not** a production read-back, and the
+independent verification required by §14 still has not happened.
+
 ---
 
 ## 6. Forced recovery behavior
