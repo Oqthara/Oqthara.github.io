@@ -455,8 +455,12 @@ hr {
   padding-inline: var(--pad-inline);
 }
 
+/* The measure is a text width, so the gutter has to sit outside it. With border-box and a
+   bare max-width the gutter was being taken out of the measure, which gave these pages 472px
+   of prose against the 568px every other page reads at -- the same one-token-two-widths drift
+   the rem change fixed. max-width counts the padding into the box, so add it back. */
 .content-narrow {
-  max-width: var(--measure-prose);
+  max-width: calc(var(--measure-prose) + 2 * var(--pad-inline));
 }
 
 /* ---------------------------------------------------------------- header */

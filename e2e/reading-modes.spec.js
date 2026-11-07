@@ -397,3 +397,36 @@ test.describe("backends unavailable", () => {
     expect((await surfaced.first().innerText()).trim().length).toBeGreaterThan(0);
   });
 });
+
+// The reading measure is one number, and it has silently missed twice -- once because `ch` made
+// the cap font-relative, once because a padded shell took its gutter out of the measure. In both
+// cases the token was correct and the rendered page was wrong, so this asserts pixels, not CSS.
+test.describe("reading measure", () => {
+  test("a narrowed shell leaves its inline gutter outside the measure", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    for (const route of ["/status.html", "/404.html"]) {
+      await page.goto(route);
+      const result = await page.evaluate(() => {
+        const shell = document.querySelector(".content-narrow");
+        if (!shell) return null;
+        const style = getComputedStyle(shell);
+        // Resolve the token in the page's own font context rather than re-deriving rem here.
+        const probe = document.createElement("div");
+        probe.style.width = "var(--measure-prose)";
+        probe.style.position = "absolute";
+        probe.style.visibility = "hidden";
+        document.body.append(probe);
+        const measure = Math.round(probe.getBoundingClientRect().width);
+        probe.remove();
+        const inner = shell.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+        return { measure, inner: Math.round(inner), padding: parseFloat(style.paddingLeft) };
+      });
+      expect(result, `${route} should use the narrowed shell`).not.toBeNull();
+      // The prose width must be the measure. Subtracting or ignoring the gutter shows up here as
+      // 472 / 664 against a 568 measure; the gutter is deliberately non-zero so the two forms
+      // cannot coincide.
+      expect(result.padding).toBeGreaterThan(0);
+      expect(Math.round(result.inner), `${route} prose width should equal the measure`).toBe(result.measure);
+    }
+  });
+});

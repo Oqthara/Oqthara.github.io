@@ -342,3 +342,54 @@ test("the reading measures are absolute, not font-relative", () => {
     "a measure token whose unit tracks font-size cannot name one measure across consumers",
   );
 });
+
+
+test("a measured shell adds its inline gutter back instead of eating into it", () => {
+  // `max-width` counts padding into the box, so a shell that pads inline *and* caps at a bare
+  // measure renders narrower prose than the measure promises, by an amount that changes with the
+  // viewport because the gutter is a clamp(). `.content-narrow` did this: 568px box less two 48px
+  // gutters gave /status.html and the 404 page 472px of prose where every other page read 568px.
+  //
+  // Classes compose in JSX, so the gutter usually arrives from a second class on the same element
+  // (`.content` pads, `.content-narrow` measures). Checking one rule in isolation misses it, and
+  // checking only the token name misses it too: the fix and the defect are both `calc()` and
+  // differ by a single `+` versus `-`. So this test resolves the composed class list per element
+  // from the rendered markup, collects the gutter those classes impose, and requires the
+  // arithmetic to add it back. The geometric half of the same invariant is measured on real boxes
+  // in `e2e/reading-modes.spec.js`; neither test alone would have caught the original defect.
+  const paddingOf = new Map();
+  for (const rule of rules.matchAll(/^(\.[a-z0-9-]+)[^{]*\{([^}]*)\}/gim)) {
+    const pad = /padding-inline\s*:\s*([^;]+)/.exec(rule[2]);
+    if (pad) paddingOf.set(rule[1], pad[1].trim());
+  }
+  const widthOf = new Map();
+  for (const rule of rules.matchAll(/^(\.[a-z0-9-]+)[^{]*\{([^}]*)\}/gim)) {
+    const width = /max-width\s*:\s*([^;]+)/.exec(rule[2]);
+    if (width && /--measure-/.test(width[1])) widthOf.set(rule[1], width[1].trim());
+  }
+  assert.ok(paddingOf.size > 0 && widthOf.size > 0, "expected a padded shell and a measured shell");
+
+  const offenders = [];
+  for (const file of STATIC_ROUTES) {
+    if (!present) break;
+    for (const tag of readPage(file).matchAll(/class="([^"]*)"/g)) {
+      const names = tag[1].split(/\s+/).filter(Boolean).map((n) => `.${n}`);
+      const measured = names.filter((n) => widthOf.has(n));
+      const gutters = names.filter((n) => paddingOf.has(n));
+      if (!measured.length || !gutters.length) continue;
+      for (const shell of measured) {
+        const width = widthOf.get(shell);
+        // Adding the gutter back is the only form that keeps the prose at the measure; a `-` or a
+        // bare token silently shrinks it.
+        if (!/\+\s*2\s*\*\s*var\(\s*--pad-inline\s*\)/.test(width)) {
+          offenders.push(`${file}: ${[shell, ...gutters].join(" ")} -> ${width}`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(
+    [...new Set(offenders)],
+    [],
+    "a shell that pads inline must add 2 * var(--pad-inline) to its measure",
+  );
+});
