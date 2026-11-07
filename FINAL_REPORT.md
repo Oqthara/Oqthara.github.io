@@ -642,7 +642,10 @@ Runs `42319837893`, `42319080680`, and `42317021081` were the three iterations t
 cross-browser job: the first proved Firefox passes on Linux while Chromium was still missing,
 the second proved Chromium and Firefox together while WebKit was missing, and the third came
 within one timeout of green. Every run after `42320823948` has either passed or been cancelled
-by concurrency because a newer push superseded it.
+by concurrency because a newer push superseded it. The current tip of the branch is covered by
+run [`42325246448`](https://github.com/Oqthara/Oqthara.github.io/actions/runs/42325246448),
+success on `48da910` — 364 passed, 8 skipped, 0 failed — which is the run this report's figures
+were read from.
 
 **The 8 skips are intentional and annotated.** They are exactly two tests
 (`live docs index count equals the repository tree`, `live alpha.1 and alpha.2 both render the
