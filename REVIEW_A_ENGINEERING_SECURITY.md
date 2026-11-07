@@ -80,10 +80,19 @@ page-level horizontal overflow and zero uncaught JavaScript errors. Apparent ove
 
 ## Known blocker
 
-`FIREBASE_SERVICE_ACCOUNT` is **not configured** (`gh secret list` is empty), so no live sync
-can be executed. All six live collections return HTTP 403 with the public web key, which is the
-correct response for an unwritten project rather than a rules failure. See
-`FINAL_REPORT.md` for the substitute evidence and the exact steps to close it.
+> **Correction (later verified).** This section originally stated that
+> `FIREBASE_SERVICE_ACCOUNT` was not configured because `gh secret list` was empty. That was
+> wrong. The reading was taken before the secret existed, and `gh secret list` was later observed
+> to report `FIREBASE_SERVICE_ACCOUNT` with a creation timestamp. Workflow run `42226044682`
+> then executed the wet path with that credential and wrote to production. The claim is
+> corrected here rather than deleted, because a stale "blocked" note is worse than no note: it
+> invites a maintainer to conclude that nothing can write production when something can.
+
+`FIREBASE_SERVICE_ACCOUNT` **is** configured. No live sync had been *authorized*; the blocker was
+never the credential, it was the absence of a decision to enable production writes. That decision
+is now represented explicitly by the `OQTHARA_PRODUCTION_SYNC` repository variable, which is unset,
+so writes are disabled until a maintainer turns them on. See `FINAL_REPORT.md` for the exact
+pre-write checklist.
 
 ## Recommendation
 

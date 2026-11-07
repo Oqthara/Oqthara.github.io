@@ -76,8 +76,11 @@ Firebase service, final acceptance and the final report.
 - No horizontal overflow at 1440/1024/768/390/320 on every route, proven by a run.
 - Navigation correct and accessible at every width, proven by a run.
 - Oqthara highlighting proven in a browser with token spans and distinct colours.
-- Firebase read layer implemented with rules denying client writes; live sync blocked by the
-  missing `FIREBASE_SERVICE_ACCOUNT` secret, documented rather than faked.
+- Firebase read layer implemented with rules denying client writes. **Corrected:** this
+  checkpoint originally said live sync was blocked by a missing `FIREBASE_SERVICE_ACCOUNT`
+  secret. The secret is configured, and run `42226044682` used it. Live sync is not blocked by a
+  credential; it is disabled by the `OQTHARA_PRODUCTION_SYNC` activation gate until a maintainer
+  authorizes it.
 - Playwright suite green.
 - Mandatory screenshots present under `artifacts/visual-audit/`.
 - Both independent reviews recorded, with P0/P1 fixed and re-verified.

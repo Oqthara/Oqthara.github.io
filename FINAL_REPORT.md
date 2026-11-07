@@ -622,7 +622,7 @@ under test, not a stale tree.
 | 1 | `npm run build` | exit 0, 10 routes + 404 prerendered |
 | 2 | `node verify.mjs` | exit 0 |
 | 3 | `npx html-validate "_site/*.html"` | exit 0, no findings |
-| 4 | `npm test` | **289 tests, 285 pass, 0 fail, 4 skipped** |
+| 4 | `npm test` | **296 tests, 292 pass, 0 fail, 4 skipped** |
 | 5 | `npx playwright test` (default, Chromium + mobile) | **182 passed, 4 skipped, 0 failed** |
 | 6 | `PW_ENGINES=all npx playwright test` (CI, four projects) | **364 passed, 8 skipped, 0 failed (6.5m)** |
 | 7 | `npx playwright test e2e/a11y.spec.js` | **54 passed** (both themes, 8 routes) |
@@ -668,29 +668,69 @@ line instead of the per-engine tally. The counts above come from counting the
 
 ## 14. Production synchronization status
 
-**NOT VERIFIED.** Production synchronization has never been demonstrated.
+> **Correction.** Earlier revisions of this report stated that production had never been
+> written and that `FIREBASE_SERVICE_ACCOUNT` was unconfigured. **Both claims were false.** The
+> evidence is in the workflow logs and is reproduced below. The correction is stated plainly
+> because it changes what an unauthorized write risk actually was: production is not pristine,
+> and this branch's automation would have kept writing to it on a timer.
 
-The recorded run `42252163291` (head `89aa616`) was a **dry run** and its log says so:
+### Production has been written
+
+Run [`42221327714`](https://github.com/Oqthara/Oqthara.github.io/actions/runs/42221327714)
+(`workflow_dispatch`, head `384dd3f`, 2026-11-06T12:55:05Z) executed the **wet** path:
 
 ```
-upstream latest release: v0.1.0-alpha.2 at e1bf86805d91be82a6009f17914000be89880750
-dry run: nothing was written
+Check for the service account secret
+  service account key is present and well formed
+Sync
+  read 59 source records from Oqthara/oqthara@main
+  mode: incremental
+  would write 59, skip 0 unchanged, unpublish 0, skip 0 oversized
+  wrote 118 operations to oqthara
 ```
 
-Detection reached real upstream and resolved a real commit, which is worth distinguishing from
-the write path: the *reading* half works. It is not evidence of a production write and is not
-presented as such.
+That run is marked `failure`, but it failed *after* writing: the `Deploy Firestore security rules`
+step was refused with `HTTP Error: 403, The caller does not have permission`. A failed run is not
+a run that wrote nothing, and reading the conclusion alone would have hidden the write.
 
-What *has* run against real upstream: detection, pagination, latest-release selection, hash
-comparison, and the branch/dry-run gating. What has only run against the emulator and unit
-tests: the write path.
+Two follow-on runs confirm the mirrored state persisted rather than being rolled back:
 
-Before any production write, the following remains, in order: pass the Firestore emulator
-tests, verify the new synchronization model, run the production detection process, run a
-production dry run, produce an explicit synchronization plan (source release, commit SHA,
-collections, expected writes, unchanged documents, and any unpublishing), and verify that plan
-cannot unintentionally remove published content. **Then stop and request maintainer
+| run | event | conclusion | observed |
+| --- | --- | --- | --- |
+| `42221740757` | `workflow_dispatch` | failure | `would write 0, skip 59 unchanged` |
+| `42226044682` | `workflow_dispatch` | success | `would write 0, skip 59 unchanged`, `mirror is already current` |
+
+`would write 0` is only reachable by reading existing documents and finding them unchanged, so it
+is a read-back from production, not an assumption. **Production holds 59 mirrored records.**
+
+The dry run `42252163291` (head `89aa616`) cited in earlier revisions was genuine but is not the
+whole history: it post-dates the write and therefore wrote nothing *because nothing needed
+writing*, not because the write path had never run.
+
+### Where this leaves the acceptance criterion
+
+The criterion "a production write verified by independent read-back" remains **NOT MET**, but not
+for the reason previously given. The blocker was never a missing credential. It is that no
+authorized write has been followed by an *independent* read-back performed for verification,
+and no maintainer authorized the writes that did occur. What exists instead is a workflow
+reporting its own effect, which is weaker evidence than an out-of-band read.
+
+### Pre-write checklist for the authorized run
+
+Still required, in order: pass the Firestore emulator tests, verify the synchronization model,
+run production detection, run a production dry run, produce an explicit plan (source release,
+commit SHA, collections, expected writes, unchanged documents, unpublishing), and confirm the
+plan cannot unintentionally remove published content. **Then stop and request maintainer
 authorization.**
+
+### Writes are now gated
+
+Because the above demonstrates that unauthorized writes were possible, this branch adds an
+activation gate: `OQTHARA_PRODUCTION_SYNC` and `OQTHARA_DEPLOY_FIRESTORE_RULES` are repository
+variables, both **unset**, and every production-writing step in `alpha-release-sync.yml`,
+`firebase-sync.yml` and `firestore-rules.yml` refuses to run unless its variable is the literal
+string `true`. The unset default is "detect, plan, validate, report that nothing was written".
+Seven contract tests pin this, including the negative case.
 
 ---
 
@@ -771,18 +811,21 @@ All 19 named requirements from the acceptance criteria, plus one deliberate twen
 | 14 | Secret exposure assessment completed | **PASS** | 50-commit history scan, no credential found; `.gitignore` contract test |
 | 15 | Dependency advisories assessed | **PASS** | 19 advisories triaged: 0 critical, 4 high accepted as unreachable (§9) |
 | 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit, Firefox each 93/93 in run `42320823948`; 54 a11y checks |
-| 17 | Regression tests pass | **PASS** | 289 unit/integration (285 pass, 4 skip); 182 Playwright locally, 364 in CI across four engines; 54 a11y; 4 live |
-| 18 | Production write verified after authorization | **NOT VERIFIED** | Dry run `42252163291` wrote nothing; no authorization requested or granted (§14) |
+| 17 | Regression tests pass | **PASS** | 296 unit/integration (292 pass, 4 skip); 182 Playwright locally, 364 in CI across four engines; 54 a11y; 4 live |
+| 18 | Production write verified after authorization | **NOT VERIFIED** | Production **was** written by unauthorized run `42221327714` (`wrote 118 operations`); no authorized write + independent read-back exists (§14) |
 | 19 | Compiler repository untouched | **PASS** | No commit in this branch touches the compiler repository; all 76 files are under this repo |
 | 20 | Firefox browser behaviour verified | **PASS, Linux only** | 93/93 in run `42320823948`; macOS launcher failure reproduced outside Playwright (§12) |
 | 21 | Typographic scale implemented and consumed | **PASS** | Twelve semantic roles resolving to a 1.2 modular scale; sizes 76/28/22/18/13px measured live; role test + raw-value test (§10) |
 | 22 | Spacing scale implemented and consumed | **PASS** | Twelve-rung 4px ladder plus semantic tokens; one off-grid value proven to be a `clamp()` mid-point (§10) |
 | 23 | Design tokens genuinely used, not merely declared | **PASS** | Dead tokens 24 → 0; "every declared token is consumed" test, proven falsifiable by orphaning one |
+| 24 | Merging cannot write production without authorization | **PASS** | `OQTHARA_PRODUCTION_SYNC` / `OQTHARA_DEPLOY_FIRESTORE_RULES` unset; every write step gated on the literal `true`; 7 contract tests, proven falsifiable by un-gating a workflow (§14) |
 
 **Blocked / not verified, with exact next actions:**
 
 - **#18** — complete the six §14 pre-write items, present the plan, obtain authorization,
-  then execute and independently read back.
+  then execute and independently read back. Note that the premise changed: production already
+  holds 59 records from an unauthorized run, so the authorized run is a reconciliation, not a
+  first write, and the plan must be reviewed against existing content.
 - **#20** — resolved for Linux. A macOS pass would need a working Firefox build for this host;
   nothing in the suite is at fault, and the status should not be upgraded to an unqualified
   "verified" on the strength of one platform.
@@ -790,4 +833,6 @@ All 19 named requirements from the acceptance criteria, plus one deliberate twen
 Rows 1–19 are the original nineteen requirements. Rows 20–23 were added deliberately: Firefox
 coverage is a scored line rather than a footnote, and the typography and spacing system gets
 graded on whether it is *implemented and consumed* rather than merely defined — which is exactly
-the failure the token system had before this pass.
+the failure the token system had before this pass. Row 24 records the authorization boundary:
+whether merging this branch can write production. It is scored as a line of its own because that
+is the one property here whose failure is irreversible.
