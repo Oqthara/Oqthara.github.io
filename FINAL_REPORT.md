@@ -441,13 +441,23 @@ keep `--surface-2`. `a.card:hover` still keeps its `transform: translateY(-2px)`
 two layers but is consumed through `drop-shadow()`, which accepts exactly one — the whole filter
 was being discarded. It is now a single layer.
 
-**Guard tests.** Seven contract tests in `tests/site.test.js` keep this from drifting back: every
-declared token must be consumed; the spacing ladder must be an exact 4px scale with all twelve
-rungs; each of twelve typographic roles must resolve to a modular step or an `em` ratio; light,
-dark, and system blocks must declare the same colour tokens; no rule may set a type size or
-leading outside the scale. All seven were proven falsifiable by planting regressions and watching
-the intended test fail — a raw `font-size: 13px` on `code`, a deleted `--fg-muted` from the light
-block, and an orphaned `--space-13`.
+**Guard tests.** Six contract tests in `tests/site.test.js` keep this from drifting back:
+
+| Test | Fails when |
+|---|---|
+| every declared design token is consumed by at least one rule | a token is orphaned |
+| the spacing ladder is an exact 4px scale with no missing rung | a rung is skipped or off-grid |
+| each typographic role names a step of the modular scale | a role bypasses the scale |
+| the light and dark appearances declare the same colour tokens | a colour exists in one theme only |
+| no rule sets a type size or leading outside the scale | a raw `rem`/`px` value appears |
+| the code block size is not overruled by the inline code ratio | the 12px regression returns |
+
+All six were proven falsifiable by planting a regression and confirming the intended test failed:
+a raw `font-size: 13px` on `code`, a deleted `--fg-muted` from the light block, and an orphaned
+`--space-13`. A test that has never failed is not known to be capable of failing.
+
+An earlier draft of this section said seven. There are six. The count was wrong, not the tests —
+and the fix is to correct it here rather than add a seventh test to match the sentence.
 
 One trap is worth recording: the stylesheet quotes token names inside explanatory comments, so a
 naive scan reads those as declarations. The light block's contrast-ratio comment contains
