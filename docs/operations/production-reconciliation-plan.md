@@ -26,6 +26,12 @@ OQ_AUDIT_TOKEN=$(gcloud auth print-access-token --quiet) \
   npm run audit:production -- --token --out=/tmp/firestore-audit.json
 ```
 
+`--token` reads `OQ_AUDIT_TOKEN` and never touches a key file, so the command above sends a
+short-lived access token that the shell discards. Without `--token` the script looks for
+`FIREBASE_SERVICE_ACCOUNT` or `GOOGLE_APPLICATION_CREDENTIALS` and mints its own token; that path
+was broken when this plan was first written and is fixed, with tests, in the same branch. The
+script refuses to run if the credential's identity is not the expected service account.
+
 ---
 
 ## 1. Summary of dispositions
