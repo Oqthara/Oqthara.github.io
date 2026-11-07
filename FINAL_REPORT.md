@@ -653,11 +653,12 @@ already-correct 568px and would have opened the hole wider.
 
 Three of these were proven falsifiable by planting a regression and confirming the intended test
 failed: a raw `font-size: 13px` on `code`, a deleted `--fg-muted` from the light block, and an
-orphaned `--space-13`. The two added in this pass were each confirmed the same way, against the
+orphaned `--space-13`. The three added in this pass were each confirmed the same way, against the
 exact defect they now guard: `class="doc-article tour-body"` without `doc` made the prose-shell
-test fail, and `--measure-prose: 68ch` made the measure-unit test fail. Both were then restored
-and both pass. The remaining three have not been individually falsified, and this report is not
-going to describe them as proven.
+test fail, `--measure-prose: 68ch` made the measure-unit test fail, and `calc(var(--measure-prose)
+- 2 * var(--pad-inline))` made the gutter-arithmetic test fail. All three were then restored and
+all three pass. That is six falsified. The remaining three have not been individually falsified,
+and this report is not going to describe them as proven.
 
 The measure-unit test needed one correction of its own before it was trustworthy: the first
 pattern, `/(ch|ex|em)$/`, matched the `em` suffix of `rem`, so it would have rejected the correct
