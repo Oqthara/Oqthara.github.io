@@ -324,3 +324,21 @@ test("the code block size is not overruled by the inline code ratio", () => {
   assert.ok(bare, "expected a bare `code` rule");
   assert.doesNotMatch(bare[1], /font-size/, "`code` must not set a size that pre then inherits");
 });
+
+test("the reading measures are absolute, not font-relative", () => {
+  // `ch` is the advance of the "0" glyph, not an average character. At the 18px documentation
+  // size one ch is 10.881px while average prose is ~6.0px, so a `68ch` prose cap rendered lines
+  // up to 91 characters -- 1.8x wider than the number suggests. The same token also resolved to
+  // two widths, 770px where its consumer set 18px and 685px where it set 16px, so it did not
+  // describe one measure at all. Pixels do not move with font-size; rem expresses it once.
+  const measures = [...declaredTokens()].filter(([name]) => name.startsWith("--measure-"));
+  assert.ok(measures.length >= 3, "the reading-measure tokens must exist");
+  const relative = measures
+    .filter(([, value]) => /(?:^|[\d.])(ch|ex|em)$/.test(value.replace(/\s+/g, "")))
+    .map(([name, value]) => `${name}: ${value}`);
+  assert.deepEqual(
+    relative,
+    [],
+    "a measure token whose unit tracks font-size cannot name one measure across consumers",
+  );
+});

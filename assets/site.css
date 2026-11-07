@@ -179,13 +179,20 @@
      cramped against the header compared with the 320px one. */
   --space-page-top: clamp(var(--space-9), 6vw, var(--space-12));
 
-  /* Documentation reading layout. Prose is measured in characters, not pixels, and the rail
-     widths are named so the three documentation layouts cannot drift apart. The sidebar rail
-     used to be a bare 250px while the table-of-contents rail was a bare 16rem, which is the
-     drift these two tokens exist to stop. */
-  --measure-prose: 68ch;
-  --measure-lead: 58ch;
-  --measure-caption: 44ch;
+  /* Documentation reading layout. The rail widths are named so the three documentation
+     layouts cannot drift apart. The sidebar rail used to be a bare 250px while the
+     table-of-contents rail was a bare 16rem, which is the drift these two tokens exist to stop.
+
+     The measures are rem, not ch. They were ch, and that was a defect: ch is the advance of
+     the "0" glyph (10.881px at the 18px documentation size) while an average prose character
+     is ~6.0px, so 68ch was 1.8x wider than it read as. Worse, the same token resolved to two
+     different widths -- 770px where its consumer set 18px and 685px where it set 16px -- so it
+     never described one measure at all. A corresponding sweep against the rendered pages found
+     a 91-character maximum line instead of the intended limit. Pixels do not move with the
+     font size, so rem expresses the measure once for every consumer. */
+  --measure-prose: 35.5rem;
+  --measure-lead: 32rem;
+  --measure-caption: 22rem;
   --doc-sidebar: 16rem;
   --doc-toc: 15rem;
 
@@ -753,6 +760,9 @@ hr {
 }
 
 .page-head .lead {
+  /* The standfirst is set at the prose size, not the title size, so it needs its own cap:
+     inheriting the title's measure pushed it to a 91-character line on the widest pages. */
+  max-width: var(--measure-lead);
   font-size: var(--text-lead);
   color: var(--fg-muted);
   line-height: var(--leading-snug);
@@ -1702,9 +1712,17 @@ input:focus-visible {
   }
 }
 
-/* The tour reuses the documentation shell: the same right-hand rail, the same reading
-   measure. These rules only add the rhythm between its sections, which a Markdown document
-   gets from the prose styles but a hand-built page does not. */
+/* Pages that are not inside .docs-layout put this grid straight into .content. Without a cap
+   the 1fr prose track swallowed the whole content width and stranded the rail hundreds of
+   pixels from the text it annotates. The cap is exactly the documentation geometry: prose
+   track, gap, then rail, which is what .docs-main already provides. */
+.doc-with-toc {
+  max-width: calc(var(--measure-prose) + var(--doc-toc) + var(--space-6));
+}
+
+/* The tour reuses the documentation shell's right-hand rail and takes the reading measure
+   from --measure-prose on .doc. These rules only add the rhythm between its sections, which a
+   Markdown document gets from the prose styles but a hand-built page does not. */
 .tour-section + .tour-section {
   margin-top: var(--space-8);
 }
