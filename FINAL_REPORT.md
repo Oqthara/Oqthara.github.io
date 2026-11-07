@@ -1539,3 +1539,48 @@ Step 2 of the reconciliation plan must be re-run after the daily quota boundary.
 of the same workflow with `OQTHARA_PRODUCTION_SYNC=true`, followed by the independent read-back in
 step 3. Until that read-back exists, production synchronization stays **NOT VERIFIED**, the
 catalogue stays absent, and this report does not claim otherwise.
+
+### 18.4 Independent confirmation of the deployed rules
+
+Re-read directly from the Rules API, after the workflow's own read-back, to avoid resting the
+claim on the deploy job's self-report:
+
+```
+GET projects/oqthara/releases/cloud.firestore
+  rulesetName: projects/oqthara/rulesets/7702f82f-8c66-4a17-9c27-dba94aca02fb
+  updateTime:  2026-11-07T18:46:10.144458Z
+
+GET projects/oqthara/rulesets/7702f82f-...
+  bytes: 2961   sha256 match: true
+  match /metadata/catalog { allow read: if isPublished(); allow write: if false; }
+```
+
+The serving ruleset is byte-identical to `firestore.rules` on `main` and to the text
+`npm run test:rules` exercises. The catalogue path is readable only when `published` is true and is
+never writable from a client, which is the contract `buildCatalogRecord` now satisfies.
+
+### 18.5 Retry status and the honest stopping point
+
+The sync was retried after the rules deploy and after CI finished. A direct REST read of
+`sync/catalog` still answered `HTTP 429`, so re-dispatching the full sync would have failed at the
+same line for the same reason. Re-running a known-failing write job to produce a log line is not
+verification, so it was not done.
+
+The `cloudquotas` API is itself disabled in this project and was **not** enabled to read the reset
+interval, because enabling an API is a project mutation outside the authorized scope. The reset is
+documented as a daily boundary (§14.1), which places it within the following 24 hours.
+
+State at this stopping point:
+
+| Check | Result |
+| --- | --- |
+| Active ruleset | `7702f82f-8c66-4a17-9c27-dba94aca02fb`, verified byte-for-byte |
+| Production documents written | **none** |
+| `metadata/catalog` | still absent — cannot be created while reads fail |
+| `OQTHARA_PRODUCTION_SYNC` | unset |
+| `OQTHARA_DEPLOY_FIRESTORE_RULES` | unset |
+| Live site | serving normally from the GitHub fallback |
+| CI on `main` | `Pages in_progress 42403466943` → **success**, cross-browser suite included |
+
+Production synchronization is **NOT VERIFIED**. What verified is the rules deployment and the
+absence of any write. Those are different claims and are kept separate throughout.
