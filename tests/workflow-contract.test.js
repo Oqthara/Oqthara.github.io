@@ -624,3 +624,52 @@ describe("firebase-sync schedule", () => {
     assert.match(text, /cancel-in-progress: false/, "cancelling mid-write would leave a partial batch");
   });
 });
+
+describe("firestore-audit workflow", () => {
+  // The audit exists to produce the evidence a reconciliation is judged by. Two properties make
+  // that evidence trustworthy, and both are easy to lose by accident: it must not be able to
+  // write, and it must not be gated on the write switch — an audit that only runs after writes
+  // are enabled could never capture the "before" state it is supposed to be compared against.
+  const NAME = "firestore-audit.yml";
+
+  it("runs only the read-only audit and never the sync", async () => {
+    const text = await workflow(NAME);
+    assert.match(text, /node scripts\/audit-production\.mjs/);
+    assert.doesNotMatch(text, /sync-firestore\.mjs/, "the sync writes; the audit must not");
+    assert.doesNotMatch(text, /firebase\s+deploy|deploy-firestore-rules\.mjs|:commit\b/);
+  });
+
+  it("is not gated on the production-sync variable", async () => {
+    const text = await workflow(NAME);
+    assert.doesNotMatch(text, /vars\.OQTHARA_PRODUCTION_SYNC/,
+      "reading is not writing; gating the audit would prevent capturing the pre-change inventory");
+    assert.doesNotMatch(text, /vars\.OQTHARA_DEPLOY_FIRESTORE_RULES/);
+  });
+
+  it("shares the mirror concurrency group and never cancels a run", async () => {
+    const text = await workflow(NAME);
+    assert.match(text, /^\s+group: firestore-mirror$/m);
+    assert.match(text, /cancel-in-progress: false/);
+  });
+
+  it("requests read-only permissions", async () => {
+    const text = await workflow(NAME);
+    assert.match(text, /^permissions:\n {2}contents: read$/m);
+    assert.doesNotMatch(text, /^\s+(contents|packages|id-token|actions): write$/m);
+  });
+
+  it("keeps the inventory as an artifact even when the audit fails", async () => {
+    const text = await workflow(NAME);
+    const upload = stepBody(text, "Upload the inventory");
+    assert.match(upload, /if: always\(\)/,
+      "a quota failure still leaves a partial report that a reviewer needs to see");
+    assert.match(upload, /actions\/upload-artifact@/);
+  });
+
+  it("records the run in the job summary so the artifact is traceable to a commit", async () => {
+    const text = await workflow(NAME);
+    const summary = stepBody(text, "Summarise the outcome");
+    assert.match(summary, /GITHUB_STEP_SUMMARY/);
+    assert.match(summary, /GITHUB_SHA/);
+  });
+});

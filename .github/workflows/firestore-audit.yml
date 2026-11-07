@@ -1,0 +1,127 @@
+name: Firestore audit
+
+# Reads the production mirror and reports what a reconciliation would do. It never writes.
+#
+# The audit is the instrument the reconciliation is judged by: "MATCH", "MISSING", "UNPUBLISH
+# CANDIDATE" and the catalogue contract all come from here. Before this workflow existed the
+# audit could only be run by hand from a machine holding the service-account key, which meant the
+# evidence a reviewer checked was produced on someone else's laptop and could not be reproduced.
+# Running it in CI makes the inventory a downloadable artifact tied to a commit and a run id.
+#
+# It is deliberately NOT gated on OQTHARA_PRODUCTION_SYNC. Reading is not writing, and the most
+# useful moment to take an inventory is before anything has been enabled — an audit that could
+# only run after the switch was on could never establish the "before" state.
+#
+# Required secret: FIREBASE_SERVICE_ACCOUNT, the same one `firebase-sync.yml` uses. Without it the
+# job reports a warning and exits 0 rather than failing, because a fork or a repository without
+# the secret should not show a red build for a check it cannot perform.
+
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: "Short label for this inventory (e.g. pre-change, post-change)"
+        type: string
+        required: false
+        default: "manual"
+
+permissions:
+  contents: read
+
+# The audit reads the same collections the sync writes. Sharing the mirror's concurrency group
+# keeps a long inventory from interleaving with a reconciliation, so the artifact describes one
+# consistent moment rather than a database being rewritten underneath it.
+concurrency:
+  group: firestore-mirror
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Inventory the production mirror
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the site repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Check for the service account secret
+        id: credential
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVICE_ACCOUNT}" ]; then
+            echo "::warning::FIREBASE_SERVICE_ACCOUNT is not set, so no inventory can be taken."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Only the two non-secret identity fields are printed, and only after confirming the
+          # value parses and is shaped like a service-account key.
+          # shellcheck disable=SC2016  # the JavaScript below is single-quoted on purpose
+          node -e '
+            const raw = process.env.SERVICE_ACCOUNT;
+            let parsed;
+            try { parsed = JSON.parse(raw); } catch { console.error("::error::FIREBASE_SERVICE_ACCOUNT is not valid JSON"); process.exit(1); }
+            if (!parsed.client_email || !parsed.private_key) {
+              console.error("::error::FIREBASE_SERVICE_ACCOUNT is not a service account key");
+              process.exit(1);
+            }
+            console.log(`client_email: ${parsed.client_email}`);
+            console.log(`project_id: ${parsed.project_id}`);
+          '
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
+      - name: Audit the mirror
+        id: audit
+        if: steps.credential.outputs.present == 'true'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          # 60 requests/hour unauthenticated would be shared by every runner; the audit resolves
+          # the canonical record set from the same GitHub API the sync uses, so it needs a token
+          # for the same reason the sync does.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LABEL: ${{ inputs.label }}
+        run: |
+          set -euo pipefail
+          out="artifacts/production/audit-${LABEL:-manual}.json"
+          node scripts/audit-production.mjs --out "$out" | tee /dev/stderr
+          echo "Wrote $out"
+
+      # `if: always()` with a presence guard: a quota failure still leaves the partial report
+      # worth keeping, and a reviewer needs to see the failure rather than an empty artifact list.
+      - name: Upload the inventory
+        if: always() && steps.credential.outputs.present == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-audit-${{ inputs.label || 'manual' }}-${{ github.run_id }}
+          path: artifacts/production/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Summarise the outcome
+        if: always()
+        env:
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+          PRESENT: ${{ steps.credential.outputs.present }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2016  # the formats are single-quoted so the backticks stay
+          # literal markdown rather than becoming command substitution.
+          {
+            printf '| field | value |\n| --- | --- |\n'
+            printf '| commit | `%s` |\n' "${GITHUB_SHA}"
+            printf '| label | `%s` |\n' "${LABEL:-manual}"
+            printf '| credential present | %s |\n' "${PRESENT}"
+            printf '| audit step | %s |\n' "${AUDIT_OUTCOME:-skipped}"
+          } >> "$GITHUB_STEP_SUMMARY"
