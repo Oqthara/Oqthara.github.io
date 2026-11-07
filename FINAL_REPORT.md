@@ -17,7 +17,8 @@ in a header is the failure mode, not a cosmetic detail.
 
 Every claim below is backed by a command that was executed and whose output is quoted. Where
 a requirement was not exercised, it says **NOT VERIFIED** and names the next action. Nothing
-here is merged, deployed, or written to production Firestore.
+here is merged or deployed, and this work wrote nothing to production Firestore — though an
+earlier unauthorized workflow run did, which §14 documents rather than omits.
 
 ---
 
@@ -875,6 +876,106 @@ variables, both **unset**, and every production-writing step in `alpha-release-s
 string `true`. The unset default is "detect, plan, validate, report that nothing was written".
 Seven contract tests pin this, including the negative case.
 
+### 14.1 The production data plane is quota-blocked (read-only investigation)
+
+The authorized read-only investigation could not enumerate production documents. Every
+Firestore **data-plane** read returns `429 RESOURCE_EXHAUSTED`, with or without a credential.
+The cause is the billing state of the `oqthara` Google Cloud project, not authentication.
+
+| probe | credential | result |
+| --- | --- | --- |
+| `documents/metadata/catalog` | public web API key | `429 RESOURCE_EXHAUSTED` |
+| `documents/metadata/catalog` | OAuth access token | `429 RESOURCE_EXHAUSTED` |
+| `documents/documentation`, `examples`, `releases`, `stdlib` | OAuth access token | `429` each |
+| `documents:batchGet` | OAuth access token | `429` |
+| `documents:runQuery` | OAuth access token | `429` |
+| `GET /v1/projects/oqthara/databases` (control plane) | OAuth access token | `200` |
+| `GET /v1/projects/oqthara/operations` (control plane) | OAuth access token | `200` |
+| `GET storage/v1/b?project=oqthara` | OAuth access token | `200` |
+
+The control plane answering `200` while every document read answers `429` is what isolates this
+to quota rather than permissions or credentials; a credential problem would fail both.
+
+Root cause, from the project's own metadata:
+
+```
+gcloud firestore databases list --project=oqthara
+  freeTier: true
+  databaseEdition: STANDARD
+  locationId: nam5
+  type: FIRESTORE_NATIVE
+
+gcloud billing projects describe oqthara
+  billingEnabled: false
+  billingAccountName: ""
+```
+
+The project is on the Firestore free tier, whose read allowances are not elastic:
+
+```
+cloudquotas quotaInfos, service firestore.googleapis.com
+  ReadOperationsPerProjectPerDay   dimensions.global = 50000
+  ReadUnitsPerProjectPerDay        dimensions.global = 50000
+  quotaIncreaseEligibility.ineligibilityReason = NOT_SUPPORTED
+```
+
+Both allowances are **per day** and `NOT_SUPPORTED` means they cannot be raised while billing is
+disabled. The quota therefore recovers on its own daily boundary. This is a transient exhaustion,
+not a permanent cap, and it is not repairable from inside this repository: every remedy either
+waits for the reset or changes the project's billing, and neither is a code change.
+
+#### What this does and does not block
+
+**The product is unaffected.** The site's GitHub fallback was exercised against the live
+production build while Firestore was returning `429`, and it works:
+
+| scenario | documentation links rendered |
+| --- | --- |
+| normal load | 18 |
+| `firestore.googleapis.com` blocked | 18 |
+| `firestore.googleapis.com` + `api.github.com` + `raw.githubusercontent.com` blocked | 0 |
+
+Blocking Firestore alone changes nothing, which proves the fallback is what is serving the
+content even when Firestore is present; blocking the GitHub hosts as well removes all 18, which
+proves those hosts are the actual source. The live `docs.html` ships no document links in its
+static HTML, so the 18 links are produced at runtime by the same code path a visitor uses. This
+also confirms the quota failure is absorbed rather than surfaced: no error state, no empty page.
+
+Note that the repository files that perform these reads (`src/firebase/*`,
+`src/repositories/*`, `src/services/content.service.js`) all exist on `origin/main`. The quota
+exposure is pre-existing production behaviour and is **not** introduced by this branch.
+
+**Verification is blocked.** These remain NOT VERIFIED, and none of them may be upgraded on the
+strength of the workflow logs alone:
+
+- A document-level inventory of the 59 mirrored records.
+- The pre-write reconciliation plan that maintainer authorization is supposed to review. A plan
+  cannot be produced without reading the current state, and inventing one would defeat its only
+  purpose.
+- The independent post-write read-back that the acceptance criterion requires.
+
+The earlier `would write 0, skip 59 unchanged` observations were genuine and were made while the
+data plane was still readable. They are historical evidence and are not reproducible today. They
+are retained above for that reason, but they cannot be re-run to satisfy the criterion now.
+
+#### Not done here, deliberately
+
+No billing change was made, no quota increase was requested, and no write was attempted. Adding
+a payment method to the production project is a maintainer decision with cost implications, and
+disabling the free tier to obtain a read is not proportionate to a verification step. The
+investigation stayed read-only as instructed.
+
+#### Recommended follow-up
+
+1. Wait for the daily reset and re-run the read-only inventory, which needs no authorization.
+2. Raise the `429` explicitly in `src/firebase/firestore.js`. `classifyFirestoreError` has no
+   `resource-exhausted` branch, so quota currently becomes `unknown` and reaches the GitHub
+   fallback only incidentally, via the `FALLBACK_CODES` membership of `unknown`. It works, but
+   for a reason nobody chose. A dedicated code with its own message would make the degradation
+   intentional and testable.
+3. Consider whether a production site should sit on the free tier at all, given that its read
+   ceiling is shared with every other use of the project and cannot be raised in place.
+
 ---
 
 ## 15. Deployment status
@@ -955,7 +1056,10 @@ an activation variable.
    `artifacts/visual-audit/`, so neither can corrupt the committed images. A guard test enforces
    this. What is *not* automated is noticing that committed screenshots have gone stale after a
    style change — that remains a review responsibility.
-4. **Production sync is unverified.** The write path has never touched production.
+4. **Production sync is unverified, and currently unverifiable.** The write path has touched
+   production (unauthorized, §14), but the data plane now returns `429` on every read, so neither
+   an inventory nor an independent read-back can be performed. §14.1. The product degrades to the
+   GitHub fallback, so this blocks verification, not the site.
 5. **Real assistive technology was not exercised**, and neither were forced-colors, print, or a
    reduced-motion-enabled session.
 6. **The screenshots were measured, not seen.** The image-viewing tool in this environment
@@ -968,6 +1072,14 @@ an activation variable.
    pulled in a `firebase-tools` release needing JDK 21. It is named here rather than omitted.
 9. **A force-with-lease push occurred earlier in this work.** It is recorded as a process
    deviation and was not repeated; no branch was force-pushed to reach this HEAD.
+10. **The production Firestore project is on the free tier with billing disabled**, so its read
+    allowance is capped at 50,000 operations per day and cannot be raised in place
+    (`quotaIncreaseEligibility: NOT_SUPPORTED`). Exhausting it does not break the site — the
+    GitHub fallback covers it, verified against the live build — but it makes production
+    unreadable for verification until the daily reset. §14.1.
+11. **Quota errors reach the fallback by accident.** `classifyFirestoreError` has no
+    `resource-exhausted` branch, so a `429` becomes `unknown`, which happens to be in
+    `FALLBACK_CODES`. The behaviour is correct and no test pins *why* it is correct.
 
 ---
 
@@ -987,27 +1099,37 @@ All 19 named requirements from the acceptance criteria, plus one deliberate twen
 | 8 | Release discovery is paginated | **PASS** | `listAllReleases`, 20×100, fails closed (`e77d688`); falsified |
 | 9 | All current review findings dispositioned | **PASS** | 10/10 threads resolved, 0 open (§4) |
 | 10 | Release/documentation consistency model implemented | **PASS** | Content carries source ref, commit SHA, and per-document hash (`d8c60f5`) |
-| 11 | Significant, distinctive visual redesign completed | **PASS** | Footer, section bands, featured cards, retuned palette, implemented type/space scale consumed by every page (§10); 29 committed screenshots |
+| 11 | Significant, distinctive visual redesign completed | **DONE, AESTHETIC NOT VERIFIED** | Footer, section bands, featured cards, retuned palette, implemented type/space scale consumed by every page (§10); 30 committed screenshots, none yet inspected by a human (§6) |
 | 12 | Light and dark themes validated | **PASS** | `e2e/theme.spec.js` per route; both pass the AA audit; 100 element geometry comparisons across themes with 0 differences (§10) |
 | 13 | Firestore authorization remains secure | **PASS** | `firestore.rules` read-only for clients, `allow write: if false`; no admin credential under `src/` |
 | 14 | Secret exposure assessment completed | **PASS** | 50-commit history scan, no credential found; `.gitignore` contract test |
 | 15 | Dependency advisories assessed | **PASS** | 19 advisories triaged: 0 critical, 4 high accepted as unreachable (§9) |
 | 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit, Firefox each 93/93 in run `42320823948`; 54 a11y checks |
 | 17 | Regression tests pass | **PASS** | 296 unit/integration (292 pass, 4 skip); 182 Playwright locally, 364 in CI across four engines; 54 a11y; 4 live |
-| 18 | Production write verified after authorization | **NOT VERIFIED** | Production **was** written by unauthorized run `42221327714` (`wrote 118 operations`); no authorized write + independent read-back exists (§14) |
+| 18 | Production write verified after authorization | **NOT VERIFIED, BLOCKED** | Production **was** written by unauthorized run `42221327714` (`wrote 118 operations`); no authorized write + independent read-back exists, and the data plane now returns `429` so neither an inventory nor a read-back is currently possible (§14.1) |
 | 19 | Compiler repository untouched | **PASS** | No commit in this branch touches the compiler repository; all 76 files are under this repo |
 | 20 | Firefox browser behaviour verified | **PASS, Linux only** | 93/93 in run `42320823948`; macOS launcher failure reproduced outside Playwright (§12) |
 | 21 | Typographic scale implemented and consumed | **PASS** | Twelve semantic roles resolving to a 1.2 modular scale; sizes 76/28/22/18/13px measured live; role test + raw-value test (§10) |
 | 22 | Spacing scale implemented and consumed | **PASS** | Twelve-rung 4px ladder plus semantic tokens; one off-grid value proven to be a `clamp()` mid-point (§10) |
 | 23 | Design tokens genuinely used, not merely declared | **PASS** | Dead tokens 24 → 0; "every declared token is consumed" test, proven falsifiable by orphaning one |
 | 24 | Merging cannot write production without authorization | **PASS** | `OQTHARA_PRODUCTION_SYNC` / `OQTHARA_DEPLOY_FIRESTORE_RULES` unset; every write step gated on the literal `true`; 7 contract tests, proven falsifiable by un-gating a workflow (§14) |
+| 25 | Production quota failure degrades safely rather than breaking the site | **PASS** | Live build served all 18 documentation links with `firestore.googleapis.com` blocked; 0 links only when the GitHub hosts were blocked too (§14.1) |
 
 **Blocked / not verified, with exact next actions:**
 
 - **#18** — complete the six §14 pre-write items, present the plan, obtain authorization,
   then execute and independently read back. Note that the premise changed: production already
   holds 59 records from an unauthorized run, so the authorized run is a reconciliation, not a
-  first write, and the plan must be reviewed against existing content.
+  first write, and the plan must be reviewed against existing content. **Additionally blocked on
+  quota (§14.1):** the production data plane returns `429 RESOURCE_EXHAUSTED` on every document
+  read because the project is on the free tier with billing disabled. The reconciliation plan
+  cannot be written until reads recover, and the read-back cannot be performed either. Both
+  allowances are per-day and reset on their own, so the correct action is to retry after the
+  reset rather than to change billing.
+- **#11** — the implementation is complete and validated mechanically (tokens consumed,
+  geometry compared across themes, accessibility audited), but "distinctive" is a judgement no
+  test can make. The 30 screenshots in `artifacts/visual-audit/` require human inspection before
+  this row can become an unqualified PASS.
 - **#20** — resolved for Linux. A macOS pass would need a working Firefox build for this host;
   nothing in the suite is at fault, and the status should not be upgraded to an unqualified
   "verified" on the strength of one platform.
