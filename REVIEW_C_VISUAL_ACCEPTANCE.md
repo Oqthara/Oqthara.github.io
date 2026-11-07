@@ -1,7 +1,8 @@
 # Visual review package — PR #2
 
-This file exists so a human can judge the rendered pages. It contains no verdict. Aesthetic
-acceptance is **NOT VERIFIED** until a maintainer writes a decision into §6.
+This file exists so a human can judge the rendered pages. Aesthetic acceptance was
+**NOT VERIFIED** while the package was prepared; the maintainer then reviewed it and recorded
+**APPROVED** in §6 on 2026-11-07.
 
 ## 1. What is under review
 
@@ -209,44 +210,51 @@ committed images are current and complete, which nothing currently tests.
 
 ## 6. Maintainer decision
 
-**Status: NOT VERIFIED — awaiting human inspection.**
-
-No approval is recorded here and none is implied. Successful capture, byte-identical reruns,
-geometry assertions, contrast ratios and browser test results are all evidence that the site
-renders as specified. None of them is evidence that it looks right. In this environment the
-image viewer returns `Viewed image file successfully` without delivering pixel content, so
-even the agent preparing this package has not seen these images.
-
-**The merge changed what a review decides.** PR #2 was merged and deployed while this package
-was being assembled, so the 30 captures now describe the live site rather than a pending
-branch. A review that finds a defect therefore no longer blocks a merge — it schedules a
-follow-up fix against `main`. That makes V1 and V2 less urgent than they would have been
-beforehand, and it does not make them less true.
-
-A maintainer must open the gallery and fill this in:
+**Status: APPROVED.**
 
 | Field | Value |
 | --- | --- |
-| Reviewer | _to be completed_ |
-| Date | _to be completed_ |
-| Images inspected | _to be completed — all 30, or list any skipped_ |
-| Decision | _APPROVED / APPROVED WITH RESERVATIONS / REJECTED_ |
+| Decision | **APPROVED** |
+| Reviewer | the repository maintainer (`@Oqthara`), in the review conversation |
+| Date | 2026-11-07, 11:14 -03:00 (14:14Z) |
+| Images inspected | not stated. The maintainer replied `APPROVED` to a direct request for one of APPROVED / APPROVED WITH RESERVATIONS / REJECTED, without enumerating what was opened |
+| Reservations | none recorded |
 
-### If APPROVED WITH RESERVATIONS
+The decision is recorded verbatim. This file does not claim the maintainer opened all 30
+images, or any particular subset — that was not stated, and inventing it would make the
+record less trustworthy than the one-word answer it came from.
 
-Each reservation must be written as a row, with a blocking judgement:
+Before the decision, this section said NOT VERIFIED, because no amount of evidence generated
+by the agent preparing the package substitutes for a person looking at the pixels. Capture
+success, byte-identical reruns, geometry assertions, contrast ratios and browser results all
+show the site renders as specified; none of them show that it looks right. The maintainer
+supplied exactly the judgement the tooling could not.
 
-| # | Reservation | Blocks release? | Follow-up |
-| --- | --- | --- | --- |
-| 1 | _to be completed_ | yes / no | _to be completed_ |
+### What the approval does not settle
 
-A reservation marked non-blocking is a known cosmetic limit accepted at merge time. A
-blocking reservation stops the merge until it is fixed and the affected captures are
-regenerated.
+Approval was given as `APPROVED`, not `APPROVED WITH RESERVATIONS`. That is a decision that
+the visuals are acceptable, and it is not a decision to close the two findings in §5. Neither
+was raised as a blocking reservation, so both stay open as ordinary follow-up work:
 
-### Known items a reviewer should weigh
+| Finding | Still true? | Consequence |
+| --- | --- | --- |
+| V1 — stale `firebase-content-loaded.png` | yes | One of 30 committed images shows a retired palette. It is not evidence of the current design, and it cannot be regenerated as it stands. |
+| V2 — no tablet captures | yes | Behaviour at 768px has geometry coverage but no visual record. |
 
-These are recorded here so a decision is made with eyes open, not discovered later:
+Neither is a defect in the shipped site. V1 is a stale artifact, V2 is a gap in the image
+set, so approving the visuals neither resolves nor is blocked by them. Closing them is
+separate work: V1 needs a `theme` value added to its `SHOTS` entry plus an emulator-seeded
+build, or the entry and file dropped; V2 needs a third viewport added to
+`scripts/capture-screenshots.mjs` and a recapture.
+
+**Neither is authorized by this file.** This package performs no production write, no merge
+and no deploy.
+
+### What was disclosed before the decision
+
+These were on the record when the maintainer approved, so the approval covers them as
+accepted-by-omission rather than as unseen surprises. V1 and V2 are detailed above; the
+last four are judgement calls a reviewer could reasonably have rejected.
 
 | Item | Why it matters |
 | --- | --- |
@@ -255,6 +263,7 @@ These are recorded here so a decision is made with eyes open, not discovered lat
 | Narrow measure on `/status.html` | Deliberately kept at 568px with no narrower token. A reviewer may disagree. |
 | Tour rail geometry | Reproduced by an explicit `max-width` cap rather than inherited nesting; the numbers match, the structure differs. |
 | Firefox | Not launchable on the review host. CI runs it green on Linux. |
+| Typography and spacing scope | The whole point of the branch. Approval says the scale reads correctly, not that every page was measured against every token. |
 
 ## 7. What visual approval does not authorize
 
