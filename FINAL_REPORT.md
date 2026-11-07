@@ -444,10 +444,17 @@ Contrast ratios are recorded inline in `assets/site.css` as computed values: `9.
 7.96` for `--fg` and `5.87 / 5.31 / 4.89` for `--fg-subtle` across the three background
 surfaces — all above the 4.5:1 AA threshold.
 
-**Screenshots.** `scripts/capture-screenshots.mjs` defines 29 shots; `npm run screenshots`
-captured all 29 with `ok`, committed in `8fbcb0f`. A 30th,
-`firebase-content-loaded.png`, is gated behind `OQ_AUDIT_FIREBASE=1` because it needs a build
-that renders from live Firestore; it was captured earlier and is retained.
+**Screenshots.** `scripts/capture-screenshots.mjs` defines 38 shots across three viewports —
+1440×1000 desktop, 768×1024 tablet, 390×844 mobile — in light and dark themes. The 29 original
+desktop and mobile shots were captured with `ok` and committed in `8fbcb0f`. The nine later
+captures (8 tablet plus a recapture of `firebase-content-loaded.png`) are added by the
+visual-audit closure pull request, together with the `TABLET` viewport that produced them.
+
+`firebase-content-loaded.png` is gated behind `OQ_AUDIT_FIREBASE=1` because it renders from a
+seeded local Firestore emulator rather than from static build output. It is reproduced with
+`npm run screenshot:firebase`, which starts the emulator, seeds it from a content checkout,
+builds with the emulator host baked in, and captures that one file — never touching the other
+37 and never contacting production.
 
 ```
 $ npm run screenshots

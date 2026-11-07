@@ -50,6 +50,11 @@ const out = join(here, "..", "artifacts", "visual-audit");
 
 const DESKTOP = { width: 1440, height: 1000 };
 const MOBILE = { width: 390, height: 844 };
+// 768x1024 is standard tablet portrait. It matters here because `assets/site.css` collapses the
+// navigation at max-width 960px, so a tablet sits in the collapsed-nav band while keeping room
+// for layouts a phone drops. Before this, the audit asserted geometry at 768px but had no image
+// showing what that band actually looks like.
+const TABLET = { width: 768, height: 1024 };
 
 /**
  * True when a CSS colour is closer to black than to white.
@@ -148,6 +153,46 @@ const SHOTS = [
   },
   { file: "example-desktop.png", route: "/example.html?path=examples%2Fanagrams.oq&ref=main", viewport: DESKTOP, theme: "light" },
   { file: "example-desktop-dark.png", route: "/example.html?path=examples%2Fanagrams.oq&ref=main", viewport: DESKTOP, theme: "dark" },
+  // Tablet coverage. The pages here are the ones whose layout changes most across the
+  // 560/760/960/1000 breakpoints, captured in both themes and with the collapsed navigation open.
+  { file: "home-tablet.png", route: "/", viewport: TABLET, theme: "light" },
+  { file: "home-tablet-dark.png", route: "/", viewport: TABLET, theme: "dark" },
+  { file: "docs-tablet.png", route: "/docs.html", viewport: TABLET, theme: "light" },
+  { file: "docs-tablet-dark.png", route: "/docs.html", viewport: TABLET, theme: "dark" },
+  {
+    file: "doc-page-tablet.png",
+    route: doc("docs/spec/language.md"),
+    viewport: TABLET,
+    theme: "light",
+    ready: "code .token",
+  },
+  {
+    file: "doc-page-tablet-dark.png",
+    route: doc("docs/spec/language.md"),
+    viewport: TABLET,
+    theme: "dark",
+    ready: "code .token",
+  },
+  {
+    file: "navigation-tablet-open.png",
+    route: "/",
+    viewport: TABLET,
+    theme: "light",
+    before: async (page) => {
+      await page.locator(".nav-toggle").click();
+      await page.locator("#site-nav[data-open='true']").waitFor();
+    },
+  },
+  {
+    file: "navigation-tablet-open-dark.png",
+    route: "/",
+    viewport: TABLET,
+    theme: "dark",
+    before: async (page) => {
+      await page.locator(".nav-toggle").click();
+      await page.locator("#site-nav[data-open='true']").waitFor();
+    },
+  },
 ];
 
 /**
@@ -164,6 +209,11 @@ if (process.env.OQ_AUDIT_FIREBASE === "1") {
     file: "firebase-content-loaded.png",
     route: doc("docs/spec/language.md"),
     viewport: DESKTOP,
+    // Declared explicitly so this capture goes through the same theme assertion as every other
+    // shot. Without it the entry could not be produced at all (the assertion compares against
+    // `shot.theme`), which is why the file committed in the audit was stale: it came from a run
+    // made before the theme assertion existed, against a palette that has since been replaced.
+    theme: "light",
     ready: '[data-source="firestore"]',
   });
 }

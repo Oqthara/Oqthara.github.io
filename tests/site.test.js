@@ -393,3 +393,43 @@ test("a measured shell adds its inline gutter back instead of eating into it", (
     "a shell that pads inline must add 2 * var(--pad-inline) to its measure",
   );
 });
+
+test("every screenshot manifest entry declares the theme its filename claims", () => {
+  // A shot without a `theme` cannot be captured: the capture script asserts the applied theme
+  // against `shot.theme`. The one entry that omitted it was also the one whose committed image
+  // went stale, so the omission is treated as a contract violation rather than a default.
+  const source = readFileSync(path.join(root, "scripts", "capture-screenshots.mjs"), "utf8");
+  const files = [...source.matchAll(/file:\s*"([^"]+\.png)"/g)].map((match) => match[1]);
+  assert.ok(files.length >= 20, `expected the manifest to be found, got ${files.length} entries`);
+  // Split on each `file:` so an entry is measured through to the next one. Entries that carry a
+  // `before:` closure contain braces, so a brace-delimited scan would skip them and quietly stop
+  // checking exactly the interactive shots most likely to drift.
+  const chunks = source.split(/(?=\bfile:\s*"[^"]+\.png")/).slice(1);
+  const missing = chunks
+    .filter((chunk) => !/\btheme:\s*"(light|dark)"/.test(chunk))
+    .map((chunk) => chunk.match(/file:\s*"([^"]+)"/)[1]);
+  assert.deepEqual(missing, [], "every manifest entry must declare an explicit light or dark theme");
+});
+
+test("the screenshot manifest covers desktop, tablet and mobile viewports", () => {
+  const source = readFileSync(path.join(root, "scripts", "capture-screenshots.mjs"), "utf8");
+  assert.match(source, /const TABLET = \{ width: 768, height: 1024 \}/, "tablet viewport is 768x1024");
+  const viewports = new Set(
+    [...source.matchAll(/viewport:\s*(DESKTOP|TABLET|MOBILE)/g)].map((match) => match[1]),
+  );
+  assert.deepEqual([...viewports].sort(), ["DESKTOP", "MOBILE", "TABLET"]);
+});
+
+test("committed screenshots on disk match the manifest, with no extras", () => {
+  const dir = path.join(root, "artifacts", "visual-audit");
+  if (!existsSync(dir)) return; // A checkout without the artifacts has nothing to check.
+  const source = readFileSync(path.join(root, "scripts", "capture-screenshots.mjs"), "utf8");
+  const declared = new Set(
+    [...source.matchAll(/file:\s*"([^"]+\.png)"/g)].map((match) => match[1]),
+  );
+  const onDisk = readdirSync(dir).filter((name) => name.endsWith(".png"));
+  const undeclared = onDisk.filter((name) => !declared.has(name));
+  assert.deepEqual(undeclared, [], "every committed screenshot must be described by the manifest");
+  const absent = [...declared].filter((name) => !onDisk.includes(name));
+  assert.deepEqual(absent, [], "every manifest entry must have a committed screenshot");
+});
