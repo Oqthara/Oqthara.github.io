@@ -272,6 +272,12 @@ test.describe("site", () => {
   });
 
   test("21. no uncaught exceptions or console errors across the routes", async ({ browser }) => {
+    // Ten routes, each in its own context and each given a settle window for backend reads, so
+    // this test spends most of its time waiting on purpose. The 30s default covers a single page
+    // and is not enough here: WebKit, the slowest engine, hit it while still inside the settle
+    // window on the last route. The budget is raised rather than the settle shortened, because
+    // the settle is what makes a failed read report against the route that caused it.
+    test.slow();
     const routes = [
       "/",
       "/philosophy.html",
