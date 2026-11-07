@@ -321,3 +321,63 @@ The consequence for the plan above is narrow but real: step 2 is a **repair of t
 record**, not the first population of an empty mirror. Whether the repair is needed at all is
 exactly what the audit has to establish, and the audit cannot currently run — it fails on
 `listCollectionIds` with the same `429` while ordinary document reads succeed from the browser.
+
+## 9. The quota split, measured
+
+Section 8 left an unresolved contradiction: the audit failed on `listCollectionIds` with `429`
+while `_site/docs.html` loaded real content from the mirror. Both halves are reproducible, and
+the split between them is now measured rather than argued.
+
+### What fails and what succeeds
+
+All measurements were taken on 2026-11-07 between 22:07 and 22:20 UTC, from one machine, against
+`projects/oqthara`:
+
+| Surface | Method | Result |
+| --- | --- | --- |
+| `documents/releases` (REST list) | `GET` | `429` |
+| `documents/docs` (REST list) | `GET` | `429` |
+| `documents/sync/catalog` (REST get) | `GET` | `429` |
+| `:runQuery` | `POST` | `429` |
+| `:batchGet` | `POST` | `429` |
+| `documents:listCollectionIds` (the audit's path) | `POST` | `429` |
+| `Listen/channel` (the SDK's read path) | `POST` | `200`, 259,305 bytes, 21 documents |
+
+Two details make the split trustworthy:
+
+* `Listen/channel` was run twice in separate browser contexts and returned the identical 259,305
+  bytes and the same 21 documents both times. The payload contains real document names such as
+  `documentation/docs__README.md` and full `fields`/`stringValue` content, so it is a document
+  read and not a handshake. The handshake frames in the same session are 54, 11, and 129 bytes.
+* Blocking `firestore.googleapis.com` with `page.route()` flips the page's `data-source` badge
+  from `firestore` to `github` and produces two `api.github.com` requests instead. The page only
+  claims the mirror when the mirror actually answered.
+
+The `429` is also scoped to this project rather than to the `firestore.googleapis.com` edge. The
+same API key against a nonexistent project returns `403 Permission denied on resource project`,
+not `429`, so unauthenticated REST calls are still reaching quota enforcement per project.
+
+### What this means
+
+The read quota is not a single pool that is simply empty. Streaming reads through the SDK still
+serve, while the REST document surface refuses. That is consistent with the daily
+`ReadOperationsPerProjectPerDay` limit applying to the REST read methods that the Admin SDK and
+the audit use, with the browser's listen stream accounting against a different allowance.
+
+The practical consequence is the one that matters for this plan: **the audit cannot run and
+`sync-firestore.mjs` cannot read its own bookkeeping**, because both use the REST surface, while
+the public site keeps working because it uses the streaming one. A site that renders is not
+evidence that the reconciliation can proceed, and earlier drafts of this document treated it as
+if it were.
+
+### The status this leaves
+
+Production still holds all 59 records at upstream `7ffb675`, written without `published: true`.
+The catalogue repair in step 2 is still required, and it is still blocked. It is blocked on the
+REST read quota for this project, which cannot be reset from inside this repository — the free
+tier resets at midnight Pacific, and `cloudquotas.googleapis.com` is disabled by design.
+
+The next viable attempt is the scheduled run after the 2026-11-08 08:00 UTC reset. If
+`readSyncState` fails with `RESOURCE_EXHAUSTED` again after that window, the cause is something
+other than the daily reset and the investigation should move to the Cloud console's quota
+dashboard rather than to more retries from here.
