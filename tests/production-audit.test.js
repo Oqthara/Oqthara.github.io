@@ -10,6 +10,7 @@ import {
   compareSyncRecord,
   decodeFields,
   recordedHashMatches,
+  resolveToken,
 } from "../scripts/audit-production.mjs";
 import { buildReleaseRecord, contentHashOf } from "../scripts/sync-firestore.mjs";
 import { COLLECTIONS, FIELDS } from "../src/firebase/collections.js";
@@ -229,4 +230,47 @@ test("the client the audit is given is never asked to write", () => {
   };
   assert.equal(typeof client.setDocument, "function");
   return assert.rejects(() => auditProduction({ client, desired: [], commit: "abc", generatedAt: NOW }), /must not write/);
+});
+
+// `resolveToken` picks the credential path that reaches live Firestore, so a bug here silently
+// disables the tool or mints a token for the wrong identity. It shipped once with two: the async
+// `loadCredentials` was not awaited, so `.ok` read `undefined` on a Promise and every call failed
+// with the reason printed as "undefined"; and the field is `serviceAccount`, not `credential`.
+// The `--token` path bypassed both, which is why they survived a passing suite.
+
+test("resolveToken needs no credential when an explicit token is supplied", async () => {
+  const result = await resolveToken({ useEnvToken: true, env: { OQ_AUDIT_TOKEN: "ya29.explicit" } });
+  assert.equal(result.ok, true);
+  assert.equal(result.token, "ya29.explicit");
+});
+
+test("resolveToken rejects an empty explicit token instead of minting one", async () => {
+  const result = await resolveToken({ useEnvToken: true, env: { OQ_AUDIT_TOKEN: "   " } });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /OQ_AUDIT_TOKEN is empty/);
+});
+
+test("resolveToken reports a genuine reason, never the string 'undefined'", async () => {
+  // No credential in the environment at all: the failure must be explained, because this is the
+  // message a maintainer sees and acts on.
+  const result = await resolveToken({ useEnvToken: false, env: {} });
+  assert.equal(result.ok, false);
+  assert.equal(typeof result.reason, "string");
+  assert.notEqual(result.reason, "undefined");
+  assert.match(result.reason, /FIREBASE_SERVICE_ACCOUNT|GOOGLE_APPLICATION_CREDENTIALS/);
+});
+
+test("resolveToken rejects a credential whose identity is not the expected service account", async () => {
+  // A well-formed key for the wrong account must stop before it is used, so a misconfigured
+  // environment cannot read production as someone else.
+  const wrongAccount = JSON.stringify({
+    type: "service_account",
+    project_id: "someone-else",
+    client_email: "not-the-auditor@someone-else.iam.gserviceaccount.com",
+    private_key: "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n",
+  });
+  const result = await resolveToken({ useEnvToken: false, env: { FIREBASE_SERVICE_ACCOUNT: wrongAccount } });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /expected/);
+  assert.match(result.reason, /someone-else/);
 });

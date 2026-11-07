@@ -486,13 +486,13 @@ export async function resolveToken({ useEnvToken = false, env = process.env } = 
     if (!token) return { ok: false, reason: "OQ_AUDIT_TOKEN is empty" };
     return { ok: true, token, source: "OQ_AUDIT_TOKEN" };
   }
-  const credentials = loadCredentials(env);
+  const credentials = await loadCredentials(env);
   if (!credentials.ok) return { ok: false, reason: credentials.reason };
-  const identity = identityOf(credentials.credential);
+  const identity = identityOf(credentials.serviceAccount);
   if (identity.clientEmail !== EXPECTED_EMAIL || identity.projectId !== EXPECTED_PROJECT) {
     return { ok: false, reason: `credential identity is ${identity.clientEmail || "(missing)"} in ${identity.projectId || "(missing)"}; expected ${EXPECTED_EMAIL} in ${EXPECTED_PROJECT}` };
   }
-  const minted = await mintAccessToken(credentials.credential);
+  const minted = await mintAccessToken(credentials.serviceAccount);
   if (!minted.ok) return { ok: false, reason: minted.reason };
   return { ok: true, token: minted.token, source: "service account" };
 }
