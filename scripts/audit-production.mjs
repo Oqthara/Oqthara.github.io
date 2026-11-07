@@ -712,10 +712,17 @@ export function formatReport(report) {
   if (!watch.present) {
     lines.push("Release watch: absent (the Alpha release watcher has not recorded state)");
   } else {
-    const pointer = watch.tag ? `${watch.tag} at ${watch.commitSha.slice(0, 7)} synced ${watch.syncedAt}` : "no successful release recorded";
+    // A malformed record is exactly the case this section exists to report, so it must not be
+    // able to abort the report that would have described it: every value is rendered defensively.
+    const shown = (value) => (value == null || value === "" ? "(missing)" : String(value));
+    const pointer = watch.tag
+      ? `${watch.tag} at ${shown(watch.commitSha).slice(0, 7)} synced ${shown(watch.syncedAt)}`
+      : "no successful release recorded";
     lines.push(`Release watch: ${watch.valid ? "valid" : "INVALID"} (status ${JSON.stringify(watch.status)}; ${pointer})`);
     if (watch.lastAttempt) {
-      lines.push(`  last attempt: ${watch.lastAttempt.result} for ${watch.lastAttempt.tag} at ${watch.lastAttempt.finishedAt}${watch.lastAttempt.detail ? ` — ${watch.lastAttempt.detail}` : ""}`);
+      const attempt = watch.lastAttempt;
+      const detail = attempt.detail ? ` — ${attempt.detail}` : "";
+      lines.push(`  last attempt: ${shown(attempt.result)} for ${shown(attempt.tag)} at ${shown(attempt.finishedAt)}${detail}`);
     }
     for (const problem of watch.problems) lines.push(`  - ${problem}`);
   }

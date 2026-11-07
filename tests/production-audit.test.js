@@ -544,3 +544,36 @@ test("the report separates the release watch from content bookkeeping", async ()
   assert.match(text, /Release watch: valid \(status "ok"; v0\.1\.0-alpha\.2 at aaaaaaa synced/);
   assert.match(text, /last attempt: ok for v0\.1\.0-alpha\.2/);
 });
+
+test("formatting a malformed release-watch record reports it instead of crashing", async () => {
+  const { auditReleaseWatch, formatReport } = await import("../scripts/audit-production.mjs");
+  // This section exists to describe broken records, so a broken record must never be able to
+  // abort the report that would have described it. `commitSha` null with `tag` set is exactly the
+  // shape that used to throw on `.slice()`.
+  const broken = {
+    tag: "v0.1.0-alpha.2",
+    status: "ok",
+    lastCheckedAt: SYNCED_AT,
+    lastAttempt: { tag: "v0.1.0-alpha.2", result: "ok", finishedAt: null, detail: "" },
+  };
+  const empty = {};
+
+  for (const fields of [broken, empty]) {
+    const report = {
+      generatedAt: NOW,
+      project: "oqthara",
+      canonical: { commit: SHA, shortCommit: "aaaaaaa", records: 0 },
+      collections: [],
+      unexpectedCollections: [],
+      countsByCollection: {},
+      tally: {},
+      dispositions: [],
+      sync: { records: 1, dispositions: [] },
+      releaseWatch: auditReleaseWatch(fields),
+      catalog: { sync: { exists: false }, metadata: { exists: false }, contract: { readable: false, problems: [] } },
+      metadata: { documents: [] },
+    };
+    const text = formatReport(report);
+    assert.match(text, /Release watch: INVALID/, "a malformed record is reported, not swallowed");
+  }
+});
