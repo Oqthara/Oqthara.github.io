@@ -1584,3 +1584,74 @@ State at this stopping point:
 
 Production synchronization is **NOT VERIFIED**. What verified is the rules deployment and the
 absence of any write. Those are different claims and are kept separate throughout.
+
+## 19. Code defects closed before the reconciliation window
+
+The closure order specified two defects to fix before any production writes, both of which would
+otherwise have corrupted the evidence used to judge the reconciliation. Neither required a
+production read, so both were finished while the quota window was closed.
+
+### 19.1 The audit misclassified the release watch as a broken document
+
+`scripts/audit-production.mjs` validated every non-catalogue document in `sync` with the content
+bookkeeping validator, which requires a `collection` and a `path`. `sync/upstream-release` has
+neither: it records which upstream release the site mirrors, so it is a different schema describing
+a different thing. The audit therefore reported a permanent `INVALID` record that was in fact
+correct.
+
+That matters more than a cosmetic warning. The reconciliation is judged by this audit, and an
+integrity check that always reports one failure trains its reader to skim past the section — which
+is precisely how a genuine failure gets missed.
+
+`auditReleaseWatch()` now validates the two shapes `buildStateUpdate()` actually writes: a success
+carrying the release pointer, and a failure carrying only the attempt. A failed record that retains
+the pointer from an earlier success stays valid, because the writer merges rather than replaces and
+losing the last known good release would be the real defect, not a symptom of one. The release
+watch is reported in its own section and excluded from the content disposition loop.
+
+A second defect surfaced while testing the first: the report formatter called `commitSha.slice()`
+whenever a tag was present, so a record whose tag survived a success but whose SHA did not threw a
+`TypeError` and killed the audit. The section exists to describe malformed records, so it must
+survive them. Every value in the section now renders defensively, printing `(missing)`.
+
+Both fixes are pinned by tests that were mutation-checked: accepting any `status`, dropping the
+SHA-40 check, dropping the `ok`-without-pointer contradiction, removing the `lastAttempt`
+requirement, and restoring the unguarded `.slice()` each produce a test failure.
+
+### 19.2 The daily sync ran before the quota it depended on had reset
+
+The Firestore free tier meters reads per Pacific day and resets at midnight Pacific. The schedule
+ran at `03:17 UTC`, which is before that reset under both PST and PDT, so every scheduled run spent
+its window on whatever remained of the *previous* day's allowance. Once that remainder was gone the
+run could not succeed at all regardless of how much work it had to do.
+
+The schedule now runs at `08:17 UTC`, after the reset in both halves of the year: midnight Pacific
+is `08:00 UTC` under PST and `07:00 UTC` under PDT. The odd minute is kept, for the original reason
+— avoiding the top-of-hour runner spike. `tests/workflow-contract.test.js` pins the hour, and was
+mutation-checked by reverting to `03:17`, which fails with
+`cron hour 3 runs before the midnight-Pacific reset under PST`.
+
+The concurrency group and the no-cancel rule are unchanged, so a scheduled sync still cannot
+overlap a rules run or be cancelled mid-batch.
+
+### 19.3 State at the end of this section
+
+| Check | Result |
+| --- | --- |
+| Commits | `c1a3d7f`, `cde44a1`, `269e3f6` |
+| `npm test` | **356 tests, 352 pass, 0 fail, 4 skipped** |
+| `actionlint` | clean, exit 0 |
+| CI on `269e3f6` | run `42408707457` → **success** — build, cross-browser suite, Pages deploy |
+| Live site | `/`, `/docs.html`, `/examples.html`, `/stdlib.html`, `/releases` routes, `/changelog.html`, `/status.html`, `/philosophy.html`, `/tour.html`, `/document.html` all **200** |
+| Active ruleset | `7702f82f-8c66-4a17-9c27-dba94aca02fb`, unchanged |
+| Production documents written | **none** |
+| `OQTHARA_PRODUCTION_SYNC` | unset |
+| `OQTHARA_DEPLOY_FIRESTORE_RULES` | unset |
+
+Production synchronization remains **NOT VERIFIED**. The next authorized attempt is after the
+`2026-11-08 08:00 UTC` reset, at which point the corrected schedule places the scheduled run inside
+a fresh window rather than in front of an exhausted one.
+
+**Status: `BLOCKED — FREE-TIER READ QUOTA EXHAUSTED BEFORE RECONCILIATION`.** Both code defects the
+order asked to correct are corrected and verified; the reconciliation itself has not happened, and
+nothing in this section claims that it has.
