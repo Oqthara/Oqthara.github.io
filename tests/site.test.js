@@ -158,3 +158,148 @@ test("the two visual scripts do not write to the same directory", () => {
     `audit-visual.mjs writes to artifacts/${audited}, which collides with the committed screenshots`,
   );
 });
+
+// --- design tokens ---------------------------------------------------------
+//
+// The typography and spacing scales live in `assets/site.css` as custom properties. A scale
+// that is only declared is a wish: these tests read the stylesheet and hold it to the same
+// contract the components are held to. Each one fails for a specific, nameable reason.
+
+const css = readFileSync(path.join(root, "assets", "site.css"), "utf8");
+// Comments in this sheet quote token names and sample values while explaining them, and a
+// naive scan reads those as declarations. Strip them before parsing so the tests measure the
+// rules rather than the prose about the rules.
+const rules = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+/** Every `--token:` declared anywhere in the sheet, mapped to its declared value. */
+function declaredTokens() {
+  const tokens = new Map();
+  for (const match of rules.matchAll(/^\s*(--[a-z0-9-]+)\s*:\s*([^;]+);/gim)) {
+    if (!tokens.has(match[1])) tokens.set(match[1], match[2].trim());
+  }
+  return tokens;
+}
+
+/** How many times `var(--token)` reads a token, as opposed to declaring it. */
+function usageCount(name) {
+  return [...rules.matchAll(new RegExp(`var\\(\\s*${name}\\b`, "g"))].length;
+}
+
+test("every declared design token is consumed by at least one rule", () => {
+  // This is the test the spacing order actually asks for: a token system that exists only in
+  // CSS and is ignored by the components is worse than no system, because it reads as done.
+  // Four load-bearing tokens were dead when this was written; a rung nothing consumes is a
+  // lie about the scale.
+  const unreachable = [...declaredTokens()].filter(([name]) => usageCount(name) === 0);
+  assert.deepEqual(
+    unreachable.map(([name]) => name),
+    [],
+    "each token below is declared but no rule reads it with var()",
+  );
+});
+
+test("the spacing ladder is an exact 4px scale with no missing rung", () => {
+  // The order names twelve rungs; a scale with a hole in it is not a scale. Values are checked
+  // in rem so the ladder survives a reader who sets a larger default font size.
+  const expected = [4, 8, 12, 16, 24, 32, 40, 48, 64, 80, 96, 128];
+  const tokens = declaredTokens();
+  for (const [index, px] of expected.entries()) {
+    const name = `--space-${index + 1}`;
+    const value = tokens.get(name);
+    assert.ok(value, `${name} must exist: the ladder runs 1-12 with no gaps`);
+    const rem = value.match(/^([\d.]+)rem$/);
+    assert.ok(rem, `${name} must be expressed in rem, found "${value}"`);
+    assert.equal(
+      Math.round(Number(rem[1]) * 16),
+      px,
+      `${name} must be ${px}px`,
+    );
+  }
+});
+
+test("each typographic role names a step of the modular scale", () => {
+  // Thirteen roles, every one of them a token. The typography order asks for these by name; if
+  // one is missing, the component that needed it fell back to a raw size somewhere.
+  const roles = [
+    "--text-display",
+    "--text-page-title",
+    "--text-section",
+    "--text-subsection",
+    "--text-body",
+    "--text-secondary",
+    "--text-caption",
+    "--text-label",
+    "--text-nav",
+    "--text-button",
+    "--text-inline-code",
+    "--text-code",
+  ];
+  const tokens = declaredTokens();
+  for (const role of roles) {
+    assert.ok(tokens.has(role), `${role} must be declared`);
+    assert.match(tokens.get(role), /var\(--step-|em$/, `${role} must resolve to the scale`);
+  }
+});
+
+test("the light and dark appearances declare the same colour tokens", () => {
+  // A token that exists in one appearance only is a hole a component falls through: the light
+  // theme gets the intended colour and the dark theme inherits whatever :root happened to set.
+  // Both light blocks (the explicit choice and the system preference) must match dark exactly.
+  const block = (selector) => {
+    const start = rules.indexOf(selector);
+    assert.ok(start >= 0, `${selector} must exist`);
+    const open = rules.indexOf("{", start);
+    let depth = 0;
+    let end = open;
+    for (let i = open; i < rules.length; i += 1) {
+      if (rules[i] === "{") depth += 1;
+      else if (rules[i] === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    return rules.slice(open, end);
+  };
+  // Only colour tokens are compared. A theme block may also re-declare a non-colour token
+  // (print sets its own leading), and that is a different concern from a missing colour.
+  const COLOUR = /^(#|rgba?\(|hsla?\(|color-mix\(|linear-gradient\(|transparent$|none$)/;
+  const colours = (source) =>
+    [...source.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)]
+      .filter((match) => COLOUR.test(match[2].trim()))
+      .map((match) => match[1])
+      .sort();
+
+  const dark = colours(block("\n:root {"));
+  const light = colours(block(':root[data-theme="light"] {'));
+  const system = colours(block(':root:not([data-theme="dark"]) {'));
+
+  assert.ok(dark.length > 20, "the dark block must actually declare colour tokens");
+  assert.deepEqual(light, dark, "the light theme must declare exactly the dark colour tokens");
+  assert.deepEqual(system, dark, "the system light block must match the explicit light block");
+});
+
+test("no rule sets a type size or leading outside the scale", () => {
+  // Raw sizes are how a scale rots: one component needs "a bit bigger" and the system stops
+  // describing what the page does. Print is the documented exception -- points are a physical
+  // unit and the browser's base size must not change them -- and `inherit` is a reset.
+  const allowed = [/^inherit$/, /^\d+pt$/];
+  const raw = [];
+  for (const rule of rules.matchAll(/^\s*(font-size|line-height)\s*:\s*([^;]+);/gm)) {
+    const value = rule[2].trim();
+    if (value.startsWith("var(") || allowed.some((ok) => ok.test(value))) continue;
+    raw.push(`${rule[1]}: ${value}`);
+  }
+  assert.deepEqual(raw, [], "these sizes bypass the type scale");
+});
+
+test("the code block size is not overruled by the inline code ratio", () => {
+  // `code` styles every code element, including the ones inside `pre`. A ratio there compounds
+  // with the block's own size and silently wins, which is how the shipped block rendered at
+  // 12px while `--text-code` promised 13px. Only inline code may size itself by ratio.
+  const bare = rules.match(/^code\s*\{([^}]*)\}/m);
+  assert.ok(bare, "expected a bare `code` rule");
+  assert.doesNotMatch(bare[1], /font-size/, "`code` must not set a size that pre then inherits");
+});
