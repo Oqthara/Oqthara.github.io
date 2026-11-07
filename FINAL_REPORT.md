@@ -1,12 +1,19 @@
 # Oqthara website — production readiness report
 
-Branch `feat/alpha-automation-and-hardening` at `332ed84`. Baseline
+Branch `feat/alpha-automation-and-hardening`. Baseline
 `3be0388e2d6bb41956c0c03482d2a40f847cc648` (`origin/main`). Pull request
 [#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) is **open and mergeable**.
 
-The report states the tip it describes on purpose: a document that names a commit it has drifted
-past is a document nobody can check. Earlier revisions named `770ac82`, and the CI and
-production-write findings below have moved since.
+Every claim about code below is pinned to a specific commit, but not all of them to the same
+one, because they changed at different times. **`e4316ab` is the last commit that changes a
+shipped asset** — every commit after it is documentation. So when checking a measurement, verify
+it against `e4316ab`; when checking a statement *about* the measurements, verify it against the
+commit named beside it.
+
+That split is deliberate. Pinning the code claims to the branch tip would make this file wrong on
+its own next commit, and it has already been wrong that way: earlier revisions named `770ac82`
+as the tip, quoted 27 commits when there were 36, and quoted 33 when there were 43. A stale tip
+in a header is the failure mode, not a cosmetic detail.
 
 Every claim below is backed by a command that was executed and whose output is quoted. Where
 a requirement was not exercised, it says **NOT VERIFIED** and names the next action. Nothing
@@ -21,7 +28,7 @@ here is merged, deployed, or written to production Firestore.
 | Baseline | `3be0388e2d6bb41956c0c03482d2a40f847cc648` | `origin/main` when this work began |
 | Security and release work | `..8fbcb0f` | the 27 commits §3–§9 evidence |
 | Typography and spacing work | `8fbcb0f..dfea46f` | six commits: tokens, tests, cross-browser CI, screenshots |
-| Report commits | `35df02f..HEAD` | prose plus one end-to-end timeout fix; no site CSS |
+| Report commits | `35df02f..HEAD` | prose, plus the gate change in `e4316ab`; no site CSS |
 | Branch total | read it, do not trust a number here | `git log --oneline origin/main..HEAD \| wc -l` |
 
 Counts are stated against an explicit SHA on purpose, and deliberately not restated for the tip.
@@ -1047,8 +1054,8 @@ the suite fail.
 
 | property | value |
 | --- | --- |
-| Head | `332ed84` |
-| Commits ahead of `main` | 52 as of `332ed84` — the commit carrying this file adds a 53rd, which is why the count is pinned to a SHA and not to "now" |
+| Head when written | `ab31c6f` (documentation); `e4316ab` is the last commit touching a shipped asset |
+| Commits ahead of `main` | read it: `git rev-list --count origin/main..HEAD`. Not restated here — the file cannot count its own commits correctly, and pretending otherwise is what produced two earlier wrong figures |
 | Working tree | clean |
 | Mergeable | yes, per GitHub |
 | Latest CI on this head | `42332279851` — **success**; `Build the static site` success, `Cross-browser suite` success (364 passed, 4 engines), `Deploy to GitHub Pages` skipped |
