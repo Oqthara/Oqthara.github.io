@@ -29,8 +29,13 @@ on:
         type: boolean
         default: false
   schedule:
-    # Daily at 03:17 UTC. A fixed odd minute avoids the top-of-hour runner spike.
-    - cron: "17 3 * * *"
+    # Daily at 08:17 UTC. Two constraints meet here:
+    #   * The Firestore free-tier daily read quota resets at midnight Pacific, which is 08:00 UTC
+    #     under PST and 07:00 UTC under PDT. 08:17 UTC is always after the reset, in both halves
+    #     of the year, so a run never competes with the previous day's exhausted allowance.
+    #   * A fixed odd minute avoids the top-of-hour runner spike.
+    # Running before the reset burned a whole window on 2026-11-07: 8 RESOURCE_EXHAUSTED.
+    - cron: "17 8 * * *"
   repository_dispatch:
     types: [content-updated]
 

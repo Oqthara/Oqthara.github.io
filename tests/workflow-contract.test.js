@@ -599,3 +599,28 @@ describe("workflow files are valid YAML", () => {
     }
   });
 });
+
+describe("firebase-sync schedule", () => {
+  // The Firestore free tier meters reads per Pacific day and resets at midnight Pacific, which is
+  // 08:00 UTC under PST and 07:00 UTC under PDT. A run scheduled before the reset spends its whole
+  // window against the previous day's exhausted allowance: that is exactly what happened on
+  // 2026-11-07, when the 03:17 UTC run died at 8 RESOURCE_EXHAUSTED before writing anything.
+  it("runs after the Pacific quota reset in both PST and PDT", async () => {
+    const text = await workflow("firebase-sync.yml");
+    const match = text.match(/^ {4}- cron: "(\d+) (\d+) \* \* \*"$/m);
+    assert.ok(match, "firebase-sync.yml must have a single daily cron entry");
+    const [, minute, hour] = match.map(Number);
+    assert.equal(match[1], "17", "a fixed odd minute avoids the top-of-hour runner spike");
+    // 08:00 UTC is the latest reset instant (midnight PST). Any hour strictly below 8 would run
+    // before the reset during standard time.
+    assert.ok(hour >= 8, `cron hour ${hour} runs before the midnight-Pacific reset under PST`);
+    assert.ok(hour <= 10, `cron hour ${hour} drifts needlessly far from the reset`);
+    assert.ok(minute >= 0 && minute < 60);
+  });
+
+  it("keeps the shared concurrency group so a sync never races the rules job", async () => {
+    const text = await workflow("firebase-sync.yml");
+    assert.match(text, /^\s+group: firestore-mirror$/m);
+    assert.match(text, /cancel-in-progress: false/, "cancelling mid-write would leave a partial batch");
+  });
+});

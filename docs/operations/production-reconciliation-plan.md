@@ -27,6 +27,13 @@ source records from `Oqthara/oqthara@main` at `7ffb675` before the Firestore rea
 inside `readSyncState`, which is upstream of `planSync` and of every write. The content sync must be
 re-run after the quota boundary.
 
+The daily schedule was itself part of the problem. `firebase-sync.yml` ran at `03:17 UTC`, which is
+before midnight Pacific under both PST and PDT, so a scheduled run always spends its window on the
+previous day's remaining allowance — and once that allowance is gone, the run cannot succeed at all.
+The schedule now runs at `08:17 UTC`, which is after the reset in both halves of the year (08:00 UTC
+under PST, 07:00 UTC under PDT). `tests/workflow-contract.test.js` pins the hour so it cannot drift
+back in front of the reset.
+
 This plan compares the live Firestore database in project `oqthara` against the canonical content in
 `Oqthara/oqthara`. It is a read-only result: the audit that produced it has no write path, and every
 activation gate remains unset.
