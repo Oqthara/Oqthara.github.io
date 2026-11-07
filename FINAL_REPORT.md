@@ -1062,11 +1062,18 @@ variables, both **unset**, and every production-writing step in `alpha-release-s
 string `true`. The unset default is "detect, plan, validate, report that nothing was written".
 Seven contract tests pin this, including the negative case.
 
-### 14.1 The production data plane is quota-blocked (read-only investigation)
+### 14.1 The production data plane *was* quota-blocked — since resolved
 
-The authorized read-only investigation could not enumerate production documents. Every
-Firestore **data-plane** read returns `429 RESOURCE_EXHAUSTED`, with or without a credential.
-The cause is the billing state of the `oqthara` Google Cloud project, not authentication.
+> **Superseded.** The quota recovered. A read-only audit then read production successfully and
+> produced the inventory this section says was impossible. The canonical result now lives in
+> `docs/operations/production-reconciliation-plan.md`: 59 content documents, 57 `MATCH`,
+> 2 `UPDATE`, the `metadata` collection absent. What follows is retained because it explains why
+> the earlier attempts failed, not because it is still true.
+
+When first investigated, the authorized read-only investigation could not enumerate production
+documents. Every Firestore **data-plane** read returned `429 RESOURCE_EXHAUSTED`, with or without
+a credential. The cause was the billing state of the `oqthara` Google Cloud project, not
+authentication.
 
 | probe | credential | result |
 | --- | --- | --- |
@@ -1134,11 +1141,15 @@ exposure is pre-existing production behaviour and is **not** introduced by this 
 **Verification is blocked.** These remain NOT VERIFIED, and none of them may be upgraded on the
 strength of the workflow logs alone:
 
-- A document-level inventory of the 59 mirrored records.
-- The pre-write reconciliation plan that maintainer authorization is supposed to review. A plan
-  cannot be produced without reading the current state, and inventing one would defeat its only
-  purpose.
-- The independent post-write read-back that the acceptance criterion requires.
+- ~~A document-level inventory of the 59 mirrored records.~~ **Since obtained.** A read-only
+  audit read production directly once the quota recovered, and produced the inventory. See
+  `docs/operations/production-reconciliation-plan.md`.
+- ~~The pre-write reconciliation plan that maintainer authorization is supposed to review.~~
+  **Since produced and approved.** The reads recovered, the plan was written from them, and the
+  maintainer approved it as a plan on 2026-11-07. Executing it is separately authorized and has
+  not been requested; both activation gates remain unset.
+- The independent post-write read-back that the acceptance criterion requires. Still
+  unperformable, because nothing has been written.
 
 The earlier `would write 0, skip 59 unchanged` observations were genuine and were made while the
 data plane was still readable. They are historical evidence and are not reproducible today. They
@@ -1311,7 +1322,7 @@ beyond them. The rows are the report's claims, not the original checklist's shap
 | 15 | Dependency advisories assessed | **PASS** | 19 advisories triaged: 0 critical, 4 high accepted as unreachable (§9) |
 | 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit, Firefox each 92 passed / 2 skipped in `42387062654` (368 passed, 8 skipped, 0 failed); 54 a11y checks |
 | 17 | Regression tests pass | **PASS** | 299 unit/integration (295 pass, 4 skip); 94 Playwright locally (92 pass, 2 skip), 364 in CI across four engines (`42343212890`); 27 a11y; 4 live |
-| 18 | Production write verified after authorization | **NOT VERIFIED, BLOCKED** | Production **was** written by unauthorized run `42221327714` (`wrote 118 operations`); no authorized write + independent read-back exists, and the data plane now returns `429` so neither an inventory nor a read-back is currently possible (§14.1) |
+| 18 | Production write verified after authorization | **NOT VERIFIED, BLOCKED** | Production **was** written by unauthorized run `42221327714` (`wrote 118 operations`); no authorized write + independent read-back exists. The inventory half is now done — production reads recovered and the reconciliation plan documents all 59 records — but a read-back requires a write, and no write has been authorized (§14.1) |
 | 19 | Compiler repository untouched | **PASS** | No commit in this branch touches the compiler repository; all 76 files are under this repo |
 | 20 | Firefox browser behaviour verified | **PASS, Linux only** | 92 passed / 2 skipped in `42387062654` on the current head; macOS launcher failure reproduced outside Playwright (§12) |
 | 21 | Typographic scale implemented and consumed | **PASS** | Twelve semantic roles resolving to a 1.2 modular scale; sizes 76/28/22/18/13px measured live; role test + raw-value test (§10) |
@@ -1342,6 +1353,9 @@ beyond them. The rows are the report's claims, not the original checklist's shap
 - **#20** — resolved for Linux. A macOS pass would need a working Firefox build for this host;
   nothing in the suite is at fault, and the status should not be upgraded to an unqualified
   "verified" on the strength of one platform.
+- **Reconciliation plan** — the plan was approved as a plan on 2026-11-07. That is a decision
+  about what would be done, not permission to do it: no production document has been written,
+  no ruleset has been deployed, and both activation gates remain unset.
 
 Rows 1–19 are the original nineteen requirements. Rows 20–23 were added deliberately: Firefox
 coverage is a scored line rather than a footnote, and the typography and spacing system gets

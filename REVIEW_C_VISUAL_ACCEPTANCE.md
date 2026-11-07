@@ -339,7 +339,7 @@ authorization, and it does not unlock the blocked data work.
 | `OQTHARA_PRODUCTION_SYNC` | **unset — writes disabled** | maintainer, in repository settings |
 | `OQTHARA_DEPLOY_FIRESTORE_RULES` | **unset — deploys disabled** | maintainer, in repository settings |
 | Production Firestore writes | **NOT PERFORMED by this branch's tooling** | maintainer authorization required, separately |
-| Document-level reconciliation plan | **NOT APPROVED** | maintainer review, separately |
+| Document-level reconciliation plan | **APPROVED as a plan, 2026-11-07** | execution still requires per-step authorization; both activation gates unset |
 | Merge of PR #2 | **DONE — merged by the maintainer as `9d9a41a`** | already happened, outside this review |
 | Deploy | **DONE — GitHub Pages deployed `9d9a41a`** | already happened, outside this review |
 
@@ -360,8 +360,9 @@ Visual approval does not change the remaining rows:
   GitHub and then `skip 59 unchanged` — and a record can only be classified unchanged by
   comparing its `contentHash` against the stored document, which means all 59 Firestore
   documents were read from the `oqthara` project. A fresh unauthenticated probe now answers
-  `403`, not `429`. So the state *can* be read; what remains outstanding is the
-  document-level reconciliation plan, which is still unapproved.
+  `403`, not `429`. So the state *can* be read. The document-level reconciliation plan was
+  approved as a plan on 2026-11-07; executing any of its four steps is separately
+  authorized and none has been requested, so both activation gates remain unset.
 - It does not make the credential-free dry run meaningful. That run has no credential, sees
   an empty mirror, and reports a plan that understates the change by the entire dataset.
 

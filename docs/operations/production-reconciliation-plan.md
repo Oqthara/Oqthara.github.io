@@ -1,6 +1,13 @@
 # Production Firestore reconciliation plan
 
-Status: **AWAITING MAINTAINER APPROVAL**. Nothing in this document has been applied.
+Status: **PLAN APPROVED — EXECUTION NOT AUTHORIZED**. Nothing in this document has been applied.
+
+The repository maintainer replied `APPROVED` on 2026-11-07 in response to a report that stated this
+plan was awaiting approval. That approves the plan as a description of what would be done. It is
+**not** authorization to do it: §6 fixes a four-step sequence in which no step implies the next, and
+approving this document does not enable either activation gate. As of this writing both
+`OQTHARA_PRODUCTION_SYNC` and `OQTHARA_DEPLOY_FIRESTORE_RULES` remain unset, no production
+document has been written, and no ruleset has been deployed.
 
 This plan compares the live Firestore database in project `oqthara` against the canonical content in
 `Oqthara/oqthara`. It is a read-only result: the audit that produced it has no write path, and every
@@ -202,6 +209,9 @@ Step 1 must precede step 2. Writing `metadata/catalog` first would produce a doc
 read, which is a worse state than its current absence because it would look reconciled.
 
 Each step needs its own authorization. None is implied by approving this document.
+
+**Step 1 is the next actionable item and it is still unauthorized.** Approving this plan was not a
+request to deploy rules, so the deploy gate stays unset until that step is asked for by name.
 
 ---
 
