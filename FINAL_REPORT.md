@@ -17,41 +17,37 @@ here is merged, deployed, or written to production Firestore.
 | Baseline | `3be0388e2d6bb41956c0c03482d2a40f847cc648` | `origin/main` when this work began |
 | Security and release work | `..8fbcb0f` | the 27 commits §3–§9 evidence |
 | Typography and spacing work | `8fbcb0f..dfea46f` | six commits: tokens, tests, cross-browser CI, screenshots |
-| Report commits | `35df02f..770ac82` | prose and one end-to-end timeout fix; no site CSS |
-| Branch total at `770ac82` | 43 commits | 76 files, `+13,963 / −2,103` |
+| Report commits | `35df02f..HEAD` | prose plus one end-to-end timeout fix; no site CSS |
+| Branch total | read it, do not trust a number here | `git log --oneline origin/main..HEAD \| wc -l` |
 
-Counts are stated against an explicit SHA on purpose. A branch total is a snapshot, and a report
-that quotes one without saying when it was true becomes wrong on its own next commit. The
-figures below were read at `770ac82`:
+Counts are stated against an explicit SHA on purpose, and deliberately not restated for the tip.
+A branch total is a snapshot; a report that quotes one without saying when it was true is wrong
+on its own next commit, and a report that *does* say when it was true still invites a reader to
+treat an old number as current. This file has already been wrong twice that way — once quoting 27
+commits after there were 36, and once quoting a 33-commit figure in the pull request after there
+were 43.
+
+The figures that matter are the ones that describe code under test, and those are pinned to
+`dfea46f`, the last commit that changes a shipped asset:
 
 ```
-$ git log --oneline origin/main..HEAD | wc -l
-43
-
-$ git diff --shortstat origin/main..HEAD
- 76 files changed, 13963 insertions(+), 2103 deletions(-)
-
 $ git diff --shortstat origin/main..dfea46f
  76 files changed, 13963 insertions(+), 2103 deletions(-)
 
-$ git log --oneline 8fbcb0f..HEAD
-770ac82 Give the route sweep the time it actually needs
-ace1cc6 Install every engine the cross-browser job asks for
-dfea46f Refresh the committed screenshots after the token work
-f7a7b3f Install both engines in the cross-browser job
-82c7ed8 Give Firefox a supported environment to prove itself on
-5d5b27c Add design-token contract tests to keep the scale honest
-24e0203 Wire the typography and spacing tokens into the components that ignored them
-0a60328 docs: cite the run that verifies this report on its current commit
-e801804 docs: correct what the CI history actually shows
-f60e637 docs: stop the report naming a tip that is no longer the tip
-35df02f docs: record the screenshot separation in the report
-57cfc81 fix(visual): stop the audit overwriting the committed screenshots
-6062ee7 docs: cite the run that verifies this report, not just the one before it
-89bb31a docs: anchor the report's totals to the last code commit
-a5baac7 docs: count the report's own commit in its totals
-fa55d20 docs: report the work against the acceptance criteria it was given
+$ git diff --stat dfea46f..HEAD -- assets/ src/ scripts/
 ```
+
+The second command prints nothing. That empty result is the claim worth making: no commit after
+`dfea46f` touches `assets/`, `src/`, or `scripts/`, so the stylesheet, the components, and the
+screenshot and audit tooling are byte-identical to what the gates in §13 measured.
+
+What *did* change after `dfea46f` is three files, none of which the gates depend on for a
+different conclusion: this report, the `test.slow()` fix in `e2e/site.spec.js`, and eleven lines
+of `.github/workflows/pages.yml` that gave the cross-browser job its engines. The last of those
+is what made Firefox verifiable, so it is a change the evidence depends on rather than one it
+survives despite.
+
+Commit counts for the branch as a whole have moved and will keep moving. Read them from git.
 
 The working tree was clean (`git status --porcelain` → empty) before each of the seven gates in
 §13 was run.
@@ -107,8 +103,10 @@ Oldest first, as GitHub orders them on the PR.
 | `ace1cc6` | `ci` — install every engine the cross-browser job asks for |
 | `dfea46f` | `docs(visual)` — refresh the committed screenshots after the token work |
 | `770ac82` | `test(e2e)` — give the route sweep the time it actually needs |
+| `583c8aa` | `docs` — report the design system and the Firefox result that was verified |
 
-Every commit is focused on one concern and was gated before the next was started.
+Every commit is focused on one concern and was gated before the next was started. The table above
+is not a complete branch listing and should not be counted as one; use `git log`.
 
 ---
 
