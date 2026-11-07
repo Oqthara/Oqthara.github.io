@@ -116,6 +116,20 @@ Oldest first, as GitHub orders them on the PR.
 | `dfea46f` | `docs(visual)` — refresh the committed screenshots after the token work |
 | `770ac82` | `test(e2e)` — give the route sweep the time it actually needs |
 | `583c8aa` | `docs` — report the design system and the Firefox result that was verified |
+| `67d3a3c` | `docs` — stop restating commit counts the report cannot keep true |
+| `9b6ab97` | `docs` — count the contract tests correctly |
+| `48da910` | `docs` — correct three count errors in the design-system section |
+| `0b85925` | `docs` — cite the CI run that covers the branch tip |
+| `e4316ab` | `fix(ci)` — gate every production Firestore write behind an explicit opt-in |
+| `c6434bc` | `docs` — correct the record: production has already been written |
+| `2b96187` | `docs` — record deployment readiness and the evidence behind it |
+| `332ed84` | `docs` — ask a human to look at the screenshots |
+| `3d5f779` | `docs` — hand off the branch with the evidence a reviewer needs |
+| `ab31c6f` | `docs` — plan the read-only sync, and record what it cannot tell you |
+| `6aaa143` | `docs` — stop chasing the tip in the report header |
+| `f7a9c2d` | `docs` — record that production is unreadable, not merely unverified |
+| `bff6441` | `fix(site)` — give the tour page the documentation reading measure |
+| `6f2a3ee` | `fix(css)` — measure prose in pixels, not in `ch`, and cap the rail pages |
 
 Every commit is focused on one concern and was gated before the next was started. The table above
 is not a complete branch listing and should not be counted as one; use `git log`.
@@ -494,6 +508,16 @@ audit scripts (which write to `artifacts/visual-audit-routes/`; see §8).
 The 404 and Firebase captures have no dark counterpart; there is no dark 404 route captured, and
 saying so is better than implying the grid is complete.
 
+**These images predate the reading-measure fix.** They were captured at `dfea46f`, before
+`bff6441` and `6f2a3ee` narrowed the prose measure from 770/685px to 568px and gave the tour its
+missing `.doc`. A reviewer comparing them against the current build is comparing against a state
+that no longer exists: the committed tour screenshot in particular shows prose at 16px across
+872px, which is the defect, not the fixed state. Recapturing is deliberately left to a separate
+commit so that the images and the code they depict are reviewed as one change rather than mixed
+into a typography fix. Until then, inspect the current rendering with
+`npm run audit:visual`, which writes to `artifacts/visual-audit-routes/` and does not touch this
+committed set.
+
 ### What a reviewer is being asked to judge
 
 These eight questions are the aesthetic judgement this report cannot make. They are phrased as
@@ -521,7 +545,7 @@ If any answer is "no", that is the finding. This report has no mechanism to have
 | Claim | Basis | Status |
 | --- | --- | --- |
 | No horizontal overflow, 10 routes × 2 themes × 4 viewports | programmatic, from real geometry | **PASS** |
-| Prose measure ≤ 69 characters at 1024–1440px | counted from rendered paragraph boxes | **PASS** |
+| Prose measure ≤ 69 characters at 1024–1440px | whole-word Range bucketing, 8 pages × 6 viewports | **PASS** |
 | Body 18px/31, code 13px/22 | computed styles | **PASS** |
 | Light and dark identical in geometry | 100 element comparisons, 0 differences | **PASS** |
 | Contrast, focus, tap targets | `npm run audit:visual`, 57/57 | **PASS** |
@@ -580,7 +604,38 @@ keep `--surface-2`. `a.card:hover` still keeps its `transform: translateY(-2px)`
 two layers but is consumed through `drop-shadow()`, which accepts exactly one — the whole filter
 was being discarded. It is now a single layer.
 
-**Guard tests.** Six contract tests in `tests/site.test.js` keep this from drifting back:
+**Two further defects surfaced during visual validation.** Both were shipped defects that the
+numeric audit had not caught, and both are recorded here with before-and-after numbers rather
+than as assertions that they are fixed.
+
+*Tour defect — a stylesheet comment that described nothing.* `TourPage.jsx` is hand-built, so
+nothing in its markup tied it to the Markdown renderer. It emitted `class="doc-article tour-body"`
+where every documentation page emits `.doc-article` **and** `.doc`. The `.doc` element is the one
+carrying `--measure-prose`, `--text-lead` and `--leading-doc`; the wrapper carries the layout only.
+Tour prose therefore rendered at 16px across an 872px grid track — **89 characters per line**
+against 69 on every real documentation page, 10px smaller than the intended body size, with the
+looser generic leading. The comment immediately above the related rules claimed the tour reused
+"the same reading measure", which is precisely the kind of claim that becomes false because it is
+in a comment instead of a test. Fixed in `bff6441` by adding the class, and by adding a contract
+test that walks every built page, finds elements carrying a prose shell (`doc-article`,
+`tour-body`), and requires `.doc` on the same element. The test fails against the old markup and
+passes with the fix.
+
+*Measure defect — a unit that does not mean what it reads as.* Documented in full in §10. In
+short: `--measure-prose: 68ch` resolved to 770px and 685px across its two consumers and rendered
+up to 91 characters on `/stdlib.html`. Fixed in `6f2a3ee`.
+
+*The measure fix had a geometric side-effect, which was then closed.* Narrowing the prose track
+from 770px to 568px exposed that `.doc-with-toc` on pages outside `.docs-layout` — the tour — was
+placing its `1fr` prose track directly in `.content` with no rail cap. The rail sat **360px** from
+the text it annotates, up from 134px before the change. Closing the hole required the prose width
+to be right first, not the rail: the page is now capped at
+`calc(var(--measure-prose) + var(--doc-toc) + var(--space-6))` = **840px**, which is exactly the
+`.docs-main` geometry (568 + 32 + 240), and the gap is **32px** — identical to documentation. A
+first attempt at 34rem (544px) was wrong and was reverted: it regressed documentation from its
+already-correct 568px and would have opened the hole wider.
+
+**Guard tests.** Eight contract tests in `tests/site.test.js` keep this from drifting back:
 
 | Test | Fails when |
 |---|---|
@@ -590,13 +645,25 @@ was being discarded. It is now a single layer.
 | the light and dark appearances declare the same colour tokens | a colour exists in one theme only |
 | no rule sets a type size or leading outside the scale | a raw `rem`/`px` value appears |
 | the code block size is not overruled by the inline code ratio | the 12px regression returns |
+| every prose shell carries the reading measure | a hand-built page emits `doc-article`/`tour-body` without `doc` |
+| the reading measures are absolute, not font-relative | a `--measure-*` token returns to `ch`, `ex`, or `em` |
 
-All six were proven falsifiable by planting a regression and confirming the intended test failed:
-a raw `font-size: 13px` on `code`, a deleted `--fg-muted` from the light block, and an orphaned
-`--space-13`. A test that has never failed is not known to be capable of failing.
+Three of these were proven falsifiable by planting a regression and confirming the intended test
+failed: a raw `font-size: 13px` on `code`, a deleted `--fg-muted` from the light block, and an
+orphaned `--space-13`. The two added in this pass were each confirmed the same way, against the
+exact defect they now guard: `class="doc-article tour-body"` without `doc` made the prose-shell
+test fail, and `--measure-prose: 68ch` made the measure-unit test fail. Both were then restored
+and both pass. The remaining three have not been individually falsified, and this report is not
+going to describe them as proven.
 
-An earlier draft of this section said seven. There are six. The count was wrong, not the tests —
-and the fix is to correct it here rather than add a seventh test to match the sentence.
+The measure-unit test needed one correction of its own before it was trustworthy: the first
+pattern, `/(ch|ex|em)$/`, matched the `em` suffix of `rem`, so it would have rejected the correct
+value. It reads `/(?:^|[\d.])(ch|ex|em)$/` now. This is worth recording because a guard test that
+fails on correct input invites the fix of loosening it until it guards nothing.
+
+An earlier draft of this section said seven tests. Six token tests existed then, and eight exist
+now; the count was wrong, not the tests, and the fix is to correct it here rather than pad the
+suite to match a sentence.
 
 One trap is worth recording: the stylesheet quotes token names inside explanatory comments, so a
 naive scan reads those as declarations. The light block's contrast-ratio comment contains
@@ -609,22 +676,60 @@ across route, theme, and viewport: `h1` 76px/82 desktop and 48px/52 mobile via `
 weight 550, buttons 16px on 12/24 padding, badges 12px. A sweep of 10 routes × 2 themes × 4
 viewports (320/390/768/1440) found zero horizontal overflow and zero clipped text.
 
-**Reading measure, measured rather than assumed.** Wrapped prose tops out at **69 characters per
-line** at 1024, 768, and 1440px — consistent with `--measure-prose: 68ch` — falling to 46 at 390px
-and 42 at 320px, where the viewport rather than the token sets the limit. That is inside the
-45–75 character band long-form guidance recommends.
+**Reading measure, measured rather than assumed.** This section previously reported a 69-character
+maximum credited to `--measure-prose: 68ch`. Both halves of that were wrong, and the way they were
+wrong is the reason this section now records a method before it records a number.
+
+*The token did not mean 68 characters.* CSS `ch` is the advance of the "0" glyph, not an average
+character. At the 18px documentation size `ch` measured **10.881px** while average prose measured
+**~6.037px** — a **1.80×** ratio. So `68ch` was 770px, roughly 123 average characters wide, not 68.
+Worse, the ratio is itself font-size dependent: at 13px `ch` is 9.766px against an 8.078px average,
+only 1.21×. There is therefore no "N ch equals M characters" conversion at any single value, and the
+unit cannot express a character measure at all.
+
+*The token was not even one width.* Its consumers set different font sizes, so one declared value
+produced two: **770px** inside `.doc`, where the consumer sets 18px, and **685px** inside
+`.page-head`, where the consumer sets 16px. A token that resolves to two widths 12% apart is not
+naming a measure.
+
+*The first measurement method was also wrong.* Counting a collapsed caret per character
+under-counts, because the space between words produces no rect; dividing `text.length` by line
+count over-counts, because the last line of a paragraph is short. The only method that holds is
+whole-word bucketing: one `Range` per `/\S+/` token across every text node, bucketed by
+`Math.round(rect.top)`, accumulating `word.length + 1` for the implicit space. Elements are
+filtered to `textContent.trim().length >= 120`, at least two lines, and no descendant `p`/`li`/
+`blockquote`, so single-line labels are not mistaken for prose.
+
+Run that way, the old tokens exposed a real defect: **91 characters** on `/stdlib.html`, on the
+`p.lead` standfirst, which carried `max-width: none` and simply inherited the parent's cap.
+
+The fix is in `6f2a3ee`. The measures are now **rem, because rem is absolute**: `--measure-prose`
+is `35.5rem` (568px), which is the width real documentation pages already rendered at, so pages
+that were correct did not move; `--measure-lead` is `32rem` and `--measure-caption` `22rem`, each
+giving its own role an explicit cap; `.page-head .lead` gained `max-width: var(--measure-lead)` so
+the standfirst stops inheriting the title's measure.
+
+Re-swept with the same method, eight pages × six viewports:
 
 ```
-viewport 1440px   max chars/line in wrapped prose = 69   (/tour.html)
-viewport 1024px   max chars/line in wrapped prose = 69   (/tour.html)
-viewport  768px   max chars/line in wrapped prose = 69   (/tour.html)
-viewport  390px   max chars/line in wrapped prose = 46   (/releases.html)
-viewport  320px   max chars/line in wrapped prose = 42   (/philosophy.html)
+page            longest line, all text        note
+/                        67                  —
+/philosophy.html         69                  —
+/tour.html               68                  —
+/docs.html               64                  —
+/stdlib.html             67                  —
+/examples.html           62                  —
+/changelog.html          73                  list prose at 544px inside a 568px .doc
+/status.html             76                  unbreakable identifier (see below)
 ```
 
-Note the distinction the first pass got wrong: `/tour.html` contains single-line paragraphs of
-110–115 characters, which is a *sentence length*, not a measure problem — no line wraps there.
-Only wrapped paragraphs constrain measure, and none of them exceeds 69.
+The `/status.html` 76 is not a measure failure. It is a single 75-character machine identifier,
+`BytecodeCompilerTest.everyCompilableConformanceProgramMatchesTheInterp`, which cannot break on
+whitespace; `overflow-wrap: break-word` splits it and `scrollWidth == clientWidth` at 1920, 390 and
+320px, so nothing overflows. The `/changelog.html` 73 is list prose at 544px. Wrapped prose
+therefore tops out at **69 characters**, which is inside the 45–75 character band long-form
+guidance recommends, and it falls to 46 at 390px and 42 at 320px where the viewport, not the token,
+sets the limit.
 
 **Light and dark are geometrically identical, not merely similar.** Every element on ten routes
 was compared across themes on twelve computed properties — position, size, `font-size`,
@@ -682,7 +787,7 @@ The audit runs on every page in both palettes.
 | Chromium (desktop) | 93 tests, passed | **PASS** |
 | Chromium (mobile, Pixel 7) | 93 tests, passed | **PASS** |
 | WebKit (Desktop Safari) | 93 tests, passed | **PASS** |
-| Firefox (Desktop Firefox) | 93 tests, passed | **PASS on Linux** |
+| Firefox (Desktop Firefox) | 93 tests, passed | **PASS on Linux** (re-confirmed in `42343212890` after the reading-measure fix) |
 
 Each engine runs the same 93 tests. The two CI jobs differ in how many engines they cover, not
 in what they check: `build` runs the two Chromium projects, `cross-browser` runs all four.
@@ -747,49 +852,52 @@ preference-enabled session.
 
 ## 13. Exact test commands and output summaries
 
-All run against a build produced by `npm run build` from `8fbcb0f`. The only commits after it
-(`fa55d20`, `a5baac7`) edit this report and no source file — so these results describe the code
-under test, not a stale tree.
+All run against a build produced by `npm run build` at the current head (`6f2a3ee` and the
+report-only commits after it), so these results describe the code under test rather than a stale
+tree. Commands re-run after the measure fix are marked with their current figures; the numbers
+the earlier head produced are kept where they are still the evidence for a claim.
 
 | # | Command | Result |
 |---|---|---|
 | 1 | `npm run build` | exit 0, 10 routes + 404 prerendered |
 | 2 | `node verify.mjs` | exit 0 |
 | 3 | `npx html-validate "_site/*.html"` | exit 0, no findings |
-| 4 | `npm test` | **296 tests, 292 pass, 0 fail, 4 skipped** |
-| 5 | `npx playwright test` (default, Chromium + mobile) | **182 passed, 4 skipped, 0 failed** |
+| 4 | `npm test` | **298 tests, 294 pass, 0 fail, 4 skipped** |
+| 5 | `npx playwright test` (default, Chromium + mobile) | **182 passed, 4 skipped, 0 failed** (186 defined) |
 | 6 | `PW_ENGINES=all npx playwright test` (CI, four projects) | **364 passed, 8 skipped, 0 failed (6.5m)** |
 | 7 | `npx playwright test e2e/a11y.spec.js` | **54 passed** (both themes, 8 routes) |
 | 8 | `npm run test:live` | **4 pass, 0 fail, 0 skipped** |
 | 9 | `npm run screenshots` | 29 captured, all `ok` |
-| 10 | `npm run audit:visual` | **57/57 checks passed** |
+| 10 | `npm run audit:visual` | **57/57 checks passed**, wrote only to `artifacts/visual-audit-routes/`; `git status` clean afterwards |
 | 11 | `actionlint` | **exit 0** |
 | 12 | `npm audit` | 19 total: 0 critical, 4 high, 15 moderate |
 | 13 | `npx playwright install --with-deps firefox` | installs; launches on Linux, fails on macOS (see §12) |
 | 14 | gate contract tests (`tests/workflow-contract.test.js`) | **7 tests, all pass**; un-gating any workflow fails them |
 
-**CI.** `Pages` run **`42332279851`** concluded **success** on `332ed84`, the current tip:
-`Build the static site` passed, `Cross-browser suite` passed (364 tests across four engines), and
-`Deploy to GitHub Pages` was skipped, as it is for every non-`main` branch. The four engines were
-confirmed inside that run — `chromium`, `mobile-chromium`, `firefox`, and `webkit` each report
-**93 tests, 0 failures**. The immediately preceding runs `42330983084` (`c6434bc`),
-`42329827908` (`e4316ab`) and `42325998978` (`0b85925`) were also green, so the gate change, the
-production-write correction, the deployment-readiness section, the visual acceptance package and
-this handoff were each verified by CI rather than assumed.
+**CI.** `Pages` run
+[**`42343212890`**](https://github.com/Oqthara/Oqthara.github.io/actions/runs/42343212890)
+concluded **success** on **`6f2a3ee`**, the head that contains every source change in this pass.
+`Build the static site` **success**, `Cross-browser suite` **success** with **364 passed, 8
+skipped, 0 failed (6.5m)**, and `Deploy to GitHub Pages` **skipped**, correct for a non-`main`
+branch. The four engines ran individually and all report green: `chromium`, `mobile-chromium`,
+`firefox`, `webkit`.
 
-CI reports 296 unit tests with 283 passing and 13 skipped, against 292 passing and 4 skipped
-locally. The difference is the emulator and live-source suites, which those jobs do not start;
-`Firestore security rules` runs separately in the same job and reports **18/18 rule assertions
-passed**.
+This matters most for Firefox, which is the only engine whose result this pass could not obtain
+locally. Run `42332279851` had already shown the four engines at **93 tests each, 0 failures**;
+`42343212890` shows the same four engines passing after the tour fix and the measure fix, so the
+reading-measure change did not break Firefox even though Firefox could not be run on this host to
+check it. Firefox remains **NOT VERIFIED on macOS** — that is a launcher failure, not a test
+failure, and §12 records it.
+
+CI reports the unit suite with 13 skipped against 4 skipped locally. The difference is the
+emulator and live-source suites, which those jobs do not start; `Firestore security rules` runs
+separately in the same job and reports **18/18 rule assertions passed**.
 
 Runs `42319837893`, `42319080680`, and `42317021081` were the three iterations that built the
 cross-browser job: the first proved Firefox passes on Linux while Chromium was still missing,
 the second proved Chromium and Firefox together while WebKit was missing, and the third came
 within one timeout of green. Every run after `42320823948` has either passed or been cancelled
-by concurrency because a newer push superseded it. The current tip of the branch is covered by
-run [`42325246448`](https://github.com/Oqthara/Oqthara.github.io/actions/runs/42325246448),
-success on `48da910` — 364 passed, 8 skipped, 0 failed — which is the run this report's figures
-were read from.
+by concurrency because a newer push superseded it.
 
 **The 8 skips are intentional and annotated.** They are exactly two tests
 (`live docs index count equals the repository tree`, `live alpha.1 and alpha.2 both render the
@@ -982,9 +1090,9 @@ investigation stayed read-only as instructed.
 
 **Not deployed.** Production still serves the pre-change bundle.
 
-PR #2 is open and mergeable, with `Pages` runs `42294840427` and `42301674528` green on
-`8fbcb0f` and `89bb31a` respectively. Green CI is not
-a deployment; nothing was pushed to the Pages environment and no merge occurred.
+PR #2 is open and mergeable. `Pages` runs `42294840427` and `42301674528` were green on
+`8fbcb0f` and `89bb31a`, and the run on the current head is recorded in §13. Green CI is not a
+deployment; nothing was pushed to the Pages environment and no merge occurred.
 
 The deploy job's permissions were narrowed in `4879677` and its unused checkout removed, so the
 path it will take is now the narrower one — but it has not been taken.
@@ -1024,7 +1132,7 @@ an activation variable.
 | 4 | Environment declared | **READY** — `github-pages` |
 | 5 | Post-deploy smoke test | **READY** — 11 routes, retries the root then fails closed |
 | 6 | No implicit production write on deploy | **READY** — no Firestore step in `pages.yml` |
-| 7 | CI green on the exact deploy commit | **PASS** — run `42330983084` on `c6434bc`; re-confirmed by `42332279851` on `332ed84` |
+| 7 | CI green on the exact deploy commit | **PASS** — run `42343212890` on `6f2a3ee`, the current head, is green in both jobs; earlier heads `c6434bc`, `332ed84` and `f7a9c2d` are green in `42330983084`, `42332279851` and `42336217872` |
 | 8 | Human visual acceptance | **NOT VERIFIED** — see §10; nobody has looked at the screenshots |
 | 9 | Maintainer authorization to merge | **NOT GRANTED** — and deliberately not requested by this report |
 
@@ -1037,7 +1145,7 @@ an activation variable.
 | First production Firestore write | **BLOCKED** | Complete §14 items 1–7, present the plan, obtain maintainer authorization |
 | CSP and security response headers | **BLOCKED** | GitHub Pages serves fixed headers with no `_headers` support; requires a host that allows header configuration |
 | Firebase App Check enforcement | **BLOCKED** | Requires console authorization not granted to this work; prepared but not enforced |
-| Firefox verification | **PASS on Linux, blocked on macOS** | 93/93 in CI run `42320823948`; macOS launcher fails before any assertion (§12) |
+| Firefox verification | **PASS on Linux, blocked on macOS** | 93/93 in CI run `42320823948`, re-confirmed in `42343212890`; macOS launcher fails before any assertion (§12) |
 | Real screen-reader pass | **NOT VERIFIED** | Manual NVDA/JAWS/VoiceOver run |
 | Aesthetic review of the screenshots | **NOT VERIFIED** | A person looks at `artifacts/visual-audit/*.png`; this report's visual claims are measured, not seen (§10) |
 | PR merge | **BLOCKED** | Explicit maintainer authorization; not merged here |
@@ -1063,10 +1171,14 @@ an activation variable.
 5. **Real assistive technology was not exercised**, and neither were forced-colors, print, or a
    reduced-motion-enabled session.
 6. **The screenshots were measured, not seen.** The image-viewing tool in this environment
-   returned success without delivering pixels, so every visual claim in §10 comes from computed
-   styles, browser geometry, character counts, and programmatic overflow checks. Those catch
-   regressions well and aesthetic problems not at all. Nobody has judged whether the homepage
-   *looks* balanced. §10.
+   returns success without delivering pixel content, and it did so again on nine fresh captures
+   of the home, tour, standard-library, changelog, status and philosophy pages in both themes. The
+   tool reported `Viewed image file successfully` for each, which is indistinguishable from
+   having seen them and is worth naming as its own hazard: a reviewer reading that line could
+   reasonably conclude an inspection happened. No inspection happened. Every visual claim in §10
+   therefore comes from computed styles, browser geometry, character counts, and programmatic
+   overflow checks. Those catch regressions well and aesthetic problems not at all. Nobody has
+   judged whether the homepage *looks* balanced. §10.
 7. **CSP cannot ship on GitHub Pages.** The site remains without a content security policy.
 8. **A regression was introduced mid-task and caught by CI** — pinning away a critical advisory
    pulled in a `firebase-tools` release needing JDK 21. It is named here rather than omitted.
@@ -1080,12 +1192,27 @@ an activation variable.
 11. **Quota errors reach the fallback by accident.** `classifyFirestoreError` has no
     `resource-exhausted` branch, so a `429` becomes `unknown`, which happens to be in
     `FALLBACK_CODES`. The behaviour is correct and no test pins *why* it is correct.
+12. **The tour's prose shell is structurally unlike every documentation page, and is now only
+    partly aligned.** It uses `.doc-with-toc` directly in `.content` rather than the
+    `.docs-layout` → `.docs-main` nesting that `DocumentPage` produces, so the rail geometry had
+    to be reproduced by an explicit `max-width` cap on `.doc-with-toc` rather than inherited. The
+    numbers now match exactly (568 + 32 + 240 = 840px against `.docs-main`'s own 840px), and a
+    test pins the measure. But the two paths can drift again, because the cap is a second
+    expression of the same geometry. The structural fix — giving the tour `.docs-main` — was
+    considered and not taken, because it is a layout refactor rather than a typography one, and
+    this pass was scoped to typography and spacing.
+13. **`.footer-note` uses the caption measure at 22rem (352px) where it previously rendered unset
+    at 360px.** The change is safe — the line count is identical — but the token was not chosen
+    for this element; it was inherited because the element is a caption. Whether a footer note
+    deserves its own semantic token is unresolved and is recorded here rather than decided
+    silently.
 
 ---
 
 ## 18. Final acceptance matrix
 
-All 19 named requirements from the acceptance criteria, plus one deliberate twentieth row.
+All 19 named requirements from the acceptance criteria, plus six rows for claims this report makes
+beyond them. The rows are the report's claims, not the original checklist's shape.
 
 | # | Requirement | Verdict | Evidence |
 |---|---|---|---|
@@ -1104,16 +1231,19 @@ All 19 named requirements from the acceptance criteria, plus one deliberate twen
 | 13 | Firestore authorization remains secure | **PASS** | `firestore.rules` read-only for clients, `allow write: if false`; no admin credential under `src/` |
 | 14 | Secret exposure assessment completed | **PASS** | 50-commit history scan, no credential found; `.gitignore` contract test |
 | 15 | Dependency advisories assessed | **PASS** | 19 advisories triaged: 0 critical, 4 high accepted as unreachable (§9) |
-| 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit, Firefox each 93/93 in run `42320823948`; 54 a11y checks |
-| 17 | Regression tests pass | **PASS** | 296 unit/integration (292 pass, 4 skip); 182 Playwright locally, 364 in CI across four engines; 54 a11y; 4 live |
+| 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit, Firefox each 93/93 in run `42320823948`, and all four green again in `42343212890` (364 passed, 8 skipped, 0 failed); 54 a11y checks |
+| 17 | Regression tests pass | **PASS** | 298 unit/integration (294 pass, 4 skip); 182 Playwright locally, 364 in CI across four engines (`42343212890`); 54 a11y; 4 live |
 | 18 | Production write verified after authorization | **NOT VERIFIED, BLOCKED** | Production **was** written by unauthorized run `42221327714` (`wrote 118 operations`); no authorized write + independent read-back exists, and the data plane now returns `429` so neither an inventory nor a read-back is currently possible (§14.1) |
 | 19 | Compiler repository untouched | **PASS** | No commit in this branch touches the compiler repository; all 76 files are under this repo |
-| 20 | Firefox browser behaviour verified | **PASS, Linux only** | 93/93 in run `42320823948`; macOS launcher failure reproduced outside Playwright (§12) |
+| 20 | Firefox browser behaviour verified | **PASS, Linux only** | 93/93 in run `42320823948`; Firefox green again in `42343212890` on the measured head; macOS launcher failure reproduced outside Playwright (§12) |
 | 21 | Typographic scale implemented and consumed | **PASS** | Twelve semantic roles resolving to a 1.2 modular scale; sizes 76/28/22/18/13px measured live; role test + raw-value test (§10) |
 | 22 | Spacing scale implemented and consumed | **PASS** | Twelve-rung 4px ladder plus semantic tokens; one off-grid value proven to be a `clamp()` mid-point (§10) |
 | 23 | Design tokens genuinely used, not merely declared | **PASS** | Dead tokens 24 → 0; "every declared token is consumed" test, proven falsifiable by orphaning one |
 | 24 | Merging cannot write production without authorization | **PASS** | `OQTHARA_PRODUCTION_SYNC` / `OQTHARA_DEPLOY_FIRESTORE_RULES` unset; every write step gated on the literal `true`; 7 contract tests, proven falsifiable by un-gating a workflow (§14) |
 | 25 | Production quota failure degrades safely rather than breaking the site | **PASS** | Live build served all 18 documentation links with `firestore.googleapis.com` blocked; 0 links only when the GitHub hosts were blocked too (§14.1) |
+| 26 | Prose measure is within the readable band on every page | **PASS** | whole-word Range bucketing, 8 pages × 6 viewports: 69 characters maximum wrapped prose, 0 horizontal overflow; was 91 on `/stdlib.html` before `6f2a3ee` (§10) |
+| 27 | A reading measure cannot silently return to a font-relative unit | **PASS** | measure-unit contract test; falsified by restoring `--measure-prose: 68ch`, which failed it, then re-fixed (§10) |
+| 28 | Hand-built prose pages carry the documentation measure, not just its layout | **PASS** | prose-shell contract test; falsified by reverting the tour to `doc-article tour-body`, which failed it (§10) |
 
 **Blocked / not verified, with exact next actions:**
 
@@ -1176,11 +1306,11 @@ the suite fail.
 
 | property | value |
 | --- | --- |
-| Head when written | `ab31c6f` (documentation); `e4316ab` is the last commit touching a shipped asset |
+| Head when written | `6f2a3ee` (the reading-measure fix); the report-only commits after it change nothing that ships |
 | Commits ahead of `main` | read it: `git rev-list --count origin/main..HEAD`. Not restated here — the file cannot count its own commits correctly, and pretending otherwise is what produced two earlier wrong figures |
 | Working tree | clean |
 | Mergeable | yes, per GitHub |
-| Latest CI on this head | `42332279851` — **success**; `Build the static site` success, `Cross-browser suite` success (364 passed, 4 engines), `Deploy to GitHub Pages` skipped |
+| Latest CI on this head | `42343212890` — **success**: `Build the static site` green, `Cross-browser suite` green (364 passed, 8 skipped, 0 failed, four engines), `Deploy to GitHub Pages` correctly skipped |
 | Review threads | 10 resolved, 0 open |
 
 ### Verdict matrix
@@ -1190,9 +1320,10 @@ the suite fail.
 | Typography scale implemented and consumed | **PASS** | 12 roles on a 1.2 scale; 122 tokens declared, 122 used, 0 orphans |
 | Spacing scale implemented and consumed | **PASS** | exact 4px ladder, no missing rung; one `clamp()` mid-point justified |
 | Applied across all routes, both themes | **PASS** | computed styles on 10 routes × 2 themes; 100 comparisons, 0 differences |
+| Reading measure readable and consistent | **PASS** | 69 max wrapped characters across 8 pages × 6 viewports, measured by whole-word bucketing; was 91 on `/stdlib.html` before `6f2a3ee` |
 | Responsive, no overflow | **PASS** | programmatic check at 1440/1024/768/390/320 |
 | Accessibility | **PASS** | 54 checks; three baseline AA violations → zero |
-| Unit, integration, emulator | **PASS** | 296 tests (292 pass, 4 skip); 18/18 rule assertions |
+| Unit, integration, emulator | **PASS** | 298 tests (294 pass, 4 skip); 18/18 rule assertions |
 | Browser suite | **PASS** | 182 local; 364 in CI across four engines |
 | Firefox | **PASS on Linux; NOT VERIFIED on macOS** | 93/93 on `ubuntu-latest`; macOS launcher fails before any assertion |
 | Screenshot collision fix | **PASS** | audit → `visual-audit-routes/`; committed set untouched by a run |
