@@ -26,6 +26,8 @@ import {
   setDoc,
 } from "firebase/firestore";
 
+import { buildCatalogRecord } from "./sync-firestore.mjs";
+
 const HOST = process.env.FIRESTORE_EMULATOR_HOST ?? "127.0.0.1:8080";
 const PROJECT = process.env.GCLOUD_PROJECT ?? process.env.FIREBASE_PROJECT ?? "oqthara-rules-test";
 
@@ -76,8 +78,11 @@ async function seed() {
     ["examples", EXAMPLE, { path: "examples/hello.oq", title: "Hello", content: 'print "Hello, World!"', published: true }],
     ["sync", `documentation__${PUBLISHED}`, { published: true }],
     ["metadata", "site", { title: "Oqthara", published: true }],
-    // The one readable entry: the mirror catalogue.
-    ["metadata", "catalog", { sourceRef: "main", sourceCommit: "a".repeat(40), published: true }],
+    // The one readable entry: the mirror catalogue. Seeded from the real producer rather than a
+    // hand-written object, because hand-writing it is what hid the defect this suite exists to
+    // catch: the writer used to omit `published` entirely, and a seed that added it by hand made
+    // the rules look satisfied while every real catalogue was unreadable.
+    ["metadata", "catalog", buildCatalogRecord({ commit: "a".repeat(40), now: "2026-11-06T00:00:00.000Z" })],
   ];
 
   for (const [name, id, data] of documents) {

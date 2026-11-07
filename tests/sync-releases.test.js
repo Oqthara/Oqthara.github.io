@@ -523,3 +523,260 @@ test("the CLI accepts --full and reports the mode it is about to run", async () 
   assert.match(formatPlan(emptyPlan, { full: true }).split("\n")[0], /full reconciliation/);
   assert.match(formatPlan(emptyPlan, { full: false }).split("\n")[0], /incremental/);
 });
+
+// ---------------------------------------------------------------------------
+// The catalogue contract. `firestore.rules` grants a client read of
+// `metadata/catalog` only when the document carries the literal boolean
+// `published: true`. The rule test seeded that flag by hand, so a writer that
+// never set it passed every test while shipping a catalogue no browser could
+// read. These tests exercise the real producer payload instead.
+// ---------------------------------------------------------------------------
+
+/** A Firestore double that records every write, including batched content writes. */
+function recordingDb(written = []) {
+  return {
+    written,
+    batch() {
+      const pending = [];
+      return {
+        set(ref, data) {
+          pending.push({ ref, data });
+        },
+        async commit() {
+          for (const entry of pending) written.push(entry);
+        },
+      };
+    },
+    collection(name) {
+      return {
+        doc(id) {
+          const ref = { collection: name, id };
+          return {
+            async set(data) {
+              written.push({ ref, data });
+            },
+            ref,
+            _ref: ref,
+          };
+        },
+      };
+    },
+  };
+}
+
+test("the catalogue record carries the boolean `published` flag its own rule requires", async () => {
+  const { buildCatalogRecord } = await import("../scripts/sync-firestore.mjs");
+  const record = buildCatalogRecord({ commit: "a".repeat(40), now: "2026-11-06T00:00:00.000Z" });
+
+  assert.equal(
+    record.published,
+    true,
+    "metadata/catalog is readable only when `published` is the boolean true",
+  );
+  assert.equal(typeof record.published, "boolean");
+  assert.equal(
+    record.status,
+    "published",
+    "the informational status is kept alongside the flag, not used in place of it",
+  );
+});
+
+test("the public and private catalogue copies are the same record", async () => {
+  // Two hand-written payloads is how the public copy drifted from its rule. One builder means a
+  // reader of `metadata/catalog` and an operator reading `sync/catalog` cannot disagree.
+  const { applyPlan } = await import("../scripts/sync-firestore.mjs");
+  const db = recordingDb();
+  await applyPlan(db, { writes: [], oversized: [], unchanged: [], unpublish: [] }, {
+    now: "2026-11-06T00:00:00.000Z",
+    commit: "b".repeat(40),
+  });
+
+  const publicCatalog = db.written.find(
+    (entry) => entry.ref.collection === "metadata" && entry.ref.id === "catalog",
+  );
+  const privateCatalog = db.written.find(
+    (entry) => entry.ref.collection === "sync" && entry.ref.id === "catalog",
+  );
+
+  assert.ok(publicCatalog, "the public catalogue must be written");
+  assert.ok(privateCatalog, "the private catalogue must be written");
+  assert.deepEqual(publicCatalog.data, privateCatalog.data);
+  assert.equal(publicCatalog.data.published, true);
+  assert.equal(publicCatalog.data.sourceCommit, "b".repeat(40));
+});
+
+test("a catalogue is readable by the browser validator once the writer produces it", async () => {
+  // The end of the chain: the producer's payload must satisfy the consumer. A field named right
+  // in one and read under another name is exactly the gap this guards.
+  const { buildCatalogRecord } = await import("../scripts/sync-firestore.mjs");
+  const { validateCatalogRecord } = await import("../src/repositories/catalog.repository.js");
+
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  const payload = buildCatalogRecord({
+    commit,
+    now: "2026-11-06T00:00:00.000Z",
+    counts: { written: 3, unchanged: 55, unpublished: 1, oversized: 0 },
+  });
+  const validated = validateCatalogRecord(payload);
+
+  assert.equal(validated.sourceCommit, commit, "the writer's commit must survive the reader");
+  assert.equal(validated.sourceRef, "main");
+  assert.equal(validated.updatedAt, "2026-11-06T00:00:00.000Z");
+  assert.deepEqual({ ...validated.counts }, { written: 3, unchanged: 55, unpublished: 1, oversized: 0 });
+});
+
+test("catalogue counts mirrored documents, not their bookkeeping records", async () => {
+  // Every content write costs two operations (the document and its sync record), so a total
+  // taken from the operation list would double. The count must describe documents mirrored.
+  const { applyPlan } = await import("../scripts/sync-firestore.mjs");
+  const written = [];
+
+  const db = {
+    batch() {
+      const pending = [];
+      return {
+        set(ref, data) {
+          pending.push({ ref, data });
+        },
+        async commit() {
+          for (const entry of pending) written.push(entry);
+        },
+      };
+    },
+    collection(name) {
+      return {
+        doc(id) {
+          return {
+            async set(data) {
+              written.push({ ref: { collection: name, id }, data });
+            },
+          };
+        },
+      };
+    },
+  };
+
+  const plan = {
+    writes: [
+      { collection: "documentation", id: "a__b", data: { path: "a/b.md", published: true, contentHash: "h1", content: "x" } },
+      { collection: "documentation", id: "c__d", data: { path: "c/d.md", published: true, contentHash: "h2", content: "y" } },
+    ],
+    oversized: [],
+    unchanged: [{ collection: "documentation", id: "e__f" }],
+    unpublish: [{ collection: "documentation", path: "gone.md" }],
+  };
+
+  await applyPlan(db, plan, { now: "2026-11-06T00:00:00.000Z", commit: "c".repeat(40) });
+
+  const catalog = written.find((entry) => entry.ref.id === "catalog" && entry.ref.collection === "metadata");
+  assert.ok(catalog, "the public catalogue must be written");
+  assert.equal(catalog.data.counts.written, 2, "only mirrored documents count as written, not their bookkeeping");
+  assert.equal(catalog.data.counts.unchanged, 1);
+  assert.equal(catalog.data.counts.unpublished, 1);
+  assert.equal(catalog.data.counts.oversized, 0);
+});
+
+test("an unpublish withdrawal is not counted as a written document", async () => {
+  // The withdrawal is a `merge` on an existing content document. It shares the collection with a
+  // mirrored write but mirrors nothing, so counting it would inflate the published total.
+  const { applyPlan } = await import("../scripts/sync-firestore.mjs");
+  const written = [];
+
+  const db = {
+    batch() {
+      const pending = [];
+      return {
+        set(ref, data) {
+          pending.push({ ref, data });
+        },
+        async commit() {
+          for (const entry of pending) written.push(entry);
+        },
+      };
+    },
+    collection(name) {
+      return {
+        doc(id) {
+          return {
+            async set(data) {
+              written.push({ ref: { collection: name, id }, data });
+            },
+          };
+        },
+      };
+    },
+  };
+
+  const plan = {
+    writes: [],
+    oversized: [],
+    unchanged: [],
+    unpublish: [{ collection: "documentation", path: "gone.md" }],
+  };
+
+  await applyPlan(db, plan, { now: "2026-11-06T00:00:00.000Z", commit: "d".repeat(40) });
+
+  const catalog = written.find((entry) => entry.ref.id === "catalog" && entry.ref.collection === "metadata");
+  assert.equal(catalog.data.counts.written, 0, "nothing was mirrored");
+  assert.equal(catalog.data.counts.unpublished, 1);
+});
+
+test("a batch that throws part-way publishes no catalogue at all", async () => {
+  // The counts are written only after every batch has committed, so the honest guarantee is not
+  // "the count excludes failed writes" - it is that a failed run publishes no catalogue. A
+  // catalogue claiming success must never survive an operation that threw.
+  const { applyPlan } = await import("../scripts/sync-firestore.mjs");
+  const written = [];
+  let batchIndex = 0;
+
+  const db = {
+    batch() {
+      const pending = [];
+      const thisBatch = batchIndex++;
+      return {
+        set(ref, data) {
+          pending.push({ ref, data });
+        },
+        async commit() {
+          if (thisBatch > 0) throw new Error("emulator closed the connection");
+          for (const entry of pending) written.push(entry);
+        },
+      };
+    },
+    collection(name) {
+      return {
+        doc(id) {
+          return {
+            async set(data) {
+              written.push({ ref: { collection: name, id }, data });
+            },
+          };
+        },
+      };
+    },
+  };
+
+  const content = (id, path) => ({
+    collection: "documentation",
+    id,
+    data: { path, published: true, contentHash: `h-${id}`, content: "x".repeat(400) },
+  });
+
+  // 500 operations per batch, and each content write costs two operations, so 300 writes span
+  // more than one batch and the second commit is guaranteed to run.
+  const plan = {
+    writes: Array.from({ length: 300 }, (_, index) => content(`doc${index}`, `doc${index}.md`)),
+    oversized: [],
+    unchanged: [],
+    unpublish: [],
+  };
+
+  await assert.rejects(
+    () => applyPlan(db, plan, { now: "2026-11-06T00:00:00.000Z", commit: "e".repeat(40) }),
+    /emulator closed the connection/,
+    "a failed batch must propagate, not be swallowed into a false success",
+  );
+
+  const catalog = written.find((entry) => entry.ref.id === "catalog" && entry.ref.collection === "metadata");
+  assert.equal(catalog, undefined, "no catalogue is published for an operation that did not complete");
+});

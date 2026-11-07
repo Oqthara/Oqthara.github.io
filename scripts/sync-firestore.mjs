@@ -228,6 +228,40 @@ export function buildSyncRecord({
 }
 
 /**
+ * The catalogue record: which upstream commit the mirror holds and what the last run did.
+ *
+ * There is exactly one shape and both the `sync` copy and the `metadata` copy are built from it.
+ * Reproducing the fields at each call site is what let the public copy drift from the rule that
+ * guards it: `metadata/catalog` is readable only when a document carries the literal boolean
+ * `published: true`, so a writer that sets `status: "published"` and omits the flag writes a
+ * record no client can ever read. The flag is a permission, `status` is informational; a record
+ * needs both and the rule tests only the flag.
+ *
+ * `counts` is only ever written after every batch has committed, so a run that fails part-way
+ * throws and publishes no catalogue at all. The figures therefore cannot report work that never
+ * reached Firestore.
+ */
+export function buildCatalogRecord({
+  commit = "",
+  counts = {},
+  now = new Date().toISOString(),
+} = {}) {
+  return {
+    [FIELDS.published]: true,
+    [FIELDS.status]: SYNC_STATUS.published,
+    [FIELDS.sourceRef]: MIRRORED_REF,
+    [FIELDS.sourceCommit]: commit,
+    [FIELDS.updatedAt]: now,
+    counts: {
+      written: Number.isFinite(counts.written) ? counts.written : 0,
+      unchanged: Number.isFinite(counts.unchanged) ? counts.unchanged : 0,
+      unpublished: Number.isFinite(counts.unpublished) ? counts.unpublished : 0,
+      oversized: Number.isFinite(counts.oversized) ? counts.oversized : 0,
+    },
+  };
+}
+
+/**
  * Compares desired records against the recorded sync state.
  *
  * Pure: no I/O, no clock. The caller passes `now` through the records it built.
@@ -724,26 +758,26 @@ export async function applyPlan(
   // One catalogue-level record so a later run can see when the mirror was last reconciled, and
   // from which upstream commit. `sourceRef` alone says "main" and never which main, so it cannot
   // answer whether the mirror is current.
-  const catalog = {
-    [FIELDS.status]: "published",
-    [FIELDS.sourceRef]: MIRRORED_REF,
-    [FIELDS.sourceCommit]: commit,
-    [FIELDS.updatedAt]: now,
+  //
+  // The counts describe the operation that completed, not the plan that was proposed: this point
+  // is only reached once every batch has committed, so a run that fails part-way throws above and
+  // publishes no catalogue at all. There is therefore no path on which these figures can claim
+  // writes that never reached Firestore.
+  const catalog = buildCatalogRecord({
+    commit,
+    now,
     counts: {
       written: plan.writes.length,
       unchanged: plan.unchanged.length,
       unpublished: plan.unpublish.length,
       oversized: plan.oversized.length,
     },
-  };
-  await db.collection(COLLECTIONS.sync).doc("catalog").set(catalog, { merge: true });
+  });
+  await db.collection(COLLECTIONS.sync).doc(COLLECTION_CATALOG_ID).set(catalog, { merge: true });
   // Mirrored into the publicly readable collection as well. `sync` is operator-facing and not
   // world-readable, so without this the one fact that makes the mirror auditable - which commit
   // this content came from - is only visible to whoever holds the service account.
-  await db
-    .collection(COLLECTIONS.metadata)
-    .doc(COLLECTION_CATALOG_ID)
-    .set({ ...catalog, [FIELDS.updatedAt]: now }, { merge: true });
+  await db.collection(COLLECTIONS.metadata).doc(COLLECTION_CATALOG_ID).set(catalog, { merge: true });
 
   return { operations: written };
 }
