@@ -1655,3 +1655,53 @@ a fresh window rather than in front of an exhausted one.
 **Status: `BLOCKED — FREE-TIER READ QUOTA EXHAUSTED BEFORE RECONCILIATION`.** Both code defects the
 order asked to correct are corrected and verified; the reconciliation itself has not happened, and
 nothing in this section claims that it has.
+
+## 20. The read quota is two surfaces, not one pool (2026-11-07)
+
+Section 19 recorded a contradiction it could not settle: the audit failed on `listCollectionIds`
+with `429` while the documentation page rendered real mirror content. That was left open because
+the two observations seemed to describe the same quota. They do not.
+
+Every REST read method against `projects/oqthara` returns `429` — `documents/releases`
+(`GET`), `documents/docs` (`GET`), `documents/sync/catalog` (`GET`), `:runQuery` (`POST`),
+`:batchGet` (`POST`), and `:listCollectionIds` (`POST`). The SDK's streaming read path,
+`Listen/channel`, returned `200` with 259,305 bytes and 21 real documents, on two runs from
+separate browser contexts, with identical byte counts and document names such as
+`documentation/docs__README.md`.
+
+The conclusion that the page was serving cached or prerendered content is wrong, and was tested
+rather than assumed. `_site/*.html` contains no `data-source` attribute, so the badge is set at
+runtime. Blocking `firestore.googleapis.com` with `page.route()` flips the badge from `firestore`
+to `github` and produces two `api.github.com` requests, which only happens when the mirror path
+was the one that answered. The stream payload is not a handshake: the handshake frames in the
+same session are 54, 11, and 129 bytes.
+
+The `429` is scoped to the project rather than to the `firestore.googleapis.com` edge. The same
+API key against a nonexistent project returns `403 Permission denied on resource project`, so
+REST calls are reaching per-project quota enforcement rather than being refused upstream.
+
+### 20.1 Why this matters to the reconciliation
+
+The split explains the whole status honestly instead of leaving it contradictory. The public site
+streams, so it serves. The audit and `sync-firestore.mjs` both use REST, so neither can run. A
+rendering website was previously read as a sign that quota had recovered, and it is not such a
+sign.
+
+### 20.2 State at the end of this section
+
+| Check | Result |
+| --- | --- |
+| Commits | `b15d863`, `4ac3cf3` |
+| `npm test` | **365 tests, 361 pass, 0 fail, 4 skipped** |
+| Scheduled sync | `17 8 * * *`, after the Pacific reset in both halves of the year |
+| Production documents written | **none** |
+| `OQTHARA_PRODUCTION_SYNC` | unset |
+| `OQTHARA_DEPLOY_FIRESTORE_RULES` | unset |
+| Production synchronization | **NOT VERIFIED** |
+
+**Status: `BLOCKED — FREE-TIER READ QUOTA EXHAUSTED BEFORE RECONCILIATION`**, with the mechanism
+now identified: the REST read surface is exhausted for this project while the streaming surface
+still serves. The next authorized attempt is the scheduled run after the 2026-11-08 08:00 UTC
+reset. If `readSyncState` fails with `RESOURCE_EXHAUSTED` again inside a fresh window, the cause
+is not the daily reset and the investigation should move to the Cloud console quota dashboard
+rather than to another retry from here.
