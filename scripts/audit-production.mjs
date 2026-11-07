@@ -11,9 +11,11 @@
 //
 // Safety
 // ------
-// Every call is a Firestore read (`GET` on a document or a collection). There is no write path:
-// no `PATCH`, `POST`, `DELETE` or commit, no Rules API call, and no batch object is ever
-// created. A defect in this file can produce a wrong report, not a mutated database.
+// Every call is a read-only Firestore operation (`GET` on a document, `POST …:listCollectionIds`
+// to enumerate collections). There is no write path: no `PATCH`, no document `POST`, no `DELETE`
+// and no batch object is ever created. `listCollectionIds` is a POST because it takes a request
+// body, not because it mutates; it is a read method. A defect in this file can produce a wrong
+// report, not a mutated database.
 //
 // Credentials
 // -----------
@@ -163,8 +165,9 @@ export function bytesOf(content) {
 /**
  * A Firestore REST client that can only read.
  *
- * Deliberately has no `write`, `set`, `commit` or `delete` method. Every request is a GET, so
- * the "read-only" claim in the header is enforced by the shape of this object.
+ * Deliberately has no `write`, `set`, `commit` or `delete` method. The "read-only" claim in the
+ * header is enforced by the shape of this object: the only operations it can perform are the two
+ * read methods below, one of which happens to use HTTP POST.
  */
 export function readOnlyClient({ token, project = PROJECT, fetchImpl = globalThis.fetch }) {
   const base = `${FIRESTORE}/projects/${project}/databases/(default)/documents`;
@@ -359,6 +362,66 @@ export function compareSyncRecord(syncFields, contentFields, collection = "") {
 // Audit
 // ---------------------------------------------------------------------------
 
+/** The fields of a catalogue document that the report shows, or `{ exists: false }`. */
+export function describeCatalog(document) {
+  if (!document) return { exists: false };
+  const fields = document.fields ?? {};
+  return {
+    exists: true,
+    sourceRef: fields[FIELDS.sourceRef] ?? null,
+    sourceCommit: fields[FIELDS.sourceCommit] ?? null,
+    updatedAt: asIsoTimestamp(fields[FIELDS.updatedAt]),
+    status: fields[FIELDS.status] ?? null,
+    // Reported as a value and as a type, because the rule tests the type: `"true"` and `1` both
+    // fail `resource.data.published == true`, so a report that showed only the value would let
+    // a non-boolean look correct.
+    published: fields[FIELDS.published] ?? null,
+    publishedType: typeof fields[FIELDS.published],
+    counts: fields.counts ?? null,
+  };
+}
+
+/**
+ * Checks the public readability contract the deployed rules enforce on `metadata/catalog`.
+ *
+ * The rules allow the read only when `published` is the literal boolean `true`. This is the exact
+ * defect the sync writer shipped for several releases: it wrote `status: "published"` and no
+ * `published` flag, so the catalogue existed, was correct, and was unreadable from a browser.
+ * An audit that only reported "the document exists" called that state healthy.
+ */
+export function auditCatalogContract(document, canonicalCommit = "") {
+  const problems = [];
+  if (!document) {
+    problems.push("metadata/catalog does not exist, so a client cannot read which commit the mirror holds");
+    return { readable: false, problems };
+  }
+  const fields = document.fields ?? {};
+  const published = fields[FIELDS.published];
+  if (published !== true) {
+    problems.push(
+      `published is ${JSON.stringify(published ?? null)} (${typeof published}), but the rule requires the literal boolean true; a client read is denied`,
+    );
+  }
+  const commit = fields[FIELDS.sourceCommit];
+  if (!isNonEmptyString(commit) || !/^[0-9a-f]{40}$/.test(String(commit))) {
+    problems.push(`sourceCommit is ${JSON.stringify(commit ?? null)}, expected a 40-character lowercase hex commit`);
+  } else if (canonicalCommit && commit !== canonicalCommit) {
+    problems.push(`sourceCommit is ${commit} but the canonical branch is at ${canonicalCommit}`);
+  }
+  if (!asIsoTimestamp(fields[FIELDS.updatedAt])) {
+    problems.push(`updatedAt is ${JSON.stringify(fields[FIELDS.updatedAt] ?? null)}, expected an ISO timestamp`);
+  }
+  const counts = fields.counts;
+  if (!counts || typeof counts !== "object") {
+    problems.push("counts is absent, so the record does not say what the last run did");
+  } else {
+    for (const key of ["written", "unchanged", "unpublished", "oversized"]) {
+      if (!Number.isFinite(counts[key])) problems.push(`counts.${key} is ${JSON.stringify(counts[key] ?? null)}, expected a number`);
+    }
+  }
+  return { readable: problems.length === 0, problems };
+}
+
 /**
  * Runs the whole comparison against an already-created client and desired set.
  *
@@ -376,6 +439,7 @@ export async function auditProduction({ client, desired, commit, generatedAt }) 
   const countsByCollection = {};
   const syncRecords = new Map();
   const contentByKey = new Map();
+  const metadataDocuments = new Map();
 
   for (const collection of collections) {
     const documents = await client.listCollection(collection);
@@ -385,7 +449,11 @@ export async function auditProduction({ client, desired, commit, generatedAt }) 
       if (collection === COLLECTIONS.sync) {
         syncRecords.set(document.id, document.fields);
       } else if (collection === COLLECTIONS.metadata) {
-        continue;
+        // The catalogue is compared field by field below; every other metadata document is
+        // recorded by id so the report can say it exists and is preserved. Dropping them
+        // silently would let a write to a collection this tool does not understand look like a
+        // clean audit.
+        metadataDocuments.set(document.id, document.fields);
       } else {
         contentByKey.set(key, document.fields);
       }
@@ -447,8 +515,26 @@ export async function auditProduction({ client, desired, commit, generatedAt }) 
     dispositions,
     sync: { records: syncRecords.size, dispositions: syncDispositions.filter((entry) => entry.differences?.length) },
     catalog: {
-      sync: syncCatalog ? { exists: true, sourceCommit: syncCatalog.fields[FIELDS.sourceCommit] ?? null, updatedAt: asIsoTimestamp(syncCatalog.fields[FIELDS.updatedAt]), counts: syncCatalog.fields.counts ?? null } : { exists: false },
-      metadata: metadataCatalog ? { exists: true, sourceCommit: metadataCatalog.fields[FIELDS.sourceCommit] ?? null, updatedAt: asIsoTimestamp(metadataCatalog.fields[FIELDS.updatedAt]), counts: metadataCatalog.fields.counts ?? null } : { exists: false },
+      sync: describeCatalog(syncCatalog),
+      metadata: describeCatalog(metadataCatalog),
+      // The catalogue is the one document a reader is meant to see, so its readability is a
+      // contract the audit can check without holding a browser: the rules grant the read only
+      // when `published` is the literal boolean true. A catalogue without the flag is a
+      // document no client can read, which is indistinguishable from an absent catalogue.
+      contract: auditCatalogContract(metadataCatalog, commit),
+    },
+    metadata: {
+      // Every metadata document that is not the catalogue. None is expected to be public, and
+      // the audit reports them so an unexpected one is visible rather than invisible.
+      documents: [...metadataDocuments.entries()]
+        .filter(([id]) => id !== COLLECTION_CATALOG_ID)
+        .map(([id, fields]) => ({
+          id,
+          published: fields?.[FIELDS.published] ?? null,
+          publishedType: typeof fields?.[FIELDS.published],
+          fields: Object.keys(fields ?? {}).sort(),
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id)),
     },
   };
 }
@@ -525,6 +611,14 @@ export function formatReport(report) {
   lines.push("");
   lines.push(`Catalogue sync: ${report.catalog.sync.exists ? `${report.catalog.sync.sourceCommit?.slice(0, 7) || "(no commit)"} at ${report.catalog.sync.updatedAt || "(no time)"}` : "absent"}`);
   lines.push(`Catalogue metadata: ${report.catalog.metadata.exists ? `${report.catalog.metadata.sourceCommit?.slice(0, 7) || "(no commit)"} at ${report.catalog.metadata.updatedAt || "(no time)"}` : "absent"}`);
+  if (report.catalog.metadata.exists) {
+    const published = report.catalog.metadata.published;
+    lines.push(`Catalogue readable by a client: ${report.catalog.contract.readable ? "yes" : "NO"} (published ${JSON.stringify(published)} ${report.catalog.metadata.publishedType})`);
+  }
+  for (const problem of report.catalog.contract.problems) lines.push(`  - ${problem}`);
+  lines.push(
+    `Other metadata documents: ${report.metadata.documents.length === 0 ? "none" : report.metadata.documents.map((entry) => `${entry.id} (${entry.fields.length} fields, published ${JSON.stringify(entry.published)} ${entry.publishedType})`).join(", ")}`,
+  );
   return lines.join("\n");
 }
 

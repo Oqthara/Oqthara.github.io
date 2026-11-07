@@ -9,6 +9,7 @@ import {
   compareRecord,
   compareSyncRecord,
   decodeFields,
+  formatReport,
   recordedHashMatches,
   resolveToken,
 } from "../scripts/audit-production.mjs";
@@ -273,4 +274,126 @@ test("resolveToken rejects a credential whose identity is not the expected servi
   assert.equal(result.ok, false);
   assert.match(result.reason, /expected/);
   assert.match(result.reason, /someone-else/);
+});
+
+// ---------------------------------------------------------------------------
+// The catalogue contract. The audit's job is to notice a state the sync writer
+// can produce: a catalogue document that exists, holds the right commit, and is
+// still unreadable because `published` is missing or not the boolean `true`.
+// ---------------------------------------------------------------------------
+
+test("a catalogue missing the published flag is reported unreadable", async () => {
+  const { auditCatalogContract } = await import("../scripts/audit-production.mjs");
+  const commit = "a".repeat(40);
+  // Exactly what the writer shipped: status says published, the flag is absent.
+  const contract = auditCatalogContract(
+    { fields: { status: "published", sourceRef: "main", sourceCommit: commit, updatedAt: "2026-11-06T00:00:00.000Z", counts: { written: 1, unchanged: 2, unpublished: 0, oversized: 0 } } },
+    commit,
+  );
+
+  assert.equal(contract.readable, false, "a catalogue without the boolean flag cannot be read by a client");
+  assert.equal(contract.problems.length, 1);
+  assert.match(contract.problems[0], /published is null \(undefined\)/);
+});
+
+test("a catalogue whose published flag is a truthy non-boolean is still unreadable", async () => {
+  // `"true"` and `1` are truthy but fail `resource.data.published == true` in the rules, so a
+  // report that only checked truthiness would call an unreadable catalogue healthy.
+  const { auditCatalogContract } = await import("../scripts/audit-production.mjs");
+  const commit = "b".repeat(40);
+  const base = { sourceRef: "main", sourceCommit: commit, updatedAt: "2026-11-06T00:00:00.000Z", counts: { written: 0, unchanged: 1, unpublished: 0, oversized: 0 } };
+
+  for (const published of ["true", 1, { value: true }]) {
+    const contract = auditCatalogContract({ fields: { ...base, published } }, commit);
+    assert.equal(contract.readable, false, `published ${JSON.stringify(published)} must not be accepted`);
+    assert.match(contract.problems[0], /requires the literal boolean true/);
+  }
+});
+
+test("a well-formed catalogue passes the contract", async () => {
+  const { buildCatalogRecord } = await import("../scripts/sync-firestore.mjs");
+  const { auditCatalogContract } = await import("../scripts/audit-production.mjs");
+  const commit = "c".repeat(40);
+  const contract = auditCatalogContract(
+    { fields: buildCatalogRecord({ commit, now: "2026-11-06T00:00:00.000Z", counts: { written: 2, unchanged: 3, unpublished: 1, oversized: 0 } }) },
+    commit,
+  );
+
+  assert.deepEqual(contract.problems, []);
+  assert.equal(contract.readable, true, "the producer's own payload must satisfy the audit");
+});
+
+test("a catalogue recorded against a different commit is reported", async () => {
+  const { buildCatalogRecord } = await import("../scripts/sync-firestore.mjs");
+  const { auditCatalogContract } = await import("../scripts/audit-production.mjs");
+  const contract = auditCatalogContract(
+    { fields: buildCatalogRecord({ commit: "d".repeat(40), now: "2026-11-06T00:00:00.000Z" }) },
+    "e".repeat(40),
+  );
+
+  assert.equal(contract.readable, false);
+  assert.ok(contract.problems.some((problem) => /canonical branch is at/.test(problem)));
+});
+
+test("an absent catalogue is reported as unusable rather than as an error", async () => {
+  const { auditCatalogContract } = await import("../scripts/audit-production.mjs");
+  const contract = auditCatalogContract(null, "f".repeat(40));
+
+  assert.equal(contract.readable, false);
+  assert.equal(contract.problems.length, 1);
+  assert.match(contract.problems[0], /does not exist/);
+});
+
+test("metadata documents other than the catalogue are reported, not silently dropped", async () => {
+  // The audit skips metadata when comparing content. Skipping it *and* not reporting it would
+  // make an unexpected write to that collection look like a clean audit, so the report names
+  // every such document and its published value.
+  const { auditProduction } = await import("../scripts/audit-production.mjs");
+  const store = new Map([
+    [COLLECTIONS.metadata, new Map([
+      ["site", { title: "Oqthara", published: true }],
+      ["experiment", { published: "yes" }],
+    ])],
+  ]);
+
+  const client = {
+    listCollections: async () => [...store.keys()],
+    listCollection: async (name) => [...(store.get(name) ?? new Map()).entries()].map(([id, fields]) => ({ id, fields })),
+    getDocument: async () => null,
+  };
+
+  const report = await auditProduction({
+    client,
+    desired: [],
+    commit: "7ffb6755847f30a1300d3201ff9d16a96fda26bb",
+    generatedAt: NOW,
+  });
+
+  assert.deepEqual(report.metadata.documents.map((entry) => entry.id), ["experiment", "site"]);
+  const site = report.metadata.documents.find((entry) => entry.id === "site");
+  assert.equal(site.published, true);
+  assert.equal(site.publishedType, "boolean");
+  const experiment = report.metadata.documents.find((entry) => entry.id === "experiment");
+  assert.equal(experiment.published, "yes");
+  assert.equal(experiment.publishedType, "string", "the type is reported because the rule tests the type");
+});
+
+test("the report states whether a client could read the catalogue", async () => {
+  const { auditProduction } = await import("../scripts/audit-production.mjs");
+  const commit = "7ffb6755847f30a1300d3201ff9d16a96fda26bb";
+  const client = {
+    listCollections: async () => [COLLECTIONS.metadata],
+    listCollection: async () => [],
+    getDocument: async (_collection, id) =>
+      id === "catalog"
+        ? { fields: { sourceRef: "main", sourceCommit: commit, updatedAt: "2026-11-06T00:00:00.000Z", counts: { written: 0, unchanged: 0, unpublished: 0, oversized: 0 } } }
+        : null,
+  };
+
+  const report = await auditProduction({ client, desired: [], commit, generatedAt: NOW });
+
+  assert.equal(report.catalog.metadata.exists, true);
+  assert.equal(report.catalog.contract.readable, false, "a catalogue without the flag is unreadable");
+  const rendered = formatReport(report);
+  assert.match(rendered, /Catalogue readable by a client: NO/);
 });
