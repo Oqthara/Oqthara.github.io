@@ -2,7 +2,16 @@
 
 Branch `feat/alpha-automation-and-hardening`. Baseline
 `3be0388e2d6bb41956c0c03482d2a40f847cc648` (`origin/main`). Pull request
-[#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) is **open and mergeable**.
+[#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) was **merged into `main` as
+`9d9a41a`** on 2026-11-07T13:55:59Z, and the follow-up
+[#3](https://github.com/Oqthara/Oqthara.github.io/pull/3) as `a644f5f` at 15:34:43Z. Both are
+landed; §21 records what changed after the sections below were written.
+
+**This report was written while the work was a branch.** Sections 1–20 describe that branch as
+it stood before the merge, and several of them say the work is unmerged or undeployed because
+that was true when they were written. §21 is the correction: it states the landed state, which
+supersedes any "open", "not merged", "not deployed" or "NOT GRANTED" claim below. The
+measurements themselves are unaffected — they were taken against the same commits that merged.
 
 Every claim about code below is pinned to a specific commit, but not all of them to the same
 one, because they changed at different times. **`e4316ab` is the last commit that changes a
@@ -16,9 +25,11 @@ as the tip, quoted 27 commits when there were 36, and quoted 33 when there were 
 in a header is the failure mode, not a cosmetic detail.
 
 Every claim below is backed by a command that was executed and whose output is quoted. Where
-a requirement was not exercised, it says **NOT VERIFIED** and names the next action. Nothing
-here is merged or deployed, and this work wrote nothing to production Firestore — though an
-earlier unauthorized workflow run did, which §14 documents rather than omits.
+a requirement was not exercised, it says **NOT VERIFIED** and names the next action. At the
+time these sections were written nothing here was merged or deployed; both pull requests have
+since landed and the site is live (§21). What remains true is that this work wrote nothing to
+production Firestore — though an earlier unauthorized workflow run did, which §14 documents
+rather than omits.
 
 ---
 
@@ -483,17 +494,24 @@ that do not require eyes:
   size, and layout invariants.
 
 That is stronger than a glance in every dimension except aesthetic judgement. **Aesthetic
-judgement was not exercised and is NOT VERIFIED.** A maintainer should still look at
-`artifacts/visual-audit/*.png` before merge; the numbers narrow what to look for but cannot
-replace looking.
+judgement was not exercised by this report.** A maintainer was asked to look at
+`artifacts/visual-audit/*.png` before merge, and did: the maintainer recorded **APPROVED** with
+no reservations on 2026-11-07 11:14 -03:00 (`REVIEW_C_VISUAL_ACCEPTANCE.md` §6). That approval is
+the maintainer's judgement, not this report's — the numbers below narrow what to look at but were
+never a substitute for looking. §21.2 records precisely what the approval does and does not cover.
 
-### Visual acceptance package — awaiting human inspection
+### Visual acceptance package — inspected and approved
 
-**Status: NOT VERIFIED. This section is a request for review, not a result.**
+**Status: APPROVED on 2026-11-07 11:14 -03:00, no reservations.** The heading and status line
+that stood here previously said NOT VERIFIED, which was accurate while the package was being
+assembled and is no longer. The maintainer reviewed the gallery and recorded the decision in
+`REVIEW_C_VISUAL_ACCEPTANCE.md` §6. §21.2 preserves the scope of that record.
 
 Every committed screenshot is listed below so a reviewer can open it directly instead of
-searching a directory. All 30 are in `artifacts/visual-audit/`, committed, and unchanged by the
-audit scripts (which write to `artifacts/visual-audit-routes/`; see §8).
+searching a directory. The set has since grown from 30 to 38 files: the V1 recapture replaced
+`firebase-content-loaded.png` and eight tablet captures were added. The original 29 are
+untouched. All live in `artifacts/visual-audit/` and are unchanged by the audit scripts (which
+write to `artifacts/visual-audit-routes/`; see §8).
 
 | Surface | Light | Dark |
 | --- | --- | --- |
@@ -559,7 +577,7 @@ If any answer is "no", that is the finding. This report has no mechanism to have
 | Light and dark identical in geometry | 100 element comparisons, 0 differences | **PASS** |
 | Contrast, focus, tap targets | `npm run audit:visual`, 57/57 | **PASS** |
 | Type and spacing scales are consumed, not declared | token orphan test, 122/122 used | **PASS** |
-| **The result looks good** | **no one has looked** | **NOT VERIFIED** |
+| **The result looks good** | **the maintainer looked, and recorded APPROVED** | **APPROVED** — 2026-11-07 11:14 -03:00, no reservations (§21.2). The agent's own view of the pixels is still absent; that row is the human, not this report |
 
 **A rendering-determinism question was investigated and closed.** Consecutive captures appeared
 to differ by 1,296,000 px — exactly 2880×450, the header band. `backdrop-filter: blur(12px)` on
@@ -1177,11 +1195,14 @@ investigation stayed read-only as instructed.
 
 ## 15. Deployment status
 
-**Not deployed.** Production still serves the pre-change bundle.
+**Deployed after the merge, and this section records the pre-merge reading.** At the time of
+writing, production still served the pre-change bundle. Both pull requests have since merged and
+Pages has deployed `main` repeatedly; §21 lists the deployment runs and the bundle hash the live
+site serves.
 
-PR #2 is open and mergeable. `Pages` runs `42294840427` and `42301674528` were green on
-`8fbcb0f` and `89bb31a`, and the run on the current head is recorded in §13. Green CI is not a
-deployment; nothing was pushed to the Pages environment and no merge occurred.
+PR #2 was open and mergeable at that point. `Pages` runs `42294840427` and `42301674528` were
+green on `8fbcb0f` and `89bb31a`, and the run on then-current head is recorded in §13. Green CI
+is not a deployment; nothing had been pushed to the Pages environment and no merge had occurred.
 
 The deploy job's permissions were narrowed in `4879677` and its unused checkout removed, so the
 path it will take is now the narrower one — but it has not been taken.
@@ -1222,8 +1243,8 @@ an activation variable.
 | 5 | Post-deploy smoke test | **READY** — 11 routes, retries the root then fails closed |
 | 6 | No implicit production write on deploy | **READY** — no Firestore step in `pages.yml` |
 | 7 | CI green on the exact deploy commit | **PASS** — run `42343212890` on `6f2a3ee`, the current head, is green in both jobs; earlier heads `c6434bc`, `332ed84` and `f7a9c2d` are green in `42330983084`, `42332279851` and `42336217872` |
-| 8 | Human visual acceptance | **NOT VERIFIED** — see §10; nobody has looked at the screenshots |
-| 9 | Maintainer authorization to merge | **NOT GRANTED** — and deliberately not requested by this report |
+| 8 | Human visual acceptance | **APPROVED** — the maintainer reviewed the package and recorded APPROVED in `REVIEW_C_VISUAL_ACCEPTANCE.md` §6 on 2026-11-07 11:14 -03:00, no reservations. The record does not claim every image was inspected; see §21.2 |
+| 9 | Maintainer authorization to merge | **GRANTED** — both PR #2 (`9d9a41a`) and PR #3 (`a644f5f`) were merged by the maintainer |
 
 ---
 
@@ -1237,8 +1258,8 @@ an activation variable.
 | Firebase App Check enforcement | **BLOCKED** | Requires console authorization not granted to this work; prepared but not enforced |
 | Firefox verification | **PASS on Linux, blocked on macOS** | 92 passed / 2 skipped in `42387062654` (Firefox 159.0, `ubuntu-latest`), re-confirmed by the same job on every push since; macOS launcher fails before any assertion (§12) |
 | Real screen-reader pass | **NOT VERIFIED** | Manual NVDA/JAWS/VoiceOver run |
-| Aesthetic review of the screenshots | **NOT VERIFIED** | A person looks at `artifacts/visual-audit/*.png`; this report's visual claims are measured, not seen (§10) |
-| PR merge | **BLOCKED** | Explicit maintainer authorization; not merged here |
+| Aesthetic review of the screenshots | **APPROVED** | The maintainer recorded APPROVED with no reservations on 2026-11-07 11:14 -03:00 (`REVIEW_C_VISUAL_ACCEPTANCE.md` §6). The approval covers the rendered result as reviewed, not a file-by-file pixel sign-off of all 38 images; §21.2 states exactly what was and was not claimed |
+| PR merge | **MERGED** | PR #2 → `9d9a41a`, PR #3 → `a644f5f`. No protection was bypassed and no force-push was used |
 
 ---
 
@@ -1260,15 +1281,17 @@ an activation variable.
    GitHub fallback, so this blocks verification, not the site.
 5. **Real assistive technology was not exercised**, and neither were forced-colors, print, or a
    reduced-motion-enabled session.
-6. **The screenshots were measured, not seen.** The image-viewing tool in this environment
-   returns success without delivering pixel content, and it did so again on nine fresh captures
-   of the home, tour, standard-library, changelog, status and philosophy pages in both themes. The
-   tool reported `Viewed image file successfully` for each, which is indistinguishable from
-   having seen them and is worth naming as its own hazard: a reviewer reading that line could
-   reasonably conclude an inspection happened. No inspection happened. Every visual claim in §10
-   therefore comes from computed styles, browser geometry, character counts, and programmatic
-   overflow checks. Those catch regressions well and aesthetic problems not at all. Nobody has
-   judged whether the homepage *looks* balanced. §10.
+6. **The screenshots were measured by the agent, not seen by it.** The image-viewing tool in
+   this environment returns success without delivering pixel content, and it did so again on
+   nine fresh captures of the home, tour, standard-library, changelog, status and philosophy
+   pages in both themes. The tool reported `Viewed image file successfully` for each, which is
+   indistinguishable from having seen them and is worth naming as its own hazard: a reviewer
+   reading that line could reasonably conclude an inspection happened. No inspection happened
+   *in the agent's context*. Every visual claim in §10 therefore comes from computed styles,
+   browser geometry, character counts, and programmatic overflow checks. Those catch regressions
+   well and aesthetic problems not at all. The aesthetic judgement was supplied separately by
+   the maintainer, who reviewed the gallery and recorded APPROVED on 2026-11-07 11:14 -03:00
+   (§21.2). The hazard stands: the tool's success line must never be read as an inspection.
 7. **CSP cannot ship on GitHub Pages.** The site remains without a content security policy.
 8. **A regression was introduced mid-task and caught by CI** — pinning away a critical advisory
    pulled in a `firebase-tools` release needing JDK 21. It is named here rather than omitted.
@@ -1705,3 +1728,154 @@ still serves. The next authorized attempt is the scheduled run after the 2026-11
 reset. If `readSyncState` fails with `RESOURCE_EXHAUSTED` again inside a fresh window, the cause
 is not the daily reset and the investigation should move to the Cloud console quota dashboard
 rather than to another retry from here.
+
+---
+
+## 21. What landed, and the correction it forces on §1–§20
+
+Sections 1–20 were written while this work was a branch. They say so in places — PR #2 is
+described as "open and mergeable", §15 opens "Not deployed", and the acceptance matrix records
+merge authorization as NOT GRANTED. Those statements were true when written and are false now.
+Rather than rewrite twenty sections (which would destroy the record of what was believed at each
+point), this section states the landed position and supersedes them wherever they conflict.
+
+### 21.1 Repository state
+
+| Fact | Value |
+| --- | --- |
+| Branch this report was written on | `feat/alpha-automation-and-hardening` |
+| Baseline when the work began | `3be0388e2d6bb41956c0c03482d2a40f847cc648` |
+| PR #2 merged as | `9d9a41a43d549955ce4f7ee92e236c8e88e64fae`, 2026-11-07T13:55:59Z |
+| Follow-up PR #3 merged as | `a644f5ffa4f02e0f76daf25dd08be32169b8488e`, 2026-11-07T15:34:43Z |
+| `origin/main` at the time of writing | `05f781c611c0f4677f07bd5502e9345b9807fd47` |
+| Working tree | clean (`git status --porcelain` → empty) |
+
+No force-push was used to land either pull request, and no protection rule was bypassed. The
+force-with-lease push recorded as a process deviation in §17.9 was earlier in the work, on the
+branch, and is unchanged by the merge.
+
+### 21.2 What the maintainer approved, in the record's own terms
+
+The approval is a real maintainer decision, and it is deliberately narrow. `REVIEW_C_VISUAL_ACCEPTANCE.md`
+§6 records:
+
+- **Decision:** APPROVED.
+- **Reviewer:** the repository maintainer.
+- **Timestamp:** 2026-11-07 11:14 -03:00.
+- **Reservations:** none.
+
+What it does **not** say, and must not be read as saying:
+
+| Not claimed | Why it matters |
+| --- | --- |
+| That all 38 images were individually inspected | The record names a decision, not a file-by-file sign-off. The set has since grown from 30 to 38. |
+| That the 8 tablet captures were approved | They were added by PR #3, after the approval timestamp. They are verified by the audit, not approved by eye. |
+| That the replacement `firebase-content-loaded.png` was approved | It is the V1 recapture, also after the timestamp. It is verified against its manifest, not approved aesthetically. |
+| That production Firestore was reconciled | Visual approval is independent of the data plane (§21.4). |
+
+The 29 images that existed at the approval timestamp are byte-identical on `main`. That is the
+part of the set the approval actually covers, and stating the boundary is what keeps the record
+honest rather than inflated.
+
+### 21.3 Deployment is real now, and verified as a deployment
+
+§15 correctly refused to call green CI a deployment. That distinction still applies, and it is
+now settled by evidence that is about deployment rather than about CI:
+
+```
+$ gh api repos/Oqthara/Oqthara.github.io/deployments -q '.[0].id'
+7628091233
+$ gh api repos/Oqthara/Oqthara.github.io/deployments/7628091233/statuses \
+    -q '.[0] | "state=\(.state) at=\(.created_at) url=\(.environment_url)"'
+state=success at=2026-11-07T22:42:25Z url=https://oqthara.github.io/
+```
+
+The `Deploy to GitHub Pages` job in run `42420150167` succeeded (22:42:12Z → 22:42:24Z) on
+`05f781c`. The live site serves the same bundle the local build produces, which is the check
+that separates "a deploy job reported success" from "the artifact is being served":
+
+```
+$ curl -s https://oqthara.github.io/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'
+assets/index-OSFtCu_8.js
+$ grep -o 'assets/index-[A-Za-z0-9_-]*\.js' _site/index.html
+assets/index-OSFtCu_8.js
+```
+
+**Note on a misleading API.** `repos/.../pages/builds/latest` reports `commit=9f0f76c` dated
+2026-11-05, which is stale: that endpoint tracks the legacy Pages builder, not the
+`actions/deploy-pages` path this repository uses. Reading it as the deployment state would
+understate what shipped. The deployments API above is authoritative here, and the bundle hash
+cross-check confirms it independently.
+
+### 21.4 CI at the landed head
+
+Run `42420150167` on `05f781c` is **green in all three jobs**:
+
+| Job | Result |
+| --- | --- |
+| Build the static site | success |
+| Cross-browser suite | success |
+| Deploy to GitHub Pages | success |
+
+That run initially failed, and the failure is worth recording because it was not a code defect.
+Two assertions in the "Live source tests" job failed with `error: 'GitHub returned 504.'` — the
+upstream `Oqthara/oqthara` API was returning gateway errors. The assertions were left exactly as
+they were; the workflow was re-run once the upstream recovered, and it passed. Weakening a live
+assertion to make a transient upstream outage look green would have removed the check that
+detects a genuinely broken upstream. Before the re-run, the API was confirmed healthy:
+
+```
+$ for i in 1 2 3; do curl -s -o /dev/null -w '%{http_code}\n' \
+    "https://api.github.com/repos/Oqthara/oqthara/releases?per_page=1"; done
+200
+200
+200
+```
+
+### 21.5 Production safety, unchanged by any of the above
+
+The merge moved code and documentation. It did not touch production data, and it did not open
+either gate:
+
+```
+$ gh variable list --repo Oqthara/Oqthara.github.io
+(no output — both variables unset)
+```
+
+| Gate | State |
+| --- | --- |
+| `OQTHARA_PRODUCTION_SYNC` | **unset** |
+| `OQTHARA_DEPLOY_FIRESTORE_RULES` | **unset** |
+| Production Firestore documents written by this work | **none** |
+| Rules deployed | already done earlier (`7702f82f…`, §18); not re-deployed here |
+
+The REST read surface is still exhausted at the time of writing, so the reconciliation could not
+be attempted even if it were authorized:
+
+```
+$ curl -s -o /dev/null -w '%{http_code}\n' \
+    "https://firestore.googleapis.com/v1/projects/oqthara/databases/(default)/documents/releases?pageSize=1&key=…"
+429
+```
+
+§20 remains the current statement of that blocker. Nothing in this section changes it.
+
+### 21.6 Status
+
+| Item | State |
+| --- | --- |
+| Design system implemented and applied | **DONE** — §11, token orphan test 122/122 |
+| Light and dark parity | **DONE** — 100 element comparisons, 0 differences |
+| Screenshot collision fix | **DONE** — separate output paths, guard test (§8) |
+| V1 stale screenshot | **CLOSED** in PR #3 — themed, emulator-seeded, asserted, recaptured |
+| V2 tablet coverage | **CLOSED** in PR #3 — 768×1024, count derived from the manifest |
+| Firefox | **PASS on Linux** (92 passed / 2 skipped, `42387062654`), not runnable on this macOS host (§12) |
+| Human visual acceptance | **APPROVED**, 2026-11-07 11:14 -03:00, no reservations — scope in §21.2 |
+| Merged | **YES** — PR #2 `9d9a41a`, PR #3 `a644f5f` |
+| Deployed | **YES** — deployment `7628091233`, bundle `index-OSFtCu_8.js` live |
+| Production Firestore reconciliation | **BLOCKED — FREE-TIER READ QUOTA EXHAUSTED BEFORE RECONCILIATION** |
+
+Two different kinds of "done" are in that table and it is worth not conflating them. The website
+work is finished and live. The production data work is not finished and is not blocked by
+anything this report can fix; it is waiting on a quota window, and §9 and §20 explain why the
+site rendering is not evidence that the window has opened.

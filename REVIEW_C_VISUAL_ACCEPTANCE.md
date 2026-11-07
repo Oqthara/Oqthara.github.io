@@ -14,7 +14,7 @@ This file exists so a human can judge the rendered pages. Aesthetic acceptance w
 | Branch HEAD when the captures were made | `e43d418` |
 | Merge state | **merged into `main` as `9d9a41a`**, by the maintainer, after the captures |
 | Commit under review | `9d9a41a` — the squash of this branch, and what the links below resolve against |
-| Screenshots captured in | `4ed134a` for the 29 original files; the V1 recapture and the tablet set are newer (this pull request) |
+| Screenshots captured in | `4ed134a` for the 29 original files; the V1 recapture and the 8 tablet captures are newer, added by PR [#3](https://github.com/Oqthara/Oqthara.github.io/pull/3) and merged as `a644f5f` |
 | Screenshot count | 38 files, 0 duplicates |
 
 **Gallery:** https://github.com/Oqthara/Oqthara.github.io/tree/main/artifacts/visual-audit
@@ -311,8 +311,10 @@ finding by changing an artifact always has this property, and the honest positio
 new image is *verified* (correct theme, correct dimensions, reproducible) and *not*
 individually *approved*.
 
-**Neither is authorized by this file.** This package performs no production write, no merge
-and no deploy.
+**Neither is authorized by this file.** While the package was prepared it performed no
+production write, no merge and no deploy. The merge and the deploy that later happened were
+performed by the maintainer through the repository's normal protected-branch flow, not by this
+document; see `FINAL_REPORT.md` §21 for the landed SHAs and the deployment evidence.
 
 ### What was disclosed before the decision
 
