@@ -326,7 +326,7 @@ last four are judgement calls a reviewer could reasonably have rejected.
 | V2: no tablet captures | Behaviour at 768px has geometry coverage but no visual evidence. |
 | Narrow measure on `/status.html` | Deliberately kept at 568px with no narrower token. A reviewer may disagree. |
 | Tour rail geometry | Reproduced by an explicit `max-width` cap rather than inherited nesting; the numbers match, the structure differs. |
-| Firefox | Not launchable on the review host. CI runs it green on Linux. |
+| Firefox | Not launchable on the review host. CI runs it green on Linux — 92 passed / 2 skipped in `42387062654`, Firefox 159.0. |
 | Typography and spacing scope | The whole point of the branch. Approval says the scale reads correctly, not that every page was measured against every token. |
 
 ## 7. What visual approval does not authorize
@@ -390,9 +390,15 @@ Validation for the pull request that carries these changes:
 | `npx html-validate "_site/*.html"` | no errors |
 | `actionlint` | no findings |
 
-**Firefox remains NOT VERIFIED.** It fails to launch on macOS in this environment with
-"Could not find profile folder", which reproduces outside Playwright. It passes on the
-GitHub-hosted Linux runners, so cross-browser coverage exists in CI; this local run is
-Chromium only and is reported as such rather than presented as cross-browser proof.
+**Firefox is NOT VERIFIED on macOS, and PASSES on Linux CI.** It fails to launch on macOS in
+this environment with "Could not find profile folder", which reproduces outside Playwright, so
+the failure is environmental rather than a test failure. On the GitHub-hosted `ubuntu-latest`
+runner, `cross-browser` run `42387062654` reports Firefox 159.0 (playwright build `1572`) at
+**92 passed, 2 skipped, 0 failed** — the same tally as the other three engines, 368 passed and
+8 skipped across 376 tests. The two skips per engine are `e2e/live.spec.js`, gated on
+`OQ_LIVE_DOCS=1`.
+
+The local run above is Chromium only and is reported as such rather than presented as
+cross-browser proof. Cross-browser coverage comes from CI; it is not claimed for this host.
 
 Nothing in the table above is an aesthetic judgement.

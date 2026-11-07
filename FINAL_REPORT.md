@@ -854,13 +854,20 @@ The audit runs on every page in both palettes.
 
 | Engine | Result | Verdict |
 |---|---|---|
-| Chromium (desktop) | 93 tests, passed | **PASS** |
-| Chromium (mobile, Pixel 7) | 93 tests, passed | **PASS** |
-| WebKit (Desktop Safari) | 93 tests, passed | **PASS** |
-| Firefox (Desktop Firefox) | 93 tests, passed | **PASS on Linux** (re-confirmed in `42343212890` after the reading-measure fix) |
+| Chromium (desktop) | 92 passed, 2 skipped | **PASS** |
+| Chromium (mobile, Pixel 7) | 92 passed, 2 skipped | **PASS** |
+| WebKit (Desktop Safari) | 92 passed, 2 skipped | **PASS** |
+| Firefox (Desktop Firefox) | 92 passed, 2 skipped | **PASS on Linux** |
 
-Each engine runs the same 93 tests. The two CI jobs differ in how many engines they cover, not
-in what they check: `build` runs the two Chromium projects, `cross-browser` runs all four.
+Each engine runs the same 94 tests: 376 in total, 368 passed, 8 skipped, 0 failed. Measured in
+`42387062654` (the `cross-browser` job on `ubuntu-latest`, Firefox 159.0 / playwright build
+`1572`). The two CI jobs differ in how many engines they cover, not in what they check: `build`
+runs the two Chromium projects, `cross-browser` runs all four. The two skips per engine are the
+`e2e/live.spec.js` cases, which need `OQ_LIVE_DOCS=1` and are skipped by design.
+
+An earlier draft of this table said 93 tests per engine. That was accurate for the suite at the
+time it was measured; the suite has since grown to 94, so the figure is restated from the run that
+actually covers the current head rather than carried forward.
 
 ```
 $ npx playwright test                       # local, Chromium + mobile Chromium
@@ -902,13 +909,14 @@ This was confirmed outside Playwright — the binary fails identically when invo
 `arm64` and the profile directory is created, so the culprit is the Firefox build on this host.
 
 On GitHub's `ubuntu-latest` image, with a Firefox installed by Playwright's own dependency step,
-all 93 tests pass with zero failures. The suite does not need adjusting for Firefox; this
+92 of Firefox's 94 tests pass and the remaining 2 skip; there are zero failures. The suite does not need adjusting for Firefox; this
 machine cannot run it. Anyone re-running the suite locally on macOS should expect this launcher
 error and treat it as environmental, not as a regression.
 
 The macOS status stays qualified on purpose. Reporting "Firefox passes" from the Linux run alone
 would overstate what was checked, and reporting Chromium's result as Firefox coverage would be
-dishonest. The defensible claim: **Firefox 93/93 on Linux CI; not runnable on macOS here.**
+dishonest. The defensible claim: **Firefox 92 passed / 2 skipped on Linux CI; not runnable on
+macOS here.**
 
 **Real assistive technology was not exercised.** NVDA, JAWS, and VoiceOver were **NOT
 VERIFIED** — no such test was performed. Automated auditing is not a substitute. Next action:
@@ -1215,7 +1223,7 @@ an activation variable.
 | First production Firestore write | **BLOCKED** | Complete §14 items 1–7, present the plan, obtain maintainer authorization |
 | CSP and security response headers | **BLOCKED** | GitHub Pages serves fixed headers with no `_headers` support; requires a host that allows header configuration |
 | Firebase App Check enforcement | **BLOCKED** | Requires console authorization not granted to this work; prepared but not enforced |
-| Firefox verification | **PASS on Linux, blocked on macOS** | 93/93 in CI run `42320823948`, re-confirmed in `42343212890`; macOS launcher fails before any assertion (§12) |
+| Firefox verification | **PASS on Linux, blocked on macOS** | 92 passed / 2 skipped in `42387062654` (Firefox 159.0, `ubuntu-latest`), re-confirmed by the same job on every push since; macOS launcher fails before any assertion (§12) |
 | Real screen-reader pass | **NOT VERIFIED** | Manual NVDA/JAWS/VoiceOver run |
 | Aesthetic review of the screenshots | **NOT VERIFIED** | A person looks at `artifacts/visual-audit/*.png`; this report's visual claims are measured, not seen (§10) |
 | PR merge | **BLOCKED** | Explicit maintainer authorization; not merged here |
@@ -1301,11 +1309,11 @@ beyond them. The rows are the report's claims, not the original checklist's shap
 | 13 | Firestore authorization remains secure | **PASS** | `firestore.rules` read-only for clients, `allow write: if false`; no admin credential under `src/` |
 | 14 | Secret exposure assessment completed | **PASS** | 50-commit history scan, no credential found; `.gitignore` contract test |
 | 15 | Dependency advisories assessed | **PASS** | 19 advisories triaged: 0 critical, 4 high accepted as unreachable (§9) |
-| 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit, Firefox each 93/93 in run `42320823948`, and all four green again in `42343212890` (364 passed, 8 skipped, 0 failed); 54 a11y checks |
+| 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit, Firefox each 92 passed / 2 skipped in `42387062654` (368 passed, 8 skipped, 0 failed); 54 a11y checks |
 | 17 | Regression tests pass | **PASS** | 299 unit/integration (295 pass, 4 skip); 94 Playwright locally (92 pass, 2 skip), 364 in CI across four engines (`42343212890`); 27 a11y; 4 live |
 | 18 | Production write verified after authorization | **NOT VERIFIED, BLOCKED** | Production **was** written by unauthorized run `42221327714` (`wrote 118 operations`); no authorized write + independent read-back exists, and the data plane now returns `429` so neither an inventory nor a read-back is currently possible (§14.1) |
 | 19 | Compiler repository untouched | **PASS** | No commit in this branch touches the compiler repository; all 76 files are under this repo |
-| 20 | Firefox browser behaviour verified | **PASS, Linux only** | 93/93 in run `42320823948`; Firefox green again in `42343212890` on the measured head; macOS launcher failure reproduced outside Playwright (§12) |
+| 20 | Firefox browser behaviour verified | **PASS, Linux only** | 92 passed / 2 skipped in `42387062654` on the current head; macOS launcher failure reproduced outside Playwright (§12) |
 | 21 | Typographic scale implemented and consumed | **PASS** | Twelve semantic roles resolving to a 1.2 modular scale; sizes 76/28/22/18/13px measured live; role test + raw-value test (§10) |
 | 22 | Spacing scale implemented and consumed | **PASS** | Twelve-rung 4px ladder plus semantic tokens; one off-grid value proven to be a `clamp()` mid-point (§10) |
 | 23 | Design tokens genuinely used, not merely declared | **PASS** | Dead tokens 24 → 0; "every declared token is consumed" test, proven falsifiable by orphaning one |
@@ -1396,7 +1404,7 @@ the suite fail.
 | Accessibility | **PASS** | 54 checks; three baseline AA violations → zero |
 | Unit, integration, emulator | **PASS** | 299 tests (295 pass, 4 skip); 18/18 rule assertions |
 | Browser suite | **PASS** | 182 local; 364 in CI across four engines |
-| Firefox | **PASS on Linux; NOT VERIFIED on macOS** | 93/93 on `ubuntu-latest`; macOS launcher fails before any assertion |
+| Firefox | **PASS on Linux; NOT VERIFIED on macOS** | 92 passed / 2 skipped on `ubuntu-latest`; macOS launcher fails before any assertion |
 | Screenshot collision fix | **PASS** | audit → `visual-audit-routes/`; committed set untouched by a run |
 | **Aesthetic quality** | **NOT VERIFIED** | **no human has looked at the screenshots** (§10) |
 | **Production sync verified by authorized write + independent read-back** | **NOT VERIFIED** | production was written without authorization; no authorized write exists (§14) |
