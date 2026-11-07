@@ -37,8 +37,10 @@ on:
 permissions:
   contents: read
 
+# Shares the mirror's concurrency group with `alpha-release-sync.yml`. See the note there: each
+# workflow serializing only itself is not enough when both write the same collections.
 concurrency:
-  group: firebase-sync
+  group: firestore-mirror
   cancel-in-progress: false
 
 jobs:
@@ -48,13 +50,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out the site repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # No job here pushes, so the job token has no reason to stay readable in .git/config.
+          persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          # Node 22, not 24: superstatic (a firebase-tools dependency) declares
-          # "18 || 20 || 22" and warns EBADENGINE on 24. The rest of CI already runs 22.
+          # Node 22 across every workflow. superstatic 10 (a firebase-tools dependency) now
+          # accepts "20 || 22 || 24", so this is consistency rather than a constraint.
           node-version: 22
           cache: npm
 
@@ -73,6 +78,7 @@ jobs:
             exit 0
           fi
           # Validate, and report only the two non-secret identity fields.
+          # shellcheck disable=SC2016  # the JavaScript below is single-quoted on purpose
           node -e '
             const raw = process.env.SERVICE_ACCOUNT;
             let parsed;
@@ -85,6 +91,23 @@ jobs:
             console.log(`project_id: ${parsed.project_id}`);
           '
           echo "present=true" >> "$GITHUB_OUTPUT"
+
+      # Same activation switch as `alpha-release-sync.yml`. Both workflows write the same
+      # collections and both are scheduled, so a gate on only one of them would be a gate on
+      # half the problem. See that file for why this is a repository variable and not a secret.
+      - name: Check the production-sync activation gate
+        id: gate
+        env:
+          ENABLED: ${{ vars.OQTHARA_PRODUCTION_SYNC }}
+        run: |
+          set -euo pipefail
+          if [ "${ENABLED:-}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Production synchronization is ENABLED by the OQTHARA_PRODUCTION_SYNC variable."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Production synchronization is DISABLED. Set the repository variable OQTHARA_PRODUCTION_SYNC to \`true\` to allow writes to Firestore."
+          fi
 
       - name: Verify the credential identity and Cloud project
         if: steps.credential.outputs.present == 'true'
@@ -105,11 +128,13 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/sync-firestore.mjs --dry-run ${{ inputs.full && '--full' || '' }}
+          FULL: ${{ inputs.full && '--full' || '' }}
+        run: node scripts/sync-firestore.mjs --dry-run ${FULL:+"$FULL"}
 
       - name: Sync
-        if: steps.credential.outputs.present == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        if: steps.gate.outputs.enabled == 'true' && steps.credential.outputs.present == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-        run: node scripts/sync-firestore.mjs ${{ inputs.full && '--full' || '' }}
+          FULL: ${{ inputs.full && '--full' || '' }}
+        run: node scripts/sync-firestore.mjs ${FULL:+"$FULL"}

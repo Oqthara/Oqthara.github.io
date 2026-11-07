@@ -51,33 +51,81 @@ const out = join(here, "..", "artifacts", "visual-audit");
 const DESKTOP = { width: 1440, height: 1000 };
 const MOBILE = { width: 390, height: 844 };
 
+/**
+ * True when a CSS colour is closer to black than to white.
+ *
+ * The computed value is `rgb(r, g, b)` or `rgba(...)`, so relative luminance decides it: a
+ * theme that failed to apply leaves a near-white background behind a screenshot labelled dark.
+ */
+function isDark(color) {
+  const parts = String(color).match(/[\d.]+/g);
+  if (!parts || parts.length < 3) return false;
+  const [r, g, b] = parts.slice(0, 3).map(Number);
+  const channel = (value) => {
+    const scaled = value / 255;
+    return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  return luminance < 0.5;
+}
+
 const doc = (path, ref = "main") =>
   `/document.html?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`;
 
 /** The screenshots that must exist for the audit, in the order the report lists them. */
 const SHOTS = [
-  { file: "home-desktop.png", route: "/", viewport: DESKTOP },
-  { file: "home-mobile.png", route: "/", viewport: MOBILE },
-  { file: "docs-desktop.png", route: "/docs.html", viewport: DESKTOP },
-  { file: "docs-mobile.png", route: "/docs.html", viewport: MOBILE },
+  { file: "home-desktop.png", route: "/", viewport: DESKTOP, theme: "light" },
+  { file: "home-desktop-dark.png", route: "/", viewport: DESKTOP, theme: "dark" },
+  { file: "home-mobile.png", route: "/", viewport: MOBILE, theme: "light" },
+  { file: "home-mobile-dark.png", route: "/", viewport: MOBILE, theme: "dark" },
+  { file: "docs-desktop.png", route: "/docs.html", viewport: DESKTOP, theme: "light" },
+  { file: "docs-desktop-dark.png", route: "/docs.html", viewport: DESKTOP, theme: "dark" },
+  { file: "docs-mobile.png", route: "/docs.html", viewport: MOBILE, theme: "light" },
+  { file: "docs-mobile-dark.png", route: "/docs.html", viewport: MOBILE, theme: "dark" },
   {
     file: "doc-page-code-highlighting.png",
     route: doc("docs/spec/language.md"),
     viewport: DESKTOP,
+    theme: "light",
     // Wait for the highlighted tokens, not just the prose, so the screenshot can be used to
     // judge the code theme.
     ready: "code .token",
   },
-  { file: "examples-desktop.png", route: "/examples.html", viewport: DESKTOP },
-  { file: "stdlib-desktop.png", route: "/stdlib.html", viewport: DESKTOP },
-  { file: "changelog-desktop.png", route: "/changelog.html", viewport: DESKTOP },
-  { file: "status-desktop.png", route: "/status.html", viewport: DESKTOP },
-  { file: "philosophy-desktop.png", route: "/philosophy.html", viewport: DESKTOP },
-  { file: "not-found-desktop.png", route: "/no-such-page.html", viewport: DESKTOP },
+  {
+    file: "doc-page-code-highlighting-dark.png",
+    route: doc("docs/spec/language.md"),
+    viewport: DESKTOP,
+    theme: "dark",
+    ready: "code .token",
+  },
+  { file: "examples-desktop.png", route: "/examples.html", viewport: DESKTOP, theme: "light" },
+  { file: "examples-desktop-dark.png", route: "/examples.html", viewport: DESKTOP, theme: "dark" },
+  { file: "stdlib-desktop.png", route: "/stdlib.html", viewport: DESKTOP, theme: "light" },
+  { file: "stdlib-desktop-dark.png", route: "/stdlib.html", viewport: DESKTOP, theme: "dark" },
+  { file: "changelog-desktop.png", route: "/changelog.html", viewport: DESKTOP, theme: "light" },
+  { file: "changelog-desktop-dark.png", route: "/changelog.html", viewport: DESKTOP, theme: "dark" },
+  { file: "status-desktop.png", route: "/status.html", viewport: DESKTOP, theme: "light" },
+  { file: "status-desktop-dark.png", route: "/status.html", viewport: DESKTOP, theme: "dark" },
+  { file: "philosophy-desktop.png", route: "/philosophy.html", viewport: DESKTOP, theme: "light" },
+  { file: "philosophy-desktop-dark.png", route: "/philosophy.html", viewport: DESKTOP, theme: "dark" },
+  { file: "tour-desktop.png", route: "/tour.html", viewport: DESKTOP, theme: "light" },
+  { file: "tour-desktop-dark.png", route: "/tour.html", viewport: DESKTOP, theme: "dark" },
+  { file: "not-found-desktop.png", route: "/no-such-page.html", viewport: DESKTOP, theme: "light" },
   {
     file: "navigation-mobile-open.png",
     route: "/",
     viewport: MOBILE,
+    theme: "light",
+    before: async (page) => {
+      await page.locator(".nav-toggle").click();
+      await page.locator("#site-nav[data-open='true']").waitFor();
+    },
+  },
+  {
+    file: "navigation-mobile-open-dark.png",
+    route: "/",
+    viewport: MOBILE,
+    theme: "dark",
     before: async (page) => {
       await page.locator(".nav-toggle").click();
       await page.locator("#site-nav[data-open='true']").waitFor();
@@ -88,10 +136,18 @@ const SHOTS = [
     file: "doc-page-mobile.png",
     route: doc("docs/spec/language.md"),
     viewport: MOBILE,
+    theme: "light",
     ready: "code .token",
   },
-  { file: "tour-desktop.png", route: "/tour.html", viewport: DESKTOP },
-  { file: "example-desktop.png", route: "/example.html?path=examples%2Fanagrams.oq&ref=main", viewport: DESKTOP },
+  {
+    file: "doc-page-mobile-dark.png",
+    route: doc("docs/spec/language.md"),
+    viewport: MOBILE,
+    theme: "dark",
+    ready: "code .token",
+  },
+  { file: "example-desktop.png", route: "/example.html?path=examples%2Fanagrams.oq&ref=main", viewport: DESKTOP, theme: "light" },
+  { file: "example-desktop-dark.png", route: "/example.html?path=examples%2Fanagrams.oq&ref=main", viewport: DESKTOP, theme: "dark" },
 ];
 
 /**
@@ -127,11 +183,19 @@ for (const shot of selected) {
   const context = await browser.newContext({
     viewport: shot.viewport,
     deviceScaleFactor: 2,
-    // A fixed, light appearance would hide dark-theme defects, so the audit uses the light
-    // appearance for body pages and the dashboard shot captures dark separately.
-    colorScheme: shot.colorScheme ?? "light",
+    // The system preference is pinned to the opposite of the wanted theme, so a shot labelled
+    // dark cannot be dark only because the OS said so: it has to come from the stored choice.
+    colorScheme: shot.theme === "dark" ? "light" : "dark",
   });
   const page = await context.newPage();
+  // Storing the choice before the first script runs is how a returning visitor is modelled.
+  await page.addInitScript((theme) => {
+    try {
+      localStorage.setItem("oq-theme", theme);
+    } catch {
+      // A context that refuses storage cannot be themed this way; the assertion below catches it.
+    }
+  }, shot.theme);
   if (TOKEN) {
     await page.route("https://api.github.com/**", (route) => {
       const headers = { ...route.request().headers(), authorization: `Bearer ${TOKEN}` };
@@ -160,6 +224,21 @@ for (const shot of selected) {
     // Let webfonts and the last paint settle.
     await page.evaluate(() => document.fonts?.ready);
     await page.waitForTimeout(150);
+
+    // A screenshot is only evidence for the theme it claims. Read the attribute the toggle
+    // publishes and the computed page background, so a light capture cannot be filed as dark.
+    await page.locator("[data-theme-state]").first().waitFor({ timeout: 10000 });
+    const applied = await page.locator("[data-theme-state]").first().getAttribute("data-theme-state");
+    if (applied !== shot.theme) {
+      throw new Error(`expected the ${shot.theme} theme, but the toggle reported ${applied}`);
+    }
+    const background = await page.evaluate(() =>
+      getComputedStyle(document.body).backgroundColor,
+    );
+    const dark = isDark(background);
+    if (dark !== (shot.theme === "dark")) {
+      throw new Error(`theme is ${shot.theme} but the body background ${background} disagrees`);
+    }
 
     await page.screenshot({ path: join(out, shot.file), fullPage: false });
     const size = await page.evaluate(() => ({

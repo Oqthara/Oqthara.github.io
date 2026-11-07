@@ -12,7 +12,8 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import GithubSlugger from "github-slugger";
-import rehypePrism from "rehype-prism-plus";
+import rehypePrismGenerator from "rehype-prism-plus/generator";
+import { refractor } from "refractor/core";
 import { ensureLanguages } from "./lib/highlight.js";
 import { inferLanguagePlugin } from "./lib/infer-language.js";
 import { CodeBlock } from "./components/Code.js";
@@ -59,6 +60,14 @@ export const schema = {
 };
 
 export const remarkPlugins = [remarkGfm];
+
+// `rehype-prism-plus`'s default export highlights with `refractor/all`, which carries every
+// grammar Prism ships. That is the whole reason the site bundle was 1.2 MB: this module never
+// imported those grammars, the plugin pulled them in from underneath, so `refractor/core` above
+// bought nothing. The `/generator` entry takes the refractor instance instead, which keeps the
+// site on the nine grammars registered here.
+const rehypePrism = rehypePrismGenerator(refractor);
+
 export const rehypePlugins = [
   rehypeRaw,
   // Most canonical documents fence their samples with no language at all (84 of 96 blocks),

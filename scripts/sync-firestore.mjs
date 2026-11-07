@@ -56,9 +56,11 @@ import {
   releasesApiUrl,
   titleFromMarkdown,
   titleFromPath,
+  commitApiUrl,
   treeApiUrl,
 } from "../src/source.js";
 import {
+  COLLECTION_CATALOG_ID,
   COLLECTIONS,
   FIELDS,
   MIRRORED_REF,
@@ -85,6 +87,14 @@ export const CONTENT_LIMIT_BYTES = 900 * 1024;
 export const BATCH_SIZE = 400;
 
 const FETCH_TIMEOUT_MS = 30 * 1000;
+
+/**
+ * GitHub's release list is paginated at 100 per page by the API and this mirror needs all of
+ * them, because a release missing from the response is read as one deleted upstream. Five pages
+ * is 500 releases, far more than this project will publish, and the bound keeps a misbehaving
+ * server from looping forever.
+ */
+const MAX_RELEASE_PAGES = 5;
 
 /** Every mirrored source path, described once so the planner has no per-kind branches. */
 export const SOURCE_KINDS = Object.freeze({
@@ -140,12 +150,38 @@ export function buildDocumentRecord({ path, content, collection, now = new Date(
   };
 }
 
+/**
+ * The hash that decides whether a mirrored release still matches upstream.
+ *
+ * It covers **every field the record renders**, not just the body. A release whose title or
+ * notes are unchanged but whose `published_at`, `prerelease` flag or URL was edited upstream is a
+ * real change the site displays, and hashing only `tag\nname\nbody` made that edit invisible:
+ * the recorded hash still matched, the planner skipped the write, and the mirror kept the old
+ * metadata indefinitely. Order is fixed and fields are JSON-encoded so the digest is stable and
+ * unambiguous across delimiters.
+ */
+export function releaseHashOf({ ref, name, body, prerelease, publishedAt, url }) {
+  return contentHashOf(
+    JSON.stringify([
+      String(ref ?? ""),
+      String(name ?? ""),
+      String(body ?? ""),
+      Boolean(prerelease),
+      String(publishedAt ?? ""),
+      String(url ?? ""),
+    ]),
+  );
+}
+
 /** The release record written for a published GitHub release. */
 export function buildReleaseRecord(release, { now = new Date().toISOString() } = {}) {
   const ref = typeof release?.tag_name === "string" ? release.tag_name.trim() : "";
   if (!ref) return null;
   const name = typeof release.name === "string" && release.name.trim() ? release.name.trim() : ref;
   const body = typeof release.body === "string" ? release.body : "";
+  const prerelease = Boolean(release.prerelease);
+  const publishedAt = typeof release.published_at === "string" ? release.published_at : "";
+  const url = typeof release.html_url === "string" ? release.html_url : "";
   return {
     collection: COLLECTIONS.releases,
     id: releaseIdFor(ref),
@@ -155,14 +191,13 @@ export function buildReleaseRecord(release, { now = new Date().toISOString() } =
       [FIELDS.content]: body,
       [FIELDS.published]: true,
       [FIELDS.sourceRef]: MIRRORED_REF,
-      [FIELDS.contentHash]: contentHashOf(`${ref}\n${name}\n${body}`),
+      [FIELDS.contentHash]: releaseHashOf({ ref, name, body, prerelease, publishedAt, url }),
       [FIELDS.updatedAt]: now,
       [FIELDS.ref]: ref,
       [FIELDS.label]: name,
-      [FIELDS.prerelease]: Boolean(release.prerelease),
-      [FIELDS.publishedAt]:
-        typeof release.published_at === "string" ? release.published_at : "",
-      [FIELDS.url]: typeof release.html_url === "string" ? release.html_url : "",
+      [FIELDS.prerelease]: prerelease,
+      [FIELDS.publishedAt]: publishedAt,
+      [FIELDS.url]: url,
     },
   };
 }
@@ -307,29 +342,118 @@ function githubHeaders(token) {
   return headers;
 }
 
-async function fetchWithTimeout(url, { token, accept } = {}) {
+/** Rejects as soon as `signal` aborts, so a deadline does not depend on the callee. */
+function abortRejection(signal) {
+  return new Promise((_, reject) => {
+    if (signal.aborted) {
+      reject(new Error("the request was aborted after exceeding its time limit"));
+      return;
+    }
+    signal.addEventListener(
+      "abort",
+      () => reject(new Error("the request was aborted after exceeding its time limit")),
+      { once: true },
+    );
+  });
+}
+
+/**
+ * `fetch` with a bounded wait that covers the response **body**, not just the headers.
+ *
+ * A timeout that is cleared once headers arrive only bounds the connection: a server that sends
+ * `200` and then stalls mid-body leaves `response.json()` pending forever. That is the failure
+ * this repository actually hit - the run hangs until the job's own limit and the mirror keeps
+ * whatever state the previous run left, with nothing in the log pointing at the fetch.
+ *
+ * The deadline is therefore cleared when the body is *consumed*, not when it is received. Body
+ * reads are additionally raced against the abort signal, so a `fetchImpl` that ignores its
+ * `signal` (a test double, or a polyfill) is still cut off instead of hanging.
+ *
+ * `fetchImpl` stays injectable so tests can drive the network paths without one.
+ */
+export async function fetchWithTimeout(
+  url,
+  { token, accept, fetchImpl = fetch, timeoutMs = FETCH_TIMEOUT_MS } = {},
+) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // Deliberately ref'd. An unref'd timer is the only handle a stalled body read leaves behind,
+  // and Node exits with the promise still pending rather than waiting for the deadline - the
+  // hang becomes a truncated run instead of a timeout. `done` clears it on every path, so the
+  // timer cannot outlive the fetch and keep the process alive for its own sake.
+  const done = () => clearTimeout(timer);
+
+  let response;
   try {
-    const response = await fetch(url, {
+    response = await fetchImpl(url, {
       signal: controller.signal,
       headers: { ...githubHeaders(token), Accept: accept ?? "application/vnd.github+json" },
     });
-    if (!response.ok) {
-      throw new Error(`GitHub returned ${response.status} for ${url}`);
-    }
-    return response;
-  } finally {
-    clearTimeout(timer);
+  } catch (error) {
+    done();
+    throw error;
   }
+  if (!response.ok) {
+    done();
+    throw new Error(`GitHub returned ${response.status} for ${url}`);
+  }
+
+  // Read the body with the deadline still armed. `read` is detached from the race so a body that
+  // resolves after the abort does not surface as an unhandled rejection.
+  const read = (consume) => {
+    let promise;
+    try {
+      promise = Promise.resolve(consume());
+    } catch (error) {
+      done();
+      return Promise.reject(error);
+    }
+    promise.catch(() => {});
+    return Promise.race([promise, abortRejection(controller.signal)]).finally(done);
+  };
+
+  return {
+    status: response.status,
+    ok: response.ok,
+    json: () => read(() => response.json()),
+    text: () => read(() => response.text()),
+  };
 }
 
-/** The recursive tree for `ref`, filtered to the paths this mirror cares about. */
+/**
+ * The commit object `ref` currently resolves to.
+ *
+ * Separate from the tree lookup on purpose. `GET /git/trees/:ref` answers with the tree's own
+ * `sha`, which is a different object from the commit that contains it - recording it as
+ * provenance yields a hash that no `git show` accepts, and that never matches the commit a
+ * release points at. Fails closed: a mirror document whose provenance cannot be resolved is
+ * worse than a run that stopped and said so.
+ */
+export async function resolveCommit({ ref = MIRRORED_REF, token = "", fetchImpl = fetch } = {}) {
+  const response = await fetchWithTimeout(commitApiUrl(ref), { token, fetchImpl });
+  if (!response.ok) throw new Error(`GitHub commit request returned ${response.status}`);
+  const payload = await response.json();
+  const sha = String(payload?.sha ?? "").trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error(`GitHub did not resolve ${ref} to a commit SHA; refusing to record an unusable ref`);
+  }
+  // When the endpoint was given a tag, `sha` is the commit the tag points at. An annotated tag
+  // object would carry its own sha in `tag.sha`; `commit.sha` is the one the content came from.
+  const commitSha = String(payload?.commit?.sha ?? sha).trim().toLowerCase();
+  const resolved = /^[0-9a-f]{40}$/.test(commitSha) ? commitSha : sha;
+  return { commit: resolved, tree: String(payload?.commit?.tree?.sha ?? "").trim().toLowerCase() };
+}
+
+/**
+ * The recursive tree for `ref`, filtered to the paths this mirror cares about.
+ *
+ * Returns the commit sha as well as the paths. Without it a mirror record says "this is `main`"
+ * and never which `main`, so a mirrored document and an upstream document cannot be compared to
+ * decide whether the mirror is behind. The commit is resolved through `resolveCommit`; the
+ * tree's own `sha` is deliberately not used, because it is not a commit.
+ */
 export async function listSourceFiles({ ref = MIRRORED_REF, token = "", fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(treeApiUrl(ref), {
-    signal: undefined,
-    headers: githubHeaders(token),
-  });
+  const response = await fetchWithTimeout(treeApiUrl(ref), { token, fetchImpl });
   if (!response.ok) throw new Error(`GitHub tree request returned ${response.status}`);
   const payload = await response.json();
   if (!payload || !Array.isArray(payload.tree)) {
@@ -338,28 +462,52 @@ export async function listSourceFiles({ ref = MIRRORED_REF, token = "", fetchImp
   if (payload.truncated === true) {
     throw new Error("GitHub returned a truncated tree; refusing to publish an incomplete mirror");
   }
-  return payload.tree
+  const paths = payload.tree
     .filter((entry) => entry && entry.type === "blob" && typeof entry.path === "string")
     .map((entry) => normalizePath(normalizeRepoPath(entry.path)))
     .filter((path) => classifyPath(path) !== null);
+
+  // The tree sha is kept for diagnosis only. It must never be written as `sourceCommit`.
+  const treeSha = typeof payload.sha === "string" ? payload.sha.trim().toLowerCase() : "";
+  const { commit } = await resolveCommit({ ref, token, fetchImpl });
+  return { paths, commit, tree: treeSha };
 }
 
 /** Raw file text. raw.githubusercontent.com has no API quota. */
 export async function readSourceFile(path, { ref = MIRRORED_REF, token = "", fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(rawUrl(path, ref), {
-    headers: { ...githubHeaders(token), Accept: "text/plain, */*" },
+  const response = await fetchWithTimeout(rawUrl(path, ref), {
+    token,
+    accept: "text/plain, */*",
+    fetchImpl,
   });
   if (!response.ok) throw new Error(`GitHub returned ${response.status} for ${path}`);
   return response.text();
 }
 
-/** Published releases; drafts and malformed entries are dropped. */
-export async function listReleases({ token = "", fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(releasesApiUrl(100), { headers: githubHeaders(token) });
-  if (!response.ok) throw new Error(`GitHub releases request returned ${response.status}`);
-  const payload = await response.json();
-  if (!Array.isArray(payload)) throw new Error("GitHub returned a release list this script could not read");
-  return payload.filter((release) => release && !release.draft);
+/**
+ * Published releases; drafts and malformed entries are dropped.
+ *
+ * Pages until GitHub returns a short page, because "not in the list" is how the planner decides
+ * a mirrored release was deleted upstream. A single page is capped at 100 by the API, so reading
+ * one page would silently unpublish every release past the hundredth as soon as the repository
+ * crossed that line. The loop is bounded: a runaway server cannot spin here forever.
+ */
+export async function listReleases({ token = "", fetchImpl = fetch, perPage = 100 } = {}) {
+  const releases = [];
+  for (let page = 1; page <= MAX_RELEASE_PAGES; page += 1) {
+    const response = await fetchWithTimeout(releasesApiUrl(perPage, page), { token, fetchImpl });
+    if (!response.ok) throw new Error(`GitHub releases request returned ${response.status}`);
+    const payload = await response.json();
+    if (!Array.isArray(payload)) {
+      throw new Error("GitHub returned a release list this script could not read");
+    }
+    releases.push(...payload.filter((release) => release && !release.draft));
+    if (payload.length < perPage) return releases;
+  }
+  // Reaching the bound means this mirror is knowingly incomplete, which is worse than failing.
+  throw new Error(
+    `GitHub returned more than ${MAX_RELEASE_PAGES * perPage} releases; refusing to publish a partial release list`,
+  );
 }
 
 /**
@@ -367,6 +515,9 @@ export async function listReleases({ token = "", fetchImpl = fetch } = {}) {
  *
  * `readFile` and the listing functions are injectable so a test can run the planner without a
  * network. A single unreadable file fails the run rather than publishing a mirror with holes.
+ *
+ * Returns the records and the upstream commit they came from. Callers that only want the list
+ * (every test, and any external use) get it through the `records` field like the rest.
  */
 export async function collectDesired({
   ref = MIRRORED_REF,
@@ -377,7 +528,11 @@ export async function collectDesired({
   readFile = readSourceFile,
   releases = listReleases,
 } = {}) {
-  const paths = await listFiles({ ref, token, fetchImpl });
+  const listing = await listFiles({ ref, token, fetchImpl });
+  // `listFiles` returns `{ paths, commit }`; a caller supplying its own may return the paths
+  // alone, which is the shape tests use when the commit is not what they are testing.
+  const paths = Array.isArray(listing) ? listing : listing.paths;
+  const commit = Array.isArray(listing) ? "" : (listing.commit ?? "");
   const desired = [];
   const stdlibDuplicates = [];
 
@@ -397,7 +552,7 @@ export async function collectDesired({
     const record = buildReleaseRecord(release, { now });
     if (record) desired.push(record);
   }
-  return desired;
+  return { records: desired, commit };
 }
 
 // ---------------------------------------------------------------------------
@@ -487,7 +642,11 @@ export async function readSyncState(db) {
  * `db` is a Firestore handle (`collection().doc()` returning a ref with `set`). The Admin SDK
  * and a test double satisfy that shape.
  */
-export async function applyPlan(db, plan, { now = new Date().toISOString() } = {}) {
+export async function applyPlan(
+  db,
+  plan,
+  { now = new Date().toISOString(), commit = "" } = {},
+) {
   const operations = [];
 
   for (const write of plan.writes) {
@@ -562,21 +721,29 @@ export async function applyPlan(db, plan, { now = new Date().toISOString() } = {
     written += batch.length;
   }
 
-  // One catalogue-level record so a later run can see when the mirror was last reconciled.
-  await db.collection(COLLECTIONS.sync).doc("catalog").set(
-    {
-      [FIELDS.status]: "published",
-      [FIELDS.sourceRef]: MIRRORED_REF,
-      [FIELDS.updatedAt]: now,
-      counts: {
-        written: plan.writes.length,
-        unchanged: plan.unchanged.length,
-        unpublished: plan.unpublish.length,
-        oversized: plan.oversized.length,
-      },
+  // One catalogue-level record so a later run can see when the mirror was last reconciled, and
+  // from which upstream commit. `sourceRef` alone says "main" and never which main, so it cannot
+  // answer whether the mirror is current.
+  const catalog = {
+    [FIELDS.status]: "published",
+    [FIELDS.sourceRef]: MIRRORED_REF,
+    [FIELDS.sourceCommit]: commit,
+    [FIELDS.updatedAt]: now,
+    counts: {
+      written: plan.writes.length,
+      unchanged: plan.unchanged.length,
+      unpublished: plan.unpublish.length,
+      oversized: plan.oversized.length,
     },
-    { merge: true },
-  );
+  };
+  await db.collection(COLLECTIONS.sync).doc("catalog").set(catalog, { merge: true });
+  // Mirrored into the publicly readable collection as well. `sync` is operator-facing and not
+  // world-readable, so without this the one fact that makes the mirror auditable - which commit
+  // this content came from - is only visible to whoever holds the service account.
+  await db
+    .collection(COLLECTIONS.metadata)
+    .doc(COLLECTION_CATALOG_ID)
+    .set({ ...catalog, [FIELDS.updatedAt]: now }, { merge: true });
 
   return { operations: written };
 }
@@ -605,7 +772,9 @@ export const USAGE = `Usage: node scripts/sync-firestore.mjs [--dry-run] [--full
 
   --dry-run   Read GitHub, compute hashes and print what would change. Needs no credentials.
   --full      Full reconciliation: rewrite every mirrored document even when its hash matches.
-  --ref=REF   Repository ref to mirror. Defaults to ${DEFAULT_REF}; the site reads main only.
+  --ref=REF   Repository ref to read. Defaults to ${DEFAULT_REF}. A ref other than ${DEFAULT_REF}
+              requires --dry-run; writing from a tag or branch would unpublish every document
+              it does not contain.
 
 Credentials for a write run come from FIREBASE_SERVICE_ACCOUNT or GOOGLE_APPLICATION_CREDENTIALS.
 Exit codes: 0 ok, 1 usage, 2 missing credentials, 3 GitHub failure, 4 Firestore failure.`;
@@ -636,16 +805,32 @@ export async function main(
     return EXIT.usage;
   }
 
+  // The planner publishes what a ref contains and unpublishes what it lacks, so writing from a
+  // ref other than `main` would unpublish every document that ref does not have. A tag is a
+  // strict subset of `main`, so `--ref=v0.1.0` is the destructive case. A non-default ref is
+  // therefore a read-only review, which is still useful for checking what a tag would publish.
+  if (options.ref !== MIRRORED_REF && !options.dryRun) {
+    error(
+      `--ref=${options.ref} is read-only: mirroring a ref other than ${MIRRORED_REF} would unpublish ` +
+        `every document that ref does not contain. Add --dry-run to review it.`,
+    );
+    return EXIT.usage;
+  }
+
   const token = String(env.GITHUB_TOKEN ?? env.GH_TOKEN ?? "").trim();
   let desired;
+  let commit = "";
   try {
-    desired = await collect({ ref: options.ref, token, now });
+    const collected = await collect({ ref: options.ref, token, now });
+    desired = Array.isArray(collected) ? collected : collected.records;
+    commit = Array.isArray(collected) ? "" : (collected.commit ?? "");
   } catch (cause) {
     error(`Could not read the canonical repository: ${cause?.message ?? cause}`);
     return EXIT.sourceFailed;
   }
   log(
-    `read ${desired.length} source record${desired.length === 1 ? "" : "s"} from ${REPO}@${options.ref}`,
+    `read ${desired.length} source record${desired.length === 1 ? "" : "s"} from ${REPO}@${options.ref}` +
+      (commit ? ` at ${commit.slice(0, 7)}` : ""),
   );
 
   const resolved = await credentials(env);
@@ -677,14 +862,17 @@ export async function main(
     return EXIT.missingCredentials;
   }
 
-  if (!plan.writes.length && !plan.oversized.length && !plan.unpublish.length) {
-    log("mirror is already current; nothing to write");
-    return EXIT.ok;
-  }
-
+  // The catalogue record is written on every run, including one that changes no document. It is
+  // the only place a reader can learn when the mirror was last reconciled and against which
+  // upstream commit, so skipping it on a quiet run would leave those two facts stale precisely
+  // when the mirror is current.
   try {
-    const result = await applyPlan(await openDb(resolved.serviceAccount), plan, { now });
-    log(`wrote ${result.operations} operations to ${resolved.projectId ?? "the configured project"}`);
+    const result = await applyPlan(await openDb(resolved.serviceAccount), plan, { now, commit });
+    log(
+      result.operations
+        ? `wrote ${result.operations} operations to ${resolved.projectId ?? "the configured project"}`
+        : "mirror is already current; recorded the reconciliation, nothing else to write",
+    );
   } catch (cause) {
     error(`Could not write to Firestore: ${cause?.message ?? cause}`);
     return EXIT.writeFailed;

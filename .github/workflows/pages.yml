@@ -6,10 +6,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The build job reads the repository and nothing else. Deploying needs the Pages write scope and
+# an OIDC token, and both are granted on the `deploy` job instead of workflow-wide: the build job
+# runs `npm ci`, a rules emulator and a browser suite, which is the widest surface here and has no
+# reason to be able to publish.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -20,9 +22,12 @@ jobs:
     name: Build the static site
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # No job here pushes, so the job token has no reason to stay readable in .git/config.
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -32,6 +37,13 @@ jobs:
 
       - name: Unit and integration tests
         run: npm test
+
+      # `firebase-tools` 15 refuses to start the emulator on a JRE older than 21, and the
+      # runner image does not ship one. The emulator is the only thing that needs the JDK.
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: "21"
 
       - name: Firestore security rules
         run: npm run test:rules
@@ -43,7 +55,7 @@ jobs:
         run: node verify.mjs
 
       - name: Validate HTML
-        run: npx --yes html-validate@9 --formatter stylish _site/*.html
+        run: npx --no-install html-validate --formatter stylish _site/*.html
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
@@ -54,23 +66,66 @@ jobs:
       - name: Live source tests
         run: npm run test:live
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: _site
+
+  cross-browser:
+    name: Cross-browser suite
+    # Firefox could not launch on the macOS host used for local work: the binary runs but exits
+    # with "Could not find profile folder.", which reproduced outside Playwright and is therefore
+    # an environment fault rather than a site fault. This job is the supported environment that
+    # settles it. The `PW_ENGINES=all` switch is what the browser suite reads to include every
+    # installed engine, so installing Firefox here is all that is needed to cover it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # `PW_ENGINES=all` runs every project in playwright.config.js, and that file documents CI
+      # installing all three engines, so all three are installed here. Installing a subset leaves
+      # the missing project failing on "Executable doesn't exist" in a few milliseconds, which
+      # reads like a site failure and is not one.
+      - name: Install every Playwright engine
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Browser tests in every installed engine
+        run: npx playwright test
+        env:
+          PW_ENGINES: all
 
   deploy:
     name: Deploy to GitHub Pages
     needs: build
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Job-level permissions replace the workflow-level ones rather than adding to them, so this
+    # job must list everything it needs. It needs exactly two things: `pages: write` to publish
+    # and `id-token: write` for the OIDC exchange deploy-pages performs. It deliberately does
+    # NOT grant `contents: read`, because there is no checkout here any more - the site comes
+    # from the artifact the build job uploaded. `tests/workflow-contract.test.js` pins that
+    # pairing, so a checkout cannot reappear without `contents: read`.
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
 
       - name: Smoke test the deployed site
         env:

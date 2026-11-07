@@ -12,7 +12,7 @@
     "test": "node --test tests/*.test.js",
     "test:browser": "playwright test",
     "test:live": "OQ_LIVE_DOCS=1 node --test tests/live.test.js",
-    "test:rules": "npx --yes firebase-tools@13 emulators:exec --only firestore --project oqthara-rules-test \"node scripts/test-firestore-rules.mjs\"",
+    "test:rules": "npx --no-install firebase-tools emulators:exec --only firestore --project oqthara-rules-test \"node scripts/test-firestore-rules.mjs\"",
     "verify": "node verify.mjs",
     "screenshots": "node scripts/capture-screenshots.mjs",
     "audit:visual": "node scripts/audit-visual.mjs",
@@ -32,9 +32,13 @@
     "remark-gfm": "4.0.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.65.0",
     "@vitejs/plugin-react": "5.2.0",
     "firebase-admin": "^14.5.0",
-    "vite": "8.3.5"
+    "firebase-tools": "15.35.0",
+    "html-validate": "9.7.1",
+    "vite": "8.3.5",
+    "yaml": "2.9.1"
   }
 }

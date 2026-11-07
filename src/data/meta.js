@@ -17,6 +17,37 @@ export const NAV = [
   { href: "/status.html", label: "Status" },
 ];
 
+/**
+ * The footer navigation, grouped by what a reader is trying to do rather than by page order.
+ * The header answers "where am I", the footer answers "where else can I go".
+ */
+export const FOOTER_GROUPS = [
+  {
+    title: "Learn",
+    links: [
+      { href: "/philosophy.html", label: "Philosophy" },
+      { href: "/tour.html", label: "The tour" },
+      { href: "/examples.html", label: "Examples" },
+    ],
+  },
+  {
+    title: "Reference",
+    links: [
+      { href: "/docs.html", label: "Documentation" },
+      { href: "/stdlib.html", label: "Standard library" },
+      { href: "/status.html", label: "Status" },
+    ],
+  },
+  {
+    title: "Project",
+    links: [
+      { href: "/changelog.html", label: "Changelog" },
+      { href: "https://github.com/Oqthara/oqthara", label: "GitHub" },
+      { href: "https://github.com/Oqthara/oqthara/releases", label: "Releases" },
+    ],
+  },
+];
+
 export const PAGE_META = {
   "/": {
     title: "Oqthara — a small language for the JVM",

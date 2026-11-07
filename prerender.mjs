@@ -80,6 +80,12 @@ if (existsSync(join(here, "assets"))) {
   cpSync(join(here, "assets"), join(out, "assets"), { recursive: true });
 }
 
+// The icon must sit at the site root: a browser asks for `/favicon.ico` when a page declares
+// none, and a 404 there is a console error on every page. Declaring an SVG and serving it from
+// the root answers that request with something real.
+if (!existsSync(join(here, "assets", "favicon.svg"))) fail("assets/favicon.svg is missing");
+cpSync(join(here, "assets", "favicon.svg"), join(out, "favicon.svg"));
+
 // GitHub Pages must not run Jekyll over the prerendered output.
 writeFileSync(join(out, ".nojekyll"), "", "utf8");
 

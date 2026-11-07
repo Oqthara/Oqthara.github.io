@@ -23,7 +23,12 @@ import { serveSite } from "./lib/serve-site.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SITE = join(ROOT, "_site");
-const OUT = join(ROOT, "artifacts", "visual-audit");
+const OUT = join(ROOT, "artifacts", "visual-audit-routes");
+// Deliberately NOT `artifacts/visual-audit`: that directory holds the committed, reviewed
+// screenshots at deviceScaleFactor 2. This script captures the same routes at
+// deviceScaleFactor 1 and full-page height, so writing there silently overwrote the committed
+// files with differently-sized ones - consecutive runs looked nondeterministic when the real
+// cause was one script clobbering the other's output.
 // The Pages-like server picks a free port, so parallel audit runs never collide.
 let ORIGIN = "";
 

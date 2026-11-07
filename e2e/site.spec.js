@@ -1,11 +1,14 @@
 import { test, expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 
-// Browser tests against the real built site and the real Oqthara repository.
+// Browser tests against the real built site and the real upstream content. These are live:
+// they use whatever the production stack serves, with no fixtures and no interception.
 //
-// Content is discovered from GitHub at runtime, so these tests wait for the rendered result
-// (a document heading, an index entry) rather than for a network idle that may never settle.
-// No assertion depends on wall-clock time.
+// Which backend answers depends on the ref. `main` reads the Firestore mirror first and falls
+// back to GitHub; a pinned tag can only come from GitHub, because the mirror holds `main`
+// alone. So both paths are covered here, and the `data-source` badge is what reports which one
+// actually answered. Tests wait for the rendered result (a document heading, an index entry)
+// rather than for a network idle that may never settle. No assertion depends on wall-clock time.
 
 const DOC = (path, ref = "main") =>
   `/document.html?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`;
@@ -71,6 +74,9 @@ test.describe("site", () => {
   });
 
   test("2. main navigation reaches each route and h1", async ({ page }) => {
+    // The nav is inline above the 960px collapse point and behind the menu button below it, so
+    // this traversal pins a desktop width. Test 3 covers the collapsed menu at a phone width.
+    await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");
     const nav = page.getByRole("navigation", { name: "Main" });
     const destinations = [
@@ -265,17 +271,13 @@ test.describe("site", () => {
     await waitForArticle(page);
   });
 
-  test("21. no uncaught exceptions or console errors across the routes", async ({ page }) => {
-    const failures = [];
-    page.on("pageerror", (error) => failures.push(`pageerror: ${error.message}`));
-    page.on("console", (message) => {
-      if (message.type() !== "error") return;
-      const text = message.text();
-      // A missing favicon is a server detail, not a page error.
-      if (/favicon\.ico/i.test(text)) return;
-      failures.push(`console: ${text}`);
-    });
-
+  test("21. no uncaught exceptions or console errors across the routes", async ({ browser }) => {
+    // Ten routes, each in its own context and each given a settle window for backend reads, so
+    // this test spends most of its time waiting on purpose. The 30s default covers a single page
+    // and is not enough here: WebKit, the slowest engine, hit it while still inside the settle
+    // window on the last route. The budget is raised rather than the settle shortened, because
+    // the settle is what makes a failed read report against the route that caused it.
+    test.slow();
     const routes = [
       "/",
       "/philosophy.html",
@@ -288,9 +290,31 @@ test.describe("site", () => {
       "/changelog.html",
       "/status.html",
     ];
+    // Each route gets its own context. Reusing one page means leaving the previous document,
+    // and WebKit reports the teardown of the SDK's long-lived Firestore Listen channel as a
+    // cross-origin `pageerror` naming the request URL. That is transport noise from the walk
+    // itself, not a defect in the page, and it cannot be fixed from application code: the site
+    // issues only one-shot getDocs/getDoc reads and owns no listener to close. A fresh context
+    // per route measures what this test is for -- the errors a visitor actually causes by
+    // loading a page -- rather than the errors caused by abandoning one.
+    const failures = [];
     for (const route of routes) {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      page.on("pageerror", (error) => failures.push(`${route} pageerror: ${error.message}`));
+      page.on("console", (message) => {
+        if (message.type() !== "error") return;
+        const text = message.text();
+        // A missing favicon is a server detail, not a page error.
+        if (/favicon\.ico/i.test(text)) return;
+        failures.push(`${route} console: ${text}`);
+      });
+
       await page.goto(route);
       await expect(page.locator("main")).toBeVisible();
+      // Let backend reads land so a failure would be reported against this route, not the next.
+      await page.waitForTimeout(2500);
+      await context.close();
     }
     expect(failures).toEqual([]);
   });
@@ -342,5 +366,18 @@ test.describe("site", () => {
     await page.goto("/docs/spec/language.html");
     await expect(page).toHaveURL(/\/document\.html\?path=docs%2Fspec%2Flanguage\.md/);
     await waitForArticle(page);
+  });
+
+  // Which backend answers is a production property, not a detail: `main` should come from the
+  // mirror, a pinned tag must come from GitHub. Asserting it here means a misconfigured mirror
+  // shows up as a test failure instead of silently degrading to GitHub and looking healthy.
+  test("25. main is served by the mirror and a pinned tag by GitHub", async ({ page }) => {
+    await page.goto(DOC("docs/spec/language.md"));
+    await waitForArticle(page);
+    await expect(page.locator(".content-source").first()).toHaveAttribute("data-source", "firestore");
+
+    await page.goto(DOC("docs/spec/language.md", "v0.1.0-alpha.2"));
+    await waitForArticle(page);
+    await expect(page.locator(".content-source").first()).toHaveAttribute("data-source", "github");
   });
 });

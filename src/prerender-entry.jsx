@@ -50,6 +50,7 @@ function page({ title, description, body, script, stylesheet, extraHead = "" }) 
   <title>${escapeHtml(title)}</title>
   <meta name="description" content="${escapeHtml(description)}">
   <link rel="stylesheet" href="${stylesheet}">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://raw.githubusercontent.com">
   <link rel="preconnect" href="https://api.github.com">${THEME_SCRIPT}${extraHead}
 </head>

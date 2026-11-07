@@ -65,7 +65,12 @@ function oqtharaScore(lines) {
     if (OQ_CALL.test(trimmed)) score += 2;
     // A method call on a receiver, `xs.map(x -> x * 2)`, is Oqthara. It appears as a single
     // line in the language reference and scored nothing before.
-    if (/\.\w+\s*\(/.test(trimmed)) score += 2;
+    //
+    // No space is allowed before the `(`. A transcript line such as
+    // `wrote build/oqdoc/arith.jar (99 classes)` is not a method call, but `.\w+\s*\(`
+    // accepted it — two such lines were enough to outvote the shell transcript they sit in and
+    // label a compiler log as Oqthara source.
+    if (/\b\w+\.\w+\(/.test(trimmed)) score += 2;
     if (OQ_ASSIGNMENT.test(trimmed)) score += 1;
     if (/\b(?:to|until)\b/.test(trimmed) && /\bfor\b/.test(trimmed)) score += 2;
     // A lambda arrow scores only when an expression precedes it. Diagram arrows (`+->`,

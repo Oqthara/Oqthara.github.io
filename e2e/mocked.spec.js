@@ -1,7 +1,8 @@
 import { test, expect } from "@playwright/test";
 
-// Deterministic tests. Every GitHub response comes from a fixture; nothing here leaves the
-// machine, so these tests prove the discovery rules without depending on the live repository.
+// Deterministic tests. Every GitHub response comes from a fixture and the Firestore mirror is
+// blocked, so nothing here leaves the machine: these tests prove the discovery rules without
+// depending on the live repository, on production data, or on the network being up at all.
 
 const DOC = (path, ref = "main") =>
   `/document.html?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`;
@@ -53,10 +54,28 @@ const BASE_TREE = [
 ];
 
 /**
+ * Takes the Firestore mirror out of play, so these tests exercise the GitHub path they mock.
+ *
+ * The site reads Firestore first and falls back to GitHub, and the built bundle carries the
+ * project's public web config — so without this the page reaches the real `oqthara` project.
+ * That is not a hypothetical: once the mirror was populated, these tests stopped seeing their
+ * own fixtures and started asserting against production documents. The suite claimed to leave
+ * the machine, and for a while it did not.
+ *
+ * Aborting the request makes the SDK fail like any unreachable backend, which is the state the
+ * fallback exists for. `data-source="github"` then states the truth.
+ */
+async function blockMirror(page) {
+  await page.route("https://firestore.googleapis.com/**", (route) => route.abort("failed"));
+  await page.route("https://*.firebaseio.com/**", (route) => route.abort("failed"));
+}
+
+/**
  * Installs deterministic GitHub routes. `settings.treeStatus` and `settings.rawStatus` can be
  * changed between interactions to model a later failure.
  */
 async function mockGithub(page, state = {}) {
+  await blockMirror(page);
   const settings = {
     tree: BASE_TREE,
     treeStatus: 200,
@@ -258,5 +277,31 @@ test.describe("mocked GitHub discovery", () => {
     state.settings.treeStatus = 403;
     await page.goto("/docs.html");
     await expect(page.locator('[role="alert"]')).toContainText(/rate limit/i);
+  });
+
+  // The regression this pins: the suite silently began reading the production mirror once it was
+  // populated, so every fixture assertion above was really asserting against live documents.
+  // Blocking alone is invisible; this states the contract.
+  test("the suite never reaches the production mirror", async ({ page }) => {
+    const attempted = [];
+    page.on("request", (request) => {
+      if (/firestore\.googleapis\.com|firebaseio\.com/.test(request.url())) attempted.push(request.url());
+    });
+
+    await mockGithub(page);
+    await page.goto("/docs.html");
+    await expect(page.locator(".doc-list a").first()).toBeVisible();
+
+    // The fixture tree holds four documents and no ADRs. The production mirror holds the ADRs,
+    // so their presence anywhere on this page would mean live data answered instead of fixtures.
+    await expect(page.locator(".doc-list a")).toHaveCount(4);
+    await expect(page.locator("main")).not.toContainText("ADR-0001");
+
+    // Attempts are expected — the app tries the mirror first, by design. The blocked attempt
+    // must be answered by the fixtures, and the page must say so.
+    await page.goto(DOC("docs/guides/new.md"));
+    await expect(article(page)).toContainText("This body came from a mocked raw file.");
+    await expect(page.locator('.content-source[data-source="github"]')).toBeVisible();
+    for (const url of attempted) expect(url).toMatch(/googleapis\.com|firebaseio\.com/);
   });
 });

@@ -1,5 +1,5 @@
 import { createElement as h, useEffect, useRef, useState } from "react";
-import { BASE_PATH, NAV } from "../data/meta.js";
+import { BASE_PATH, FOOTER_GROUPS, NAV } from "../data/meta.js";
 import { Search } from "./Search.jsx";
 
 /**
@@ -37,19 +37,24 @@ function applyTheme(theme) {
  * read localStorage, so starting from the stored value produced a React #418 text mismatch on
  * every page for anyone who had ever chosen an appearance. The stored value is adopted in the
  * effect below, after hydration, which is also when it is applied.
+ *
+ * `adopted` keeps the apply-and-persist effect from running before the stored value has been
+ * read. Both effects run in the same commit, so without it the second one would still see the
+ * initial "auto" and remove the attribute the head script had already set, painting one white
+ * frame for a reader who chose dark. Waiting costs nothing: the head script has the correct
+ * appearance on screen already, and this effect only re-applies it.
  */
 function ThemeToggle() {
   const [theme, setTheme] = useState("auto");
+  const [adopted, setAdopted] = useState(false);
 
   useEffect(() => {
-    const stored = storedTheme();
-    if (stored !== "auto") {
-      setTheme(stored);
-      applyTheme(stored);
-    }
+    setTheme(storedTheme());
+    setAdopted(true);
   }, []);
 
   useEffect(() => {
+    if (!adopted) return;
     applyTheme(theme);
     try {
       if (theme === "auto") window.localStorage.removeItem("oq-theme");
@@ -57,7 +62,7 @@ function ThemeToggle() {
     } catch {
       // Persisting is a convenience, not a requirement.
     }
-  }, [theme]);
+  }, [theme, adopted]);
 
   const next = theme === "auto" ? "light" : theme === "light" ? "dark" : "auto";
   const label =
@@ -162,21 +167,60 @@ export function Layout({ current, children }) {
         ),
       ),
     ),
-    h("main", { id: "main" }, children),
+    h("main", { id: "main", tabIndex: -1 }, children),
     h(
       "footer",
       { className: "site-footer" },
       h(
         "div",
-        { className: "content site-footer-inner" },
-        h("span", null, "Oqthara · MIT · built on the JVM"),
+        { className: "content" },
         h(
-          "span",
-          { className: "footer-links" },
-          h("a", { href: hrefFor("/philosophy.html") }, "Philosophy"),
-          h("a", { href: hrefFor("/docs.html") }, "Documentation"),
-          h("a", { href: "https://github.com/Oqthara/oqthara" }, "GitHub"),
-          h("a", { href: "https://github.com/Oqthara/oqthara/releases" }, "Releases"),
+          "div",
+          { className: "site-footer-inner" },
+          h(
+            "div",
+            { className: "footer-brand" },
+            h("span", { className: "footer-mark" }, "Oqthara"),
+            h(
+              "p",
+              { className: "footer-note" },
+              "A small language for the JVM that reads like the idea. MIT licensed, Java 21 or newer, and every page here is built from the repository it describes.",
+            ),
+          ),
+          h(
+            "nav",
+            { className: "footer-groups", "aria-label": "Footer" },
+            FOOTER_GROUPS.map((group) =>
+              h(
+                "div",
+                { className: "footer-group", key: group.title },
+                h("h2", null, group.title),
+                h(
+                  "ul",
+                  null,
+                  group.links.map((link) =>
+                    h(
+                      "li",
+                      { key: link.label },
+                      h(
+                        "a",
+                        link.href.startsWith("http")
+                          ? { href: link.href, rel: "noreferrer" }
+                          : { href: hrefFor(link.href) },
+                        link.label,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        h(
+          "div",
+          { className: "footer-legal" },
+          h("span", null, "MIT licensed. Built on the JVM."),
+          h("span", null, "Documentation is read from the repository at request time."),
         ),
       ),
     ),
@@ -200,14 +244,17 @@ export function Note({ children }) {
   return h("div", { className: "note" }, children);
 }
 
-/** A card. `href` makes the whole card a link. */
-export function Card({ title, kicker, href, children }) {
+/** A card. `href` makes the whole card a link. `featured` raises it one step. */
+export function Card({ title, kicker, href, featured = false, children }) {
   const body = [
     kicker ? h("p", { className: "card-kicker", key: "k" }, kicker) : null,
     h("h3", { key: "t" }, title),
     children ? h("p", { key: "c" }, children) : null,
   ];
-  return href ? h("a", { className: "card", href }, body) : h("div", { className: "card" }, body);
+  const className = featured ? "card card-featured" : "card";
+  return href
+    ? h("a", { className, href }, body)
+    : h("div", { className }, body);
 }
 
 export function Grid({ children, two = false }) {

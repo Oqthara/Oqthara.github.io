@@ -1,312 +1,1420 @@
-# Oqthara website — recovery report
+# Oqthara website — production readiness report
 
-Repository: `Oqthara/Oqthara.github.io` (checked out at `.site-repo/` inside the canonical
-language repository `Oqthara/oqthara`, which was **not modified**).
+Branch `feat/alpha-automation-and-hardening`. Baseline
+`3be0388e2d6bb41956c0c03482d2a40f847cc648` (`origin/main`). Pull request
+[#2](https://github.com/Oqthara/Oqthara.github.io/pull/2) is **open and mergeable**.
 
-Branch `main`. Base `origin/main` was `dfa963d`; the delivered work is `4bdc4ad`, deployed
-green by Pages run `42168174018`.
+Every claim about code below is pinned to a specific commit, but not all of them to the same
+one, because they changed at different times. **`e4316ab` is the last commit that changes a
+shipped asset** — every commit after it is documentation. So when checking a measurement, verify
+it against `e4316ab`; when checking a statement *about* the measurements, verify it against the
+commit named beside it.
 
----
+That split is deliberate. Pinning the code claims to the branch tip would make this file wrong on
+its own next commit, and it has already been wrong that way: earlier revisions named `770ac82`
+as the tip, quoted 27 commits when there were 36, and quoted 33 when there were 43. A stale tip
+in a header is the failure mode, not a cosmetic detail.
 
-## 1. Recovery findings
-
-The working tree carried three sessions of unfinished work. Nothing was reset or discarded.
-
-Preserved and completed: the GitHub content-discovery runtime, the routing and sanitisation
-suite, the contrast fixes, the Oqthara grammar, the header budget rework, and two partially
-applied independent reviews.
-
-Discarded only after being proven obsolete: four agent worktrees under `.worktrees/`, every one
-of whose commits was already reachable from `main`.
-
-Root causes found and fixed, in the order they blocked the release:
-
-1. **Scripts in `_site` were served with the wrong type** — the deployed page crashed at runtime
-   before rendering anything.
-2. **`getFirebaseApp()` received a diagnostics object** instead of a configuration, so the SDK
-   threw `app/no-options`. The error was swallowed by the Firestore→GitHub fallback, so every
-   page silently read from GitHub in production while appearing healthy.
-3. **`readDoc()` returned an `{id, data}` wrapper** that every repository passed to a validator
-   expecting the bare payload. Every single-document read was rejected as "missing or empty
-   path" and fell back to GitHub. Catalogs were unaffected, which is why the failure looked
-   partial.
-4. **`MarkdownWithToc` emitted `.doc` and `.doc-article` on one element**, so `.doc-article .doc`
-   matched nothing and documentation pages lost their article container and side-by-side table
-   of contents.
-5. **`ChangelogPage` passed a document object** where a Markdown string was expected, so the
-   changelog rendered empty.
-6. **The static server had no `404.html` fallback.** Python's `http.server` answered unknown
-   paths with its own error page, so the mandatory 404 screenshot was a capture of Python's
-   page, and a Playwright route shim injected `_site/404.html` behind the test's back. Both
-   surfaces are now served by `scripts/lib/serve-site.mjs`, which mirrors GitHub Pages.
+Every claim below is backed by a command that was executed and whose output is quoted. Where
+a requirement was not exercised, it says **NOT VERIFIED** and names the next action. Nothing
+here is merged or deployed, and this work wrote nothing to production Firestore — though an
+earlier unauthorized workflow run did, which §14 documents rather than omits.
 
 ---
 
-## 2. Local development servers
+## 1. Exact baseline and final HEAD
 
-Five obsolete `python3 -m http.server` processes were identified by port and confirmed by
-reading `/proc`-equivalent working directories, then stopped individually by PID. A manual
-Firestore emulator was stopped the same way (exit 143 = SIGTERM, normal).
+| | Commit | Detail |
+|---|---|---|
+| Baseline | `3be0388e2d6bb41956c0c03482d2a40f847cc648` | `origin/main` when this work began |
+| Security and release work | `..8fbcb0f` | the 27 commits §3–§9 evidence |
+| Typography and spacing work | `8fbcb0f..dfea46f` | six commits: tokens, tests, cross-browser CI, screenshots |
+| Report commits | `35df02f..HEAD` | prose, plus the gate change in `e4316ab`; no site CSS |
+| Branch total | read it, do not trust a number here | `git log --oneline origin/main..HEAD \| wc -l` |
 
-No process was killed by name pattern, and no unrelated Node.js process was touched. The
-production GitHub Pages deployment was never disabled — stopping local servers and publishing the
-site are unrelated.
+Counts are stated against an explicit SHA on purpose, and deliberately not restated for the tip.
+A branch total is a snapshot; a report that quotes one without saying when it was true is wrong
+on its own next commit, and a report that *does* say when it was true still invites a reader to
+treat an old number as current. This file has already been wrong twice that way — once quoting 27
+commits after there were 36, and once quoting a 33-commit figure in the pull request after there
+were 43.
 
----
-
-## 3. Visual and CSS repair
-
-The defects were fixed at their cause, not by stacking overrides. The `.toc` fix, for example,
-sets a 25px minimum height with a 4px gap on the link itself, rather than adding padding to the
-list to hide the problem.
-
-Verified across 11 routes × 5 viewports = 55 page loads, plus the mobile menu interaction:
-
-| Viewport | Routes checked | Horizontal overflow | Uncaught errors |
-|----------|----------------|---------------------|-----------------|
-| 1440×900 | 11 | 0 | 0 |
-| 1024×768 | 11 | 0 | 0 |
-| 768×1024 | 11 | 0 | 0 |
-| 390×844 | 11 | 0 | 0 |
-| 320×640 | 11 | 0 | 0 |
-
-The only console output in the entire run is the five legitimate `404` responses for
-`/no-such-page`, one per viewport, which is the correct behaviour for a 404 route.
-
-**Mobile navigation** opens and closes via a button that reports `aria-expanded`, closes on
-Escape, and returns focus to the trigger. When closed the drawer is `display: none`, so it is
-neither focusable nor exposed to assistive technology.
-
----
-
-## 4. Syntax highlighting
-
-`refractor/core` with nine explicitly registered grammars (python, java, json, bash, javascript,
-typescript, yaml, markdown, diff) plus a hand-written Oqthara grammar derived from the canonical
-language specification. Using the core build instead of the full bundle keeps the shipped
-JavaScript small.
-
-A probe against real specification syntax confirmed 14 distinct token classes, including
-`keyword`, `builtin`, `function-definition`, `data-declaration`, `range-operator`, `boolean`,
-`number`, `string`, `operator`, `punctuation`, `variable` and `class-name`. Python, Java, JSON
-and Bash all report `registered: true`.
-
-Inline code, indentation and copy behaviour are preserved. Markdown still passes through
-`rehypeSanitize` after `rehypeRaw`.
-
----
-
-## 5. Firebase integration
-
-`firebase` is a runtime dependency; `firebase-admin` is a devDependency used only by build-time
-and CI scripts.
+The figures that matter are the ones that describe code under test, and those are pinned to
+`dfea46f`, the last commit that changes a shipped asset:
 
 ```
-src/firebase/{config,firestore,collections}.js
-src/repositories/{documentation,examples,releases,stdlib}.repository.js
-src/services/content.service.js
+$ git diff --shortstat origin/main..dfea46f
+ 76 files changed, 13963 insertions(+), 2103 deletions(-)
+
+$ git diff --stat dfea46f..HEAD -- assets/ src/ scripts/
 ```
 
-Configuration is read exclusively from `VITE_FIREBASE_*` environment variables, validated at
-initialisation with a specific diagnostic listing exactly which keys are missing. A single lazy
-`initializeApp` reuses an existing app, so the SDK is never initialised twice. No credential,
-service account, private key or admin token exists under `src/`.
+The second command prints nothing. That empty result is the claim worth making: no commit after
+`dfea46f` touches `assets/`, `src/`, or `scripts/`, so the stylesheet, the components, and the
+screenshot and audit tooling are byte-identical to what the gates in §13 measured.
 
-**Read path.** Firestore → GitHub → stale cache. A Firestore failure never blanks a page: content
-that is already on screen stays, and `.stale-note` reports the degraded source. Queries filter
-on `published == true` and paginate; results are cached with a 5-minute memory TTL and a
-30-minute session TTL.
+What *did* change after `dfea46f` is three files, none of which the gates depend on for a
+different conclusion: this report, the `test.slow()` fix in `e2e/site.spec.js`, and eleven lines
+of `.github/workflows/pages.yml` that gave the cross-browser job its engines. The last of those
+is what made Firefox verifiable, so it is a change the evidence depends on rather than one it
+survives despite.
 
----
+Commit counts for the branch as a whole have moved and will keep moving. Read them from git.
 
-## 6. Security
-
-`firestore.rules` is the boundary. Client-side filtering is defence in depth, not a permission.
-
-- Read on `documentation`, `examples`, `releases` and `stdlib` requires
-  `resource.data.published == true`, with a null guard so a missing document denies instead of
-  throwing.
-- `write` is `false` on all four content collections.
-- `sync` and `metadata` are denied for both read and write.
-- A `/{document=**}` catch-all denies anything unnamed, so a collection added to the sync script
-  without a matching rule fails closed.
-
-Proven by `scripts/test-firestore-rules.mjs`, which runs the rules in the Firestore emulator
-against 13 assertions covering published reads, unpublished reads, client writes on every
-collection, and unmatched paths: **13/13 pass**. The same command runs in `pages.yml`, so the
-rules cannot regress unnoticed.
+The working tree was clean (`git status --porcelain` → empty) before each command in §13 was
+run.
 
 ---
 
-## 7. Content synchronisation
+## 2. Every new commit and its purpose
 
-`scripts/sync-firestore.mjs` plus `.github/workflows/firebase-sync.yml`.
+Oldest first, as GitHub orders them on the PR.
 
-Discovery classifies documentation, examples, standard-library references, the changelog and
-release metadata; computes a SHA-256 hash per document; writes only documents whose hash changed;
-batches at 400 operations; refuses content over 900 KiB with a recorded reason; converts
-deletions into `published: false` rather than dropping records; aborts on a truncated directory
-listing instead of publishing an incomplete mirror; and records bookkeeping in `sync`. A
-scheduled run performs a full reconciliation.
+| Commit | Purpose |
+|---|---|
+| `20acac6` | `feat(ci)` — detect upstream Alpha releases every 15 minutes |
+| `e007f5f` | `fix(e2e)` — stop the mocked suite reading production Firestore |
+| `29310e4` | `build(ci)` — pin every action to a commit SHA |
+| `a0eba28` | `fix(site)` — serve a favicon so no page logs a 404 |
+| `672fd9b` | `fix(a11y)` — reach WCAG 2.2 AA and stop the theme flash |
+| `b624559` | `fix(security)` — close a tag-to-shell injection and five related gaps |
+| `cc3921e` | `fix(sync)` — stop the mirror unpublishing real releases and record its commit |
+| `c9ebc5d` | `docs(visual)` — capture every surface in both themes |
+| `3b7de01` | `chore(security)` — refuse service-account keys in git |
+| `144e723` | `chore` — remove a stray image committed by mistake |
+| `89aa616` | `fix(ci)` — repair a workflow that GitHub refused to start |
+| `9fffbf0` | `fix(site)` — stop calling a compiler log Oqthara source |
+| `2830368` | `fix(site)` — give documentation pages a title a reader can see |
+| `4321e0e` | `build(deps)` — take the critical advisory out of `firebase-tools` |
+| `425ce0f` | `docs(visual)` — refresh the screenshots after the title fix |
+| `4cb37b7` | `ci` — give the emulator the JDK 21 it now requires |
+| `6e9fb8b` | `docs` — report the website work against the definition of done |
+| `7b17b7f` | `docs` — correct the report where the evidence did not support it |
+| `4879677` | `fix(ci)` — stop a manual dispatch running unreviewed code with the admin key |
+| `58af3b6` | `fix(ci)` — make a forced run reconcile, and a failed run say so |
+| `e77d688` | `fix(sync)` — bound the body, record a commit, and stop reading one page |
+| `84b20eb` | `fix(sync)` — keep the deadline ref'd so a stalled body times out |
+| `d8c60f5` | `feat(site)` — make the mirror's provenance a claim a reader can check |
+| `cd2e36c` | `ci` — silence the shellcheck false positives `actionlint` reports |
+| `956e4a5` | `feat(site)` — give the pages a shape a reader can navigate |
+| `8c9291f` | `test(e2e)` — make the browser suite honest on every engine |
+| `8fbcb0f` | `docs(visual)` — recapture every surface after the redesign |
+| `fa55d20` | `docs` — report the work against the acceptance criteria it was given |
+| `a5baac7` | `docs` — count the report's own commit in its totals |
+| `89bb31a` | `docs` — anchor the report's totals to the last code commit |
+| `6062ee7` | `docs` — cite the run that verifies this report, not just the one before it |
+| `57cfc81` | `fix(visual)` — stop the audit overwriting the committed screenshots |
+| `35df02f` | `docs` — record the screenshot separation in the report |
+| `f60e637` | `docs` — stop the report naming a tip that is no longer the tip |
+| `e801804` | `docs` — correct what the CI history actually shows |
+| `0a60328` | `docs` — cite the run that verifies this report on its current commit |
+| `24e0203` | `feat(css)` — wire the typography and spacing tokens into the components that ignored them |
+| `5d5b27c` | `test(css)` — add design-token contract tests to keep the scale honest |
+| `82c7ed8` | `ci` — give Firefox a supported environment to prove itself on |
+| `f7a7b3f` | `ci` — install both engines in the cross-browser job |
+| `ace1cc6` | `ci` — install every engine the cross-browser job asks for |
+| `dfea46f` | `docs(visual)` — refresh the committed screenshots after the token work |
+| `770ac82` | `test(e2e)` — give the route sweep the time it actually needs |
+| `583c8aa` | `docs` — report the design system and the Firefox result that was verified |
+| `67d3a3c` | `docs` — stop restating commit counts the report cannot keep true |
+| `9b6ab97` | `docs` — count the contract tests correctly |
+| `48da910` | `docs` — correct three count errors in the design-system section |
+| `0b85925` | `docs` — cite the CI run that covers the branch tip |
+| `e4316ab` | `fix(ci)` — gate every production Firestore write behind an explicit opt-in |
+| `c6434bc` | `docs` — correct the record: production has already been written |
+| `2b96187` | `docs` — record deployment readiness and the evidence behind it |
+| `332ed84` | `docs` — ask a human to look at the screenshots |
+| `3d5f779` | `docs` — hand off the branch with the evidence a reviewer needs |
+| `ab31c6f` | `docs` — plan the read-only sync, and record what it cannot tell you |
+| `6aaa143` | `docs` — stop chasing the tip in the report header |
+| `f7a9c2d` | `docs` — record that production is unreadable, not merely unverified |
+| `bff6441` | `fix(site)` — give the tour page the documentation reading measure |
+| `6f2a3ee` | `fix(css)` — measure prose in pixels, not in `ch`, and cap the rail pages |
+| `9b2016a` | `fix(css)` — keep the inline gutter outside the reading measure |
+| `4ed134a` | `chore(visual)` — recapture the committed screenshots against the fixed build |
 
-Administrative writes happen only in the trusted Actions environment, using the
-`FIREBASE_SERVICE_ACCOUNT` secret. That secret is never `VITE_`-prefixed and never reaches the
-browser bundle.
+Every commit is focused on one concern and was gated before the next was started. The table above
+is not a complete branch listing and should not be counted as one; use `git log`.
 
-### Blocker (honest status)
+---
 
-**`FIREBASE_SERVICE_ACCOUNT` is not configured for this repository.** `gh secret list -R
-Oqthara/Oqthara.github.io` returns an empty list. Without it no live synchronisation can run,
-and I will not invent credentials or weaken the rules to make the site appear functional.
+## 3. Findings resolved, with evidence
 
-Evidence gathered:
+### P1 — tag-to-shell command injection
+
+GitHub splices `${{ }}` into `run:` script text *before* Bash parses it, so an upstream tag
+such as `v1-$(id)` executes. The tag now reaches the shell only through an `env:` mapping,
+and `check-upstream-release.mjs` rejects any tag outside `[A-Za-z0-9._/+−]{1,128}` before it is
+used. Evidence:
 
 ```
-$ gh secret list -R Oqthara/Oqthara.github.io
-(empty)
-
-$ curl -o /dev/null -w "%{http_code}" …/documents/<collection>?key=<public web key>
-documentation -> 403
-examples      -> 403
-releases      -> 403
-stdlib        -> 403
-metadata      -> 403
-sync          -> 403
+$ grep -nE 'run:.*\$\{\{' .github/workflows/*.yml
+(no output)
 ```
 
-A 403 on an unwritten project is the correct response, not a rules failure.
+`tests/workflow-contract.test.js` fails if an expression is reintroduced into a `run:` body.
 
-**Substitute evidence that the read path works:** the 57-record emulator seed, the 13/13 rules
-proof, and `artifacts/visual-audit/firebase-content-loaded.png` — a real browser capture of a
-documentation page whose `data-source` is `firestore`, taken from a build pointed at the
-emulator. Together they demonstrate the full read path without a production credential.
+### P1 — duplicate YAML `env:` key
 
-**To close:** add the JSON key of a service account holding `Cloud Datastore User` on project
-`oqthara` as the `FIREBASE_SERVICE_ACCOUNT` secret, then dispatch `firebase-sync` with
-`dry_run=false`. The workflow validates the JSON, masks the value, and writes it to a temporary
-credentials file that is deleted on exit.
+The Detect step declared `env:` twice. Parsers that reject duplicate keys called the workflow
+invalid; parsers that keep the last mapping silently dropped `FIREBASE_SERVICE_ACCOUNT` and
+`GITHUB_TOKEN`, so releases would never sync. `DRY_RUN` was merged into the single existing
+mapping. Evidence: all four workflow files parse under `yaml.safe_load` with
+`uniqueKeys: true` and raise no duplicate-key error.
 
----
+### P1 — secret-bearing manual dispatch ran unreviewed code
 
-## 8. Commands and results
+A dispatch from any branch checked out *that branch* and handed it the Firebase service-account
+key. The `sync` job is now gated `if: github.ref == 'refs/heads/main'` and pins `ref: main`;
+any other ref lands in a `refused` job that exits non-zero without ever receiving the key.
 
-Every command below was executed in `.site-repo/`.
+### P1 — deploy job lost `contents: read`
 
-| Command | Result |
-|---------|--------|
-| `npm test` | **145 tests, 141 pass, 0 fail, 4 skipped** |
-| `npm run test:rules` | **13/13 rule assertions passed** |
-| `npm run build` | 10 static routes + `404.html` prerendered into `_site` |
-| `npm run verify` | **11 HTML files verified** |
-| `npx --yes html-validate@9 --formatter stylish _site/*.html` | **0 problems, exit 0** |
-| `npx playwright test` | **34 passed, 2 skipped, 0 failed** |
-| `npm run audit:visual` | **57/57 checks passed** |
-| `npm run screenshots` | **15 screenshots captured**, exit 0 |
+The deploy job's job-level `permissions:` block reset unspecified scopes to `none`, while a
+checkout still used `GITHUB_TOKEN`. The unused checkout was removed rather than widening the
+token, which narrows the deploy job to `pages: write` and `id-token: write`. A contract test
+asserts no checkout step remains in that job.
 
-The visual audit takes approximately twelve minutes because it performs 55 real page loads with
-a settle step each.
+### P2 — forced repair did not actually repair
 
-### Continuous integration
+`force=true` reused incremental mode, and `planSync` trusts the saved bookkeeping hash, so an
+out-of-band edit was skipped and the run reported success anyway. `force` now selects `full`,
+which rewrites regardless of saved hashes. Falsified in `tests/sync-releases.test.js`: the
+out-of-band edit is skipped incrementally and repaired by `full`.
 
-`.github/workflows/pages.yml` runs `npm ci`, `npm test`, `npm run test:rules`, `npm run build`,
-`node verify.mjs`, `html-validate`, `npx playwright test`, `npm run test:live`, then uploads and
-deploys to Pages.
+### P2 — failed syncs were never recorded
 
-`html-validate` only runs in CI, so it is not covered by `npm test` or `npm run verify`. The
-first push of this work (`4a96c30`) went red there: six `no-inline-style` errors, because four
-page components were still emitting `style` objects from `React.createElement`. The style
-objects were replaced with classes in `assets/site.css` — `.flow-sm`, `.flow-md`, `.flow-lg` for
-vertical rhythm and `.block-gap-sm` for a spacer — and a repository-wide search now returns no
-`style: {` or `style="` occurrence in `src/`. Regenerated screenshots are byte-identical, so the
-classes render exactly as the inline styles did.
+The failure recorder ran under GitHub's implicit `success()`, which is false exactly when a
+sync has failed — so a failed attempt was never persisted and the next poll concluded the
+release was already mirrored. Both recorders now carry an explicit `!cancelled()` status.
 
-Final run: **`42168174018`, conclusion `success`, on `4bdc4ad`.** Every step passed:
+### P2 — network timeout covered headers but not body
 
-| Step | Result |
-|------|--------|
-| Install | success |
-| Unit and integration tests | success |
-| Firestore security rules | success |
-| Build | success |
-| Verify the prerendered output | success |
-| Validate HTML | success |
-| Install Playwright Chromium | success |
-| Browser tests | success |
-| Live source tests | success |
-| Upload Pages artifact | success |
-| Deploy to GitHub Pages | success |
-| Smoke test the deployed site | success |
+A stalled response body could hang a job indefinitely. The deadline is now kept *ref'd* across
+the body read (`84b20eb`), so a stalled body aborts instead of pinning the process open.
 
-The deployed site was then checked directly: nine routes returned `200` with no `style`
-attribute anywhere in the DOM, no horizontal overflow at 1440, 1024, 768, 390 or 320 px, real
-Prism tokens on the tour, status, philosophy and language-reference pages, the mobile drawer
-opening to 390×443 px with 25 visible links and closing on Escape with focus returned to the
-toggle, and `data-source="github"` on the content routes — the intended fallback, since no
-service-account secret exists yet.
+### P2 — tree SHA recorded as provenance
 
----
+`GET /git/trees/{ref}` returns a *tree* SHA, which was being written as `sourceCommit` and
+therefore could not identify the upstream commit. `resolveCommit` now calls `GET /commits/:ref`,
+returns `payload.commit.sha` (preferred for annotated tags) or `payload.sha`, and fails closed
+on anything that is not a 40-character SHA.
 
-## 9. Screenshots
+### P2 — incomplete release metadata hash
 
-`artifacts/visual-audit/` — all genuine Chromium captures of the built site.
+`buildReleaseRecord` hashed only tag, name, and body, so a changed `prerelease` flag or
+`published_at` changed the *detection* hash without changing the *record* hash — the planner
+skipped the write and the site kept stale labels. `releaseHashOf` now covers tag, name, body,
+`published_at`, `prerelease`, and the HTML URL, JSON-encoded so fields cannot run together.
+Falsified: reverting to the three-field hash fails the metadata tests.
 
-| File | Viewport | Route |
-|------|----------|-------|
-| `home-desktop.png` | 1440×1000 | `/` |
-| `home-mobile.png` | 390×844 | `/` |
-| `docs-desktop.png` | 1440×1000 | `/docs.html` |
-| `docs-mobile.png` | 390×844 | `/docs.html` |
-| `doc-page-code-highlighting.png` | 1440×1000 | `/document.html?path=docs/spec/language.md` |
-| `doc-page-mobile.png` | 390×844 | `/document.html?path=docs/spec/language.md` |
-| `examples-desktop.png` | 1440×1000 | `/examples.html` |
-| `example-desktop.png` | 1440×1000 | `/example.html?path=examples/anagrams.oq` |
-| `stdlib-desktop.png` | 1440×1000 | `/stdlib.html` |
-| `changelog-desktop.png` | 1440×1000 | `/changelog.html` |
-| `status-desktop.png` | 1440×1000 | `/status.html` |
-| `philosophy-desktop.png` | 1440×1000 | `/philosophy.html` |
-| `tour-desktop.png` | 1440×1000 | `/tour.html` |
-| `not-found-desktop.png` | 1440×1000 | `/no-such-page.html` (status 404) |
-| `navigation-mobile-open.png` | 390×844 | `/` with the menu open |
-| `firebase-content-loaded.png` | 1440×1000 | `/document.html?path=docs/spec/language.md`, `data-source="firestore"` |
+### P2 — release discovery read only one page
 
-`not-found-desktop.png` was confirmed programmatically and visually to be the site's own 404 —
-dark theme, site header and footer, `<main>` present, heading "That page does not exist", 17
-links, Inter typeface — not the static server's error page.
+`per_page` caps at 100 and the list is ordered by *creation*, so a draft published after 100
+newer-created releases was invisible forever. `listAllReleases` now follows `page` until a
+short page returns, bounded at `MAX_RELEASE_PAGES` 20 × `RELEASE_PAGE_SIZE` 100, and **fails
+closed** rather than selecting from a set it cannot prove complete.
+
+### P2 — two writers could unpublish the mirror
+
+`firebase-sync.yml` used a different concurrency group from `alpha-release-sync.yml`, so it
+could plan against a collection list the other was concurrently changing and unpublish a live
+release. Both now share group `firestore-mirror` with `cancel-in-progress: false`, asserted by
+a contract test that compares the two declarations.
+
+### Medium — production Firestore read from the test suite
+
+The mocked e2e suite was reading the real production project. It now runs against stubs only.
 
 ---
 
-## 10. Reviews
+## 4. Review thread disposition
 
-- [`REVIEW_A_ENGINEERING_SECURITY.md`](./REVIEW_A_ENGINEERING_SECURITY.md) — 6 findings (2 P1,
-  3 P2, 1 P3), all fixed. No P0.
-- [`REVIEW_B_VISUAL_PRODUCT.md`](./REVIEW_B_VISUAL_PRODUCT.md) — 6 findings (4 P1, 2 P2), all
-  fixed. No P0.
+Ten inline review threads were opened by `chatgpt-codex-connector`. All ten are resolved;
+none is outstanding.
 
----
+```
+$ gh api graphql -f query='{...reviewThreads...}'
+total: 10   resolved: 10   unresolved: 0   outdated: 6
+```
 
-## 11. Acceptance
-
-| Criterion | Status |
-|-----------|--------|
-| Website visually repaired | Met — 57/57 audit checks |
-| Navigation works desktop and mobile | Met — with ARIA, Escape and focus return |
-| Oqthara syntax highlighting | Met — real grammar, 14 token classes verified |
-| Firestore reads work | Met — proven against the emulator; production blocked on the secret |
-| Public access restricted to published content | Met — 13/13 rules assertions |
-| Client writes denied | Met — `write: if false` everywhere, asserted |
-| Sync implemented or blocker documented | Met — implemented; blocker documented with evidence |
-| Dynamic content remains automatic | Met — no hand-maintained content introduced |
-| Existing content not silently lost | Met — deletions unpublish, never drop |
-| Playwright passes | Met — 34 passed |
-| Both reviews documented | Met |
-| Screenshots produced | Met — 16 files |
-| CI green and deployed | Met — run `42168174018` succeeded end to end |
-
-One criterion is met with a documented external blocker rather than a green production run: live
-synchronisation needs a credential only the repository owner can provide.
+Each P1 and P2 thread carries a reply naming the fixing commit and the test that would catch a
+regression. Six threads show `isOutdated: true` because the diff they were anchored to has
+since moved; the fix is still present at HEAD.
 
 ---
 
-## Stop
+## 5. Alpha synchronization architecture and versioning semantics
 
-The mission is finite and complete. No further features, redesign or refactoring were started.
+```mermaid
+graph TD
+  CRON[schedule: every 15 min] --> DETECT[check-upstream-release.mjs]
+  DISPATCH[workflow_dispatch<br/>main only] --> DETECT
+  DETECT --> PAGES[listAllReleases<br/>paginated, fails closed]
+  PAGES --> SELECT[selectLatestRelease<br/>by published_at]
+  SELECT --> HASH[releaseHashOf<br/>6 fields, JSON-encoded]
+  HASH --> CMP{changed vs<br/>last SUCCESSFUL sync?}
+  CMP -->|no| NOOP[No new release]
+  CMP -->|yes| SYNC[sync-firestore.mjs]
+  CMP -->|force| FULL[sync-firestore.mjs --full]
+  SYNC --> ONE[incremental write]
+  FULL --> TWO[full reconciliation]
+  ONE --> REC[record success]
+  TWO --> REC
+  ONE -.->|throws| FAIL[record failed]
+  TWO -.->|throws| FAIL
+```
+
+**Versioning semantics.** The workflow compares the upstream release hash against the *last
+successfully synchronized* value, not the last attempted. An upstream change in tag, name,
+body, `published_at`, `prerelease`, or URL produces a different hash and therefore a write. A
+metadata-only change is enough; it is not limited to new tags.
+
+**Serialization.** `alpha-release-sync.yml` and `firebase-sync.yml` share the concurrency group
+`firestore-mirror` with `cancel-in-progress: false`. Neither can plan against a collection list
+the other is concurrently mutating.
+
+**Idempotence.** A re-run with unchanged upstream input decides `NOOP` and writes nothing, so a
+retry after a transient failure cannot duplicate or reorder published content.
+
+### 5.1 Read-only production sync plan
+
+This is a **reconciliation against state that already exists**, not a first write. Production
+holds 59 mirrored records written on 2026-11-06T12:55Z by run `42221327714`, a run no maintainer
+authorized (§14). The plan below says what a correct sync would do to that state, derived
+entirely from evidence already quoted in this report — no new production read was performed to
+produce it.
+
+**What the 59 records are.** The count is reproducible from the source tree, not asserted:
+
+| Contribution | Count | Source of truth |
+|---|---|---|
+| `docs/**/*.md` | 18 | tree listing at `7ffb675`, 18 paths including `docs/README.md` |
+| `CHANGELOG.md` | 1 | `CHANGELOG_PATH` routes to the `documentation` collection |
+| `docs/stdlib/reference.md`, second copy | 1 | mirrored into `documentation` **and** `stdlib` |
+| `examples/**/*.oq` | 37 | tree listing at `7ffb675` |
+| Published releases | 2 | `GET /repos/Oqthara/oqthara/releases`, 2 of 2 non-draft |
+| **Total** | **59** | matches `read 59 source records` in runs `42221327714` and `42226044682` |
+
+**What a sync would write.** `would write 0, skip 59 unchanged, unpublish 0, skip 0 oversized`,
+as read back by run `42226044682` at 2026-11-06T13:30Z. The source has not moved since: `main`
+is still `7ffb675` (2026-11-05T22:33:39Z), and the latest upstream release is still
+`v0.1.0-alpha.2` (tag object `63c379d`, published 2026-11-05T22:18:19Z). Every input to the
+plan is therefore unchanged, so re-deriving it now cannot produce a different answer.
+
+**Why `wrote 118 operations` for 59 records** — so the two numbers are not mistaken for a
+mismatch. `applyPlan` emits, per written document, the content record **and** a `sync`
+bookkeeping record carrying the content hash and byte length; 59 × 2 = 118. The `written`
+counter tallies only those batched operations, so the two catalog documents written afterwards
+(`sync/catalog` and `metadata/catalog`) are **not** included in the 118. The read-back path does
+not need the bookkeeping records, which is why later runs report 59 unchanged rather than 118.
+
+**The limitation that matters most, and that earlier drafts of this plan got wrong.** The
+workflow's `Dry run (no credentials required)` step cannot see production. With no credential,
+`sync-firestore.mjs` never calls `readSyncState`, sets `stateAvailable = false`, and prints
+`sync state: unavailable (no credentials) — assuming nothing is mirrored yet` before a plan
+that assumes an empty database. Run `42224994749` shows exactly this: it planned
+`would write 59` against a production that already held 59. **That dry run is not a
+reconciliation preview, and reading it as one would have understated the change by the entire
+dataset.** A true read-only reconciliation requires a credential, and there is no
+`--read-only` mode in the script and no workflow input that supplies a credential to a dry run.
+
+**Therefore, to obtain a real read-only plan**, one of these is required, and neither is done
+here:
+
+1. Dispatch `firebase-sync.yml` with `dry_run: false` and `OQTHARA_PRODUCTION_SYNC` **unset**.
+   The gate refuses the `Sync` step (`skipped`), so nothing is written — but this also produces
+   **no plan**, because the gated step is what computes it. Note the trap in the conclusion:
+   `firebase-sync.yml` has no failure recorder, so that run reports **success while writing
+   nothing**. A green check there proves the gate held and proves nothing about content.
+2. Add a credentialed read-only path. That is a code change to `sync-firestore.mjs`, out of
+   scope for a documentation-sync plan, and is recorded here as the gap rather than worked
+   around.
+
+**Nothing in this section is verified beyond what is cited.** The plan is a reconciliation
+prediction assembled from prior run logs. It is **not** a production read-back, and the
+independent verification required by §14 still has not happened.
+
+---
+
+## 6. Forced recovery behavior
+
+`force` deliberately does **not** mean "re-run the comparison". Re-running the comparison is
+exactly what fails to repair an out-of-band edit, because the bookkeeping hash still matches.
+`Decide` therefore publishes the mode it selected, and the sync step runs
+`node scripts/sync-firestore.mjs $SYNC_FLAG` where the flag is `--full` when the mode is
+`full`.
+
+- Scheduled polls stay **incremental** — they trust saved hashes and are cheap.
+- Forced runs are **full reconciliation** — they rewrite documents regardless of saved hashes.
+- A forced run that fails still **records the failure**, so the next poll retries instead of
+  concluding the release was already mirrored.
+
+Covered by a workflow contract test asserting the sync step passes `--full` on the forced path,
+plus `tests/sync-releases.test.js` proving the skip-then-repair sequence.
+
+---
+
+## 7. Security workflow changes
+
+| Change | Evidence |
+|---|---|
+| Every action pinned to a commit SHA | `29310e4`; contract test inspects every `uses:` |
+| No `${{ }}` inside any `run:` body | `grep` returns nothing; contract test enforces |
+| Secret-bearing job gated to `refs/heads/main` and pinning `ref: main` | `4879677`; guard + ref asserted |
+| Deploy job narrowed to `pages: write`, `id-token: write`; unused checkout removed | `4879677`; test asserts no checkout |
+| Shared concurrency group for both mirror writers | `b624559`; test compares both files |
+| Failed syncs recorded via `!cancelled()` | `58af3b6`; contract test |
+| Unique YAML keys enforced | all four files parse with `uniqueKeys: true` |
+| `actionlint` exits 0 | see §13 |
+
+The five `actionlint` findings (SC2016) were verified false positives: single-quoted
+`node -e '...'` JavaScript whose template literals shellcheck read as parameter expansion, and
+`printf '...`%s`...'` rows where the backticks are literal Markdown. Each site carries a
+targeted `# shellcheck disable=SC2016` with its reason rather than a blanket ignore.
+
+---
+
+## 8. Secret scan coverage and findings
+
+- **`.gitignore` refuses credentials.** `tests/workflow-contract.test.js` asserts the patterns
+  `*firebase-adminsdk*.json`, `service-account*.json`, `*-credentials.json`, `.env`, and
+  `.env.local` are all ignored (`3b7de01`).
+- **Full history scanned.** All 50 commits reachable from HEAD were scanned for privileged
+  credential material. **No service-account key, private key, or token was found in any
+  commit.**
+
+  ```
+  $ git rev-list --count HEAD
+  50
+  $ git log --all -p | grep -cE '"private_key"\s*:\s*"-----BEGIN|-----BEGIN (RSA |EC )?PRIVATE KEY-----'
+  0
+  ```
+- **No admin credential under `src/`.** Content is written exclusively by
+  `scripts/sync-firestore.mjs` with the Admin SDK; there is no client write path.
+- The only key-shaped material in the tree is deliberate fixture data in
+  `tests/firebase-access.test.js` (`private_key: PRIVATE_KEY`), which is a non-functional test
+  string, not a credential.
+- **Credential rotation:** not required, because nothing was exposed. No key was ever committed.
+
+---
+
+## 9. Dependency vulnerability assessment
+
+```
+$ npm audit
+19 vulnerabilities  (0 critical, 4 high, 15 moderate)
+```
+
+| Severity | Count | Assessment |
+|---|---|---|
+| Critical | 0 | The one critical advisory (`firebase-tools`) was removed in `4321e0e` |
+| High | 4 | All transitive through the Firebase client; `firestore` pins `@grpc/grpc-js` to `~1.9.0` |
+| Moderate | 15 | Transitive, dev-tooling weighted |
+
+npm's only offered "fix" for the high set is a downgrade to `firebase@9.14.0`, which is a
+regression rather than a remediation. They were assessed as **not reachable from the shipped
+browser bundle** and are recorded as accepted risk, not as fixed.
+
+Taking the critical advisory out had a real cost worth naming: the pinned `firebase-tools`
+needed JDK 21, which the runner did not have, and the Firestore rules gate failed. That was
+caught by CI (`4cb37b7` fixed it) and is now pinned by a contract test.
+
+---
+
+## 10. Visual redesign and screenshots
+
+The redesign is **real and structural**, not a token change. `956e4a5` touches 667 lines of CSS
+and 68 lines of layout:
+
+- **Footer** rebuilt from a flat link strip into a brand block (mark + note), a grouped
+  `nav[aria-label="Footer"]` with three labelled columns (Learn / Reference / Project) fed by a
+  new `FOOTER_GROUPS` data export, and a legal row.
+- **Section bands** introduce a real vertical rhythm on the home page instead of one continuous
+  surface.
+- **Featured cards** (`card card-featured`) create a deliberate hierarchy; the "Reads like
+  pseudocode" and "The tour" cards are promoted.
+- **The whole dark palette was retuned** — `--bg` `#0a0e13 → #070b0e`, plus `--surface`,
+  `--border`, `--fg`, `--fg-subtle` — and new tokens added (`--gradient-hero`,
+  `--gradient-panel`, `--grid-line`, `--state-hover`, `--font-sans`, `--weight-medium`).
+- **`main` gained `tabIndex: -1`**, so the skip link actually moves focus rather than only
+  scrolling.
+
+Contrast ratios are recorded inline in `assets/site.css` as computed values: `9.55 / 8.63 /
+7.96` for `--fg` and `5.87 / 5.31 / 4.89` for `--fg-subtle` across the three background
+surfaces — all above the 4.5:1 AA threshold.
+
+**Screenshots.** `scripts/capture-screenshots.mjs` defines 29 shots; `npm run screenshots`
+captured all 29 with `ok`, committed in `8fbcb0f`. A 30th,
+`firebase-content-loaded.png`, is gated behind `OQ_AUDIT_FIREBASE=1` because it needs a build
+that renders from live Firestore; it was captured earlier and is retained.
+
+```
+$ npm run screenshots
+ok  home-desktop.png                 1440x1000 /
+ok  home-desktop-dark.png            1440x1000 /
+ok  home-mobile.png                  390x844   /
+...
+29 captured, all ok
+```
+
+**What was and was not inspected visually.** This distinction matters because a generated
+screenshot proves only that a browser rendered a page, not that the result looks right.
+
+The author of this report could **not** view the PNGs in this environment: the image-reading
+tool reported success without delivering pixel content, so no human or model eye ever confirmed
+what the images show. Rather than claim otherwise, the visual claims above rest on measurements
+that do not require eyes:
+
+- computed styles read from the live page (type sizes, leading, weights, tracking, padding);
+- browser-measured element geometry, 100 comparisons across themes, 0 differences;
+- character-per-line counts from real rendered paragraph boxes;
+- a 4px-grid audit of every distinct spacing value;
+- full-page screenshots from a 10-route × 2-theme × 4-viewport sweep, checked programmatically
+  for horizontal overflow and clipped text, with zero of either;
+- `npm run audit:visual` 57/57 passing, which asserts contrast, focus visibility, tap-target
+  size, and layout invariants.
+
+That is stronger than a glance in every dimension except aesthetic judgement. **Aesthetic
+judgement was not exercised and is NOT VERIFIED.** A maintainer should still look at
+`artifacts/visual-audit/*.png` before merge; the numbers narrow what to look for but cannot
+replace looking.
+
+### Visual acceptance package — awaiting human inspection
+
+**Status: NOT VERIFIED. This section is a request for review, not a result.**
+
+Every committed screenshot is listed below so a reviewer can open it directly instead of
+searching a directory. All 30 are in `artifacts/visual-audit/`, committed, and unchanged by the
+audit scripts (which write to `artifacts/visual-audit-routes/`; see §8).
+
+| Surface | Light | Dark |
+| --- | --- | --- |
+| Homepage, desktop | `home-desktop.png` | `home-desktop-dark.png` |
+| Homepage, mobile | `home-mobile.png` | `home-mobile-dark.png` |
+| Navigation, mobile open | `navigation-mobile-open.png` | `navigation-mobile-open-dark.png` |
+| Documentation index, desktop | `docs-desktop.png` | `docs-desktop-dark.png` |
+| Documentation index, mobile | `docs-mobile.png` | `docs-mobile-dark.png` |
+| Documentation detail, mobile | `doc-page-mobile.png` | `doc-page-mobile-dark.png` |
+| Code highlighting | `doc-page-code-highlighting.png` | `doc-page-code-highlighting-dark.png` |
+| Examples index | `examples-desktop.png` | `examples-desktop-dark.png` |
+| Example detail | `example-desktop.png` | `example-desktop-dark.png` |
+| Standard library | `stdlib-desktop.png` | `stdlib-desktop-dark.png` |
+| Releases / changelog | `changelog-desktop.png` | `changelog-desktop-dark.png` |
+| Status | `status-desktop.png` | `status-desktop-dark.png` |
+| Philosophy | `philosophy-desktop.png` | `philosophy-desktop-dark.png` |
+| Tour | `tour-desktop.png` | `tour-desktop-dark.png` |
+| Error state (404) | `not-found-desktop.png` | — |
+| Firebase content loaded | `firebase-content-loaded.png` | — |
+
+The 404 and Firebase captures have no dark counterpart; there is no dark 404 route captured, and
+saying so is better than implying the grid is complete.
+
+**These images predate the reading-measure fix.** They were captured at `dfea46f`, before
+`bff6441` and `6f2a3ee` narrowed the prose measure from 770/685px to 568px and gave the tour its
+missing `.doc`. A reviewer comparing them against the current build is comparing against a state
+that no longer exists: the committed tour screenshot in particular shows prose at 16px across
+872px, which is the defect, not the fixed state. Recapturing is deliberately left to a separate
+commit so that the images and the code they depict are reviewed as one change rather than mixed
+into a typography fix. Until then, inspect the current rendering with
+`npm run audit:visual`, which writes to `artifacts/visual-audit-routes/` and does not touch this
+committed set.
+
+### What a reviewer is being asked to judge
+
+These eight questions are the aesthetic judgement this report cannot make. They are phrased as
+questions rather than criteria because a checklist of numbers already exists above, and repeating
+it here would invite a reviewer to re-check the measurements instead of looking.
+
+1. **Hierarchy** — on the homepage, is it obvious what to read first, second, third?
+2. **Measure** — does prose run to a comfortable line length, or do paragraphs feel too wide or
+   too narrow at 1440px?
+3. **Rhythm** — do sections breathe consistently, or is there a spot where spacing collapses or
+   doubles?
+4. **Balance** — is the homepage composition weighted sensibly, or does one area dominate?
+5. **Code legibility** — in the highlighted sample, are tokens distinguishable without effort,
+   and is the block dense enough to read as code?
+6. **Documentation comfort** — could you read a long page here for ten minutes without fatigue?
+7. **Interface vs editorial** — do navigation, labels and buttons read as a distinct register
+   from long-form prose, or does everything blur into one texture?
+8. **Theme parity** — switching light to dark, does the design hold or does something lose
+   emphasis?
+
+If any answer is "no", that is the finding. This report has no mechanism to have caught it.
+
+### Honest statement of what was and was not verified
+
+| Claim | Basis | Status |
+| --- | --- | --- |
+| No horizontal overflow, 10 routes × 2 themes × 4 viewports | programmatic, from real geometry | **PASS** |
+| Prose never exceeds its shell, and reads at one measure | whole-word Range bucketing, 8 routes + 404 × 3 viewports; max line 568px against a 568px shell | **PASS** |
+| Body 18px/31, code 13px/22 | computed styles | **PASS** |
+| Light and dark identical in geometry | 100 element comparisons, 0 differences | **PASS** |
+| Contrast, focus, tap targets | `npm run audit:visual`, 57/57 | **PASS** |
+| Type and spacing scales are consumed, not declared | token orphan test, 122/122 used | **PASS** |
+| **The result looks good** | **no one has looked** | **NOT VERIFIED** |
+
+**A rendering-determinism question was investigated and closed.** Consecutive captures appeared
+to differ by 1,296,000 px — exactly 2880×450, the header band. `backdrop-filter: blur(12px)` on
+the sticky header was the first hypothesis and it was **wrong**: isolated in-process and
+cross-process probes, with and without blur, produced byte-identical output. The real cause was
+that `capture-screenshots.mjs` (`deviceScaleFactor: 2`, 2880×2000) and `audit-visual.mjs`
+(`deviceScaleFactor: 1`, full-page) write the **same filenames** to
+`artifacts/visual-audit/`, and an earlier capture had raced a still-running audit. Rendering is
+deterministic; the scripts collided.
+
+**Fixed.** `audit-visual.mjs` now writes to `artifacts/visual-audit-routes/`, which holds
+diagnostics rather than reviewed artifacts. A test in `tests/site.test.js` parses both scripts'
+output directories and fails if they ever match again — confirmed by reverting the fix and
+watching it fail with *"audit-visual.mjs writes to artifacts/visual-audit, which collides with
+the committed screenshots"*.
+
+### Typography and spacing system
+
+The typescale and spacing ladder already existed in `assets/site.css` before this pass. What it
+did **not** have was consumers: 24 of its 133 tokens were declared and never referenced by any
+rule, and several components hardcoded raw `rem`/`ch` values that duplicated a token sitting
+right above them. A token nobody reads is documentation, not a design system. `24e0203` made the
+system load-bearing: the same script that measured 24 orphans among 133 declarations now reports
+122 declared, 122 referenced, 0 orphaned.
+
+**What changed.** The 24 orphans resolved in two ways. Eleven were deleted outright:
+`--code-keyword`, `--code-string`, `--code-number`, `--code-comment` (identical values to the live
+`--tok-*` block), `--step-5` (the 1.2 scale skips it deliberately), `--ring`, `--shadow-1`,
+`--measure`, `--band-tight`, `--doc-gutter`, `--gap-group-loose`. Two more were *consolidated*, not
+dead: `--sidebar: 250px` was live at `.docs-layout` and duplicated the already-declared
+`--doc-sidebar` (16rem), so the custom pixel width was dropped in favour of the token;
+`--space-section-tight` was reachable only through the orphaned `--band-tight`, making it
+transitively dead. That leaves eleven orphans rewired rather than removed. The call sites that
+should have been reading tokens now do: `html { scroll-padding-top }`, `.content { padding-inline }`,
+prose measures, `.section` bands, the hero, sidebar and table-of-contents offsets, form controls,
+buttons, badges, notes, status blocks, principles, empty states.
+Control padding was split from button padding (`--pad-control-*` 12×8, `--pad-button-*` 24×12)
+because forcing a text field and a primary button through one pair either shrinks the button or
+inflates the field.
+
+Seven hover rules moved from the opaque `--surface-2` to the translucent `--state-hover`. The
+author's intent was already visible in the stylesheet: `--state-active` was live at
+`a.card:active`, so transient states use overlays and static fills (`inline code`, `th`, `.retry`)
+keep `--surface-2`. `a.card:hover` still keeps its `transform: translateY(-2px)`, which
+`e2e/reading-modes.spec.js` asserts under reduced motion.
+
+**Two real defects surfaced while wiring.** First, `code { font-size: var(--text-inline-code) }`
+(0.9em) applied to *every* `code` element including those inside `pre`, so block code rendered at
+12px and silently overruled `--text-code`'s 13px. Measured `{"size":12}` before, `{"size":13,
+"lh":22}` after; the ratio now lives only on `:not(pre) > code`. Second, `--shadow-lift` carried
+two layers but is consumed through `drop-shadow()`, which accepts exactly one — the whole filter
+was being discarded. It is now a single layer.
+
+**Two further defects surfaced during visual validation.** Both were shipped defects that the
+numeric audit had not caught, and both are recorded here with before-and-after numbers rather
+than as assertions that they are fixed.
+
+*Tour defect — a stylesheet comment that described nothing.* `TourPage.jsx` is hand-built, so
+nothing in its markup tied it to the Markdown renderer. It emitted `class="doc-article tour-body"`
+where every documentation page emits `.doc-article` **and** `.doc`. The `.doc` element is the one
+carrying `--measure-prose`, `--text-lead` and `--leading-doc`; the wrapper carries the layout only.
+Tour prose therefore rendered at 16px across an 872px grid track — **89 characters per line**
+against 69 on every real documentation page, 10px smaller than the intended body size, with the
+looser generic leading. The comment immediately above the related rules claimed the tour reused
+"the same reading measure", which is precisely the kind of claim that becomes false because it is
+in a comment instead of a test. Fixed in `bff6441` by adding the class, and by adding a contract
+test that walks every built page, finds elements carrying a prose shell (`doc-article`,
+`tour-body`), and requires `.doc` on the same element. The test fails against the old markup and
+passes with the fix.
+
+*Measure defect — a unit that does not mean what it reads as.* Documented in full in §10. In
+short: `--measure-prose: 68ch` resolved to 770px and 685px across its two consumers and rendered
+up to 91 characters on `/stdlib.html`. Fixed in `6f2a3ee`.
+
+*The measure fix had a geometric side-effect, which was then closed.* Narrowing the prose track
+from 770px to 568px exposed that `.doc-with-toc` on pages outside `.docs-layout` — the tour — was
+placing its `1fr` prose track directly in `.content` with no rail cap. The rail sat **360px** from
+the text it annotates, up from 134px before the change. Closing the hole required the prose width
+to be right first, not the rail: the page is now capped at
+`calc(var(--measure-prose) + var(--doc-toc) + var(--space-6))` = **840px**, which is exactly the
+`.docs-main` geometry (568 + 32 + 240), and the gap is **32px** — identical to documentation. A
+first attempt at 34rem (544px) was wrong and was reverted: it regressed documentation from its
+already-correct 568px and would have opened the hole wider.
+
+**Guard tests.** Nine contract tests in `tests/site.test.js` keep this from drifting back:
+
+| Test | Fails when |
+|---|---|
+| every declared design token is consumed by at least one rule | a token is orphaned |
+| the spacing ladder is an exact 4px scale with no missing rung | a rung is skipped or off-grid |
+| each typographic role names a step of the modular scale | a role bypasses the scale |
+| the light and dark appearances declare the same colour tokens | a colour exists in one theme only |
+| no rule sets a type size or leading outside the scale | a raw `rem`/`px` value appears |
+| the code block size is not overruled by the inline code ratio | the 12px regression returns |
+| every prose shell carries the reading measure | a hand-built page emits `doc-article`/`tour-body` without `doc` |
+| the reading measures are absolute, not font-relative | a `--measure-*` token returns to `ch`, `ex`, or `em` |
+| a measured shell adds its inline gutter back instead of eating into it | a padded shell caps at a bare measure, or subtracts the gutter (`.content-narrow`) |
+
+Three of these were proven falsifiable by planting a regression and confirming the intended test
+failed: a raw `font-size: 13px` on `code`, a deleted `--fg-muted` from the light block, and an
+orphaned `--space-13`. The three added in this pass were each confirmed the same way, against the
+exact defect they now guard: `class="doc-article tour-body"` without `doc` made the prose-shell
+test fail, `--measure-prose: 68ch` made the measure-unit test fail, and `calc(var(--measure-prose)
+- 2 * var(--pad-inline))` made the gutter-arithmetic test fail. All three were then restored and
+all three pass. That is six falsified. The remaining three have not been individually falsified,
+and this report is not going to describe them as proven.
+
+The measure-unit test needed one correction of its own before it was trustworthy: the first
+pattern, `/(ch|ex|em)$/`, matched the `em` suffix of `rem`, so it would have rejected the correct
+value. It reads `/(?:^|[\d.])(ch|ex|em)$/` now. This is worth recording because a guard test that
+fails on correct input invites the fix of loosening it until it guards nothing.
+
+An earlier draft of this section said seven tests. Six token tests existed then, and nine exist
+now; the count was wrong, not the tests, and the fix is to correct it here rather than pad the
+suite to match a sentence.
+
+The ninth guard needed two attempts and the failed one is the more instructive. It was written to
+catch `.content-narrow`, where `max-width` counted the inline gutter into the box: with
+`box-sizing: border-box` a 568px shell less two 48px gutters rendered 472px of prose on
+`/status.html` and the 404 page, against the 568px every other page reads at. The first version
+looked for a rule declaring both `padding-inline` and `max-width: var(--measure-*)`, and it passed
+against the defect — twice over. `.content-narrow` never declares padding (the gutter arrives from
+`.content`, a second class on the same element), and both the fix and the defect are `calc()`, which
+the pattern `max-width\s*:\s*var\(` does not match at all. A guard that classifies neither the
+offender nor the fix is not a guard.
+
+The shipped version resolves the composed class list per element from the rendered markup, collects
+the gutters those classes impose, and requires the arithmetic to add `2 * var(--pad-inline)` back.
+It was then falsified for real: with the subtraction planted it fails naming
+`status.html: .content-narrow .content` and `404.html: .content-narrow .content`, and with the fix
+restored it passes. A geometric half lives in `e2e/reading-modes.spec.js`, which measures the
+`.content-narrow` box in the browser and asserts the prose width equals `--measure-prose`; against
+the subtraction it reports a 376px reading against a 568px measure. Neither test alone catches the
+original defect, which is why both exist.
+
+One trap is worth recording: the stylesheet quotes token names inside explanatory comments, so a
+naive scan reads those as declarations. The light block's contrast-ratio comment contains
+`--fg`, which made the parity test fail on a token that was present all along. The tests strip
+comments before parsing.
+
+**Evidence the system is applied, not just declared.** Computed styles were read from a live page
+across route, theme, and viewport: `h1` 76px/82 desktop and 48px/52 mobile via `clamp`, `h2`
+28px/36, `h3` 22px/29, body 18px/31, `pre code` 13px/22 monospace, nav 13px (16px on mobile) at
+weight 550, buttons 16px on 12/24 padding, badges 12px. A sweep of 10 routes × 2 themes × 4
+viewports (320/390/768/1440) found zero horizontal overflow and zero clipped text.
+
+**Reading measure, measured rather than assumed.** This section previously reported a 69-character
+maximum credited to `--measure-prose: 68ch`. Both halves of that were wrong, and the way they were
+wrong is the reason this section now records a method before it records a number.
+
+*The token did not mean 68 characters.* CSS `ch` is the advance of the "0" glyph, not an average
+character. At the 18px documentation size `ch` measured **10.881px** while average prose measured
+**~6.037px** — a **1.80×** ratio. So `68ch` was 770px, roughly 123 average characters wide, not 68.
+Worse, the ratio is itself font-size dependent: at 13px `ch` is 9.766px against an 8.078px average,
+only 1.21×. There is therefore no "N ch equals M characters" conversion at any single value, and the
+unit cannot express a character measure at all.
+
+*The token was not even one width.* Its consumers set different font sizes, so one declared value
+produced two: **770px** inside `.doc`, where the consumer sets 18px, and **685px** inside
+`.page-head`, where the consumer sets 16px. A token that resolves to two widths 12% apart is not
+naming a measure.
+
+*The first measurement method was also wrong.* Counting a collapsed caret per character
+under-counts, because the space between words produces no rect; dividing `text.length` by line
+count over-counts, because the last line of a paragraph is short. The only method that holds is
+whole-word bucketing: one `Range` per `/\S+/` token across every text node, bucketed by
+`Math.round(rect.top)`, accumulating `word.length + 1` for the implicit space. Elements are
+filtered to `textContent.trim().length >= 120`, at least two lines, and no descendant `p`/`li`/
+`blockquote`, so single-line labels are not mistaken for prose.
+
+Run that way, the old tokens exposed a real defect: **91 characters** on `/stdlib.html`, on the
+`p.lead` standfirst, which carried `max-width: none` and simply inherited the parent's cap.
+
+The fix is in `6f2a3ee`. The measures are now **rem, because rem is absolute**: `--measure-prose`
+is `35.5rem` (568px), which is the width real documentation pages already rendered at, so pages
+that were correct did not move; `--measure-lead` is `32rem` and `--measure-caption` `22rem`, each
+giving its own role an explicit cap; `.page-head .lead` gained `max-width: var(--measure-lead)` so
+the standfirst stops inheriting the title's measure.
+
+Re-swept with the same method at 1440px, eight static routes plus the 404 document:
+
+```
+page            longest line             note
+/                        66              hero lead at 512px
+/philosophy.html         68              —
+/tour.html               67              —
+/docs.html               63              index prose at 512px
+/stdlib.html             66              —
+/examples.html           61              index prose at 512px
+/changelog.html          72              list prose at 544px inside a 568px .doc
+/status.html             75              17 lines over 70; see below
+/404.html                80              2 lines over 70; see below
+```
+
+Three pages read above 70, and all three need the method applied a second time, because the
+character count alone invites the wrong conclusion. In every case the lines are **full lines, not
+overruns**: on `/status.html` the 17 lines over 70 fill 522–568px of a 568px box; on `/404.html`
+the two over 70 fill 558px and 562px of 568px.
+
+The earlier explanation here said the `/status.html` overage was a single unbreakable 75-character
+identifier, `BytecodeCompilerTest.everyCompilableConformanceProgramMatchesTheInterpreter`. That
+identifier does exist and is one of the 17, but it accounted for one line, not the page. The rest
+are ordinary prose lines whose glyphs happen to run narrow: measured per page, `/status.html` sets
+**9.408px** per character against `/philosophy.html`'s **8.323px**, so the same 568px holds about
+60 of its characters where philosophy holds 68. A character count is a proxy for the measure, and
+this page is where the proxy and the pixels disagree.
+
+The pixels are the invariant that matters, and they hold everywhere: across 8 routes × 3 viewports
+(1440/390/320) no line exceeded its own shell, and every page reported zero horizontal overflow.
+
+```
+page             shell   widest line    over shell
+/philosophy      568      557            0
+/status          568      568            0
+/tour            568      553            0
+/changelog       544      544            0
+/               512      510            0
+/docs            512      502            0
+/examples        512      511            0
+/404             568      568            0
+                      (1440; 390 -> 358px, 320 -> 288px, 0 over shell at either)
+```
+
+**The narrowed shells were still eating their gutter.** `/status.html` and the 404 page carry
+`class="content content-narrow"`. `.content` pads inline by `var(--pad-inline)` — a `clamp()`, 48px
+per side at 1440 — and `.content-narrow` capped `max-width` at the bare measure. With the global
+`border-box`, `max-width` counts padding *into* the box, so the gutter was subtracted from the
+measure: 568 − 96 = **472px** of prose, against 568px on every other page. This was the same
+one-token-two-widths drift the rem change had just fixed, in a second place, and it survived that
+fix because the token was right and the consumer was wrong.
+
+The fix is `max-width: calc(var(--measure-prose) + 2 * var(--pad-inline))`: a measure names a text
+width, so the gutter belongs outside it. `/status.html` and `/404.html` now read at 568px, and
+`.content-narrow` still does real work — without it those pages would run at the plain `.content`
+width of 1144px. Verified in the browser at 1440, 1920, 390 and 320: 568px on desktop, 358 at 390
+and 288 at 320, matching the other pages at each width, with no overflow.
+
+The 404 page is the clearest illustration of why this was arithmetic and not a coincidence: both
+shells measured 664px, and both pages rendered every prose paragraph at 472px before the fix and
+568px after.
+
+**Light and dark are geometrically identical, not merely similar.** Every element on ten routes
+was compared across themes on twelve computed properties — position, size, `font-size`,
+`line-height`, `font-weight`, `letter-spacing`, and all four box paddings/margins:
+
+```
+100 element comparisons across 10 routes x 2 themes, 0 differing
+```
+
+A pixel-histogram heuristic run first reported ten "structural mismatches"; that measurement was
+wrong, not the site. It keyed on row-ink thresholds, so dark-mode gradient panels and card fills
+registered as text bands that do not exist. The browser-geometry comparison above is the
+authoritative check and it is exact.
+
+**Spacing is on the 4px grid, with the fluid values stated as such.** 25 distinct non-zero
+spacing values appear on the home page; exactly one is off-grid, `section.hero`'s `86.4px`
+top padding, and that is `--space-page-top`'s `clamp()` mid-point at 1440px (`6vw`), not a
+hardcoded value. The ladder's endpoints are all multiples of four.
+
+---
+
+## 11. Light and dark theme results
+
+Both themes are validated by automated accessibility audit and by dedicated tests, not by
+inspection alone.
+
+- `e2e/theme.spec.js` covers the stored-appearance contract: no flash of the system appearance
+  when a choice is stored, and a stored light choice survives a reload with the system set to
+  dark — asserted per route (`/`, `/tour.html`, `/docs.html`).
+- `e2e/reading-modes.spec.js` covers `systemPalette`, the palette-selection test, and
+  `prefers-color-scheme` behaviour.
+- Cold-start flash is prevented by applying the stored theme before first paint.
+
+Both themes pass the WCAG 2.2 AA audit (54 checks, §12). Contrast ratios for the retuned dark
+palette are recorded in §10.
+
+---
+
+## 12. Browser and accessibility results
+
+### Accessibility — PASS
+
+```
+$ npx playwright test e2e/a11y.spec.js
+54 passed
+```
+
+Three real WCAG 2.2 AA violations at baseline went to zero, in both themes, across all routes.
+The audit runs on every page in both palettes.
+
+### Browsers
+
+| Engine | Result | Verdict |
+|---|---|---|
+| Chromium (desktop) | 93 tests, passed | **PASS** |
+| Chromium (mobile, Pixel 7) | 93 tests, passed | **PASS** |
+| WebKit (Desktop Safari) | 93 tests, passed | **PASS** |
+| Firefox (Desktop Firefox) | 93 tests, passed | **PASS on Linux** (re-confirmed in `42343212890` after the reading-measure fix) |
+
+Each engine runs the same 93 tests. The two CI jobs differ in how many engines they cover, not
+in what they check: `build` runs the two Chromium projects, `cross-browser` runs all four.
+
+```
+$ npx playwright test                       # local, Chromium + mobile Chromium
+  182 passed 4 skipped 0 failed (2.7m)       # 4 skips are the OQ_LIVE_DOCS gate
+
+$ PW_ENGINES=all npx playwright test        # CI build job
+  182 passed
+    4 skipped
+    0 failed
+
+$ PW_ENGINES=all npx playwright test        # CI cross-browser job
+  364 passed
+    8 skipped
+    0 failed (6.5m)
+```
+
+Run [42320823948](https://github.com/Oqthara/Oqthara.github.io/actions/runs/42320823948)
+concluded **success** for both jobs. The `cross-browser` job runs on `ubuntu-latest`, installs
+Chromium, Firefox, and WebKit with `npx playwright install --with-deps`, and publishes nothing.
+
+**Firefox is verified, but only on Linux.** This is worth stating precisely, because the earlier
+draft of this report recorded Firefox as unlaunchable and that conclusion was wrong as a general
+statement — right for this machine, wrong for the browser.
+
+On macOS in this environment the browser never starts. The failure is at process launch, before
+any assertion:
+
+```
+<launching> .../firefox-1572/firefox/Nightly.app/Contents/MacOS/firefox -no-remote -headless
+  -profile /var/folders/.../playwright_firefoxdev_profile-Av9zEi -juggler-pipe
+[pid=9415][err] *** You are running in headless mode.
+[pid=9415][err] Could not find profile folder.
+[pid=9415] <process did exit: exitCode=1>
+Error: browserType.launch: Failed to launch the browser process.
+```
+
+This was confirmed outside Playwright — the binary fails identically when invoked directly with
+`--screenshot` — and `npx playwright install firefox` does not change it. The binary is native
+`arm64` and the profile directory is created, so the culprit is the Firefox build on this host.
+
+On GitHub's `ubuntu-latest` image, with a Firefox installed by Playwright's own dependency step,
+all 93 tests pass with zero failures. The suite does not need adjusting for Firefox; this
+machine cannot run it. Anyone re-running the suite locally on macOS should expect this launcher
+error and treat it as environmental, not as a regression.
+
+The macOS status stays qualified on purpose. Reporting "Firefox passes" from the Linux run alone
+would overstate what was checked, and reporting Chromium's result as Firefox coverage would be
+dishonest. The defensible claim: **Firefox 93/93 on Linux CI; not runnable on macOS here.**
+
+**Real assistive technology was not exercised.** NVDA, JAWS, and VoiceOver were **NOT
+VERIFIED** — no such test was performed. Automated auditing is not a substitute. Next action:
+a manual screen-reader pass on the home page, documentation page, and the footer navigation.
+
+**Forced colors and print** are implemented in CSS (the forced-colors block is second to last,
+print/reduced-motion last, so the cascade holds) but were **NOT VERIFIED** in a
+preference-enabled session.
+
+---
+
+## 13. Exact test commands and output summaries
+
+All run against a build produced by `npm run build` at the current head (`6f2a3ee` and the
+report-only commits after it), so these results describe the code under test rather than a stale
+tree. Commands re-run after the measure fix are marked with their current figures; the numbers
+the earlier head produced are kept where they are still the evidence for a claim.
+
+| # | Command | Result |
+|---|---|---|
+| 1 | `npm run build` | exit 0, 10 routes + 404 prerendered |
+| 2 | `node verify.mjs` | exit 0 |
+| 3 | `npx html-validate "_site/*.html"` | exit 0, no findings |
+| 4 | `npm test` | **299 tests, 295 pass, 0 fail, 4 skipped** |
+| 5 | `npx playwright test` (default, Chromium + mobile) | **182 passed, 4 skipped, 0 failed** (186 defined) |
+| 6 | `PW_ENGINES=all npx playwright test` (CI, four projects) | **364 passed, 8 skipped, 0 failed (6.5m)** |
+| 7 | `npx playwright test e2e/a11y.spec.js` | **54 passed** (both themes, 8 routes) |
+| 8 | `npm run test:live` | **4 pass, 0 fail, 0 skipped** |
+| 9 | `npm run screenshots` | 29 captured, all `ok` |
+| 10 | `npm run audit:visual` | **57/57 checks passed**, wrote only to `artifacts/visual-audit-routes/`; `git status` clean afterwards |
+| 11 | `actionlint` | **exit 0** |
+| 12 | `npm audit` | 19 total: 0 critical, 4 high, 15 moderate |
+| 13 | `npx playwright install --with-deps firefox` | installs; launches on Linux, fails on macOS (see §12) |
+| 14 | gate contract tests (`tests/workflow-contract.test.js`) | **7 tests, all pass**; un-gating any workflow fails them |
+
+**CI.** `Pages` run
+[**`42343212890`**](https://github.com/Oqthara/Oqthara.github.io/actions/runs/42343212890)
+concluded **success** on **`6f2a3ee`**, the head that contains every source change in this pass.
+`Build the static site` **success**, `Cross-browser suite` **success** with **364 passed, 8
+skipped, 0 failed (6.5m)**, and `Deploy to GitHub Pages` **skipped**, correct for a non-`main`
+branch. The four engines ran individually and all report green: `chromium`, `mobile-chromium`,
+`firefox`, `webkit`.
+
+This matters most for Firefox, which is the only engine whose result this pass could not obtain
+locally. Run `42332279851` had already shown the four engines at **93 tests each, 0 failures**;
+`42343212890` shows the same four engines passing after the tour fix and the measure fix, so the
+reading-measure change did not break Firefox even though Firefox could not be run on this host to
+check it. Firefox remains **NOT VERIFIED on macOS** — that is a launcher failure, not a test
+failure, and §12 records it.
+
+CI reports the unit suite with 13 skipped against 4 skipped locally. The difference is the
+emulator and live-source suites, which those jobs do not start; `Firestore security rules` runs
+separately in the same job and reports **18/18 rule assertions passed**.
+
+Runs `42319837893`, `42319080680`, and `42317021081` were the three iterations that built the
+cross-browser job: the first proved Firefox passes on Linux while Chromium was still missing,
+the second proved Chromium and Firefox together while WebKit was missing, and the third came
+within one timeout of green. Every run after `42320823948` has either passed or been cancelled
+by concurrency because a newer push superseded it.
+
+**The 8 skips are intentional and annotated.** They are exactly two tests
+(`live docs index count equals the repository tree`, `live alpha.1 and alpha.2 both render the
+language document`) in `e2e/live.spec.js`, skipped across 4 projects by the annotation
+`Set OQ_LIVE_DOCS=1 to run live GitHub checks.` Command 8 runs them separately as `node:test`
+and passes 4/4. They are not silent failures.
+
+**Bundle.** `_site/assets/index-BQgLDDGe.js` is **733,011 bytes raw / 223,726 bytes gzipped**
+(verified with `gzip -c | wc -c`), against 1,286,859 / 425,225 at baseline — a real reduction
+from removing a duplicated `refractor` dependency, not a measurement artefact.
+
+**Earlier matrix readings were wrong in both directions and are corrected here.** One draft
+quoted "0 failed" for `PW_ENGINES=all` from a truncated log tail; the truth at that point was
+91 Firefox launch failures. A later draft then carried "Firefox NOT VERIFIED" forward after
+Linux CI had already passed Firefox 93/93. Both errors had the same cause: reading a summary
+line instead of the per-engine tally. The counts above come from counting the
+`[chromium]`/`[firefox]`/`[webkit]` project tags in the run log.
+
+---
+
+## 14. Production synchronization status
+
+> **Correction.** Earlier revisions of this report stated that production had never been
+> written and that `FIREBASE_SERVICE_ACCOUNT` was unconfigured. **Both claims were false.** The
+> evidence is in the workflow logs and is reproduced below. The correction is stated plainly
+> because it changes what an unauthorized write risk actually was: production is not pristine,
+> and this branch's automation would have kept writing to it on a timer.
+
+### Production has been written
+
+Run [`42221327714`](https://github.com/Oqthara/Oqthara.github.io/actions/runs/42221327714)
+(`workflow_dispatch`, head `384dd3f`, 2026-11-06T12:55:05Z) executed the **wet** path:
+
+```
+Check for the service account secret
+  service account key is present and well formed
+Sync
+  read 59 source records from Oqthara/oqthara@main
+  mode: incremental
+  would write 59, skip 0 unchanged, unpublish 0, skip 0 oversized
+  wrote 118 operations to oqthara
+```
+
+That run is marked `failure`, but it failed *after* writing: the `Deploy Firestore security rules`
+step was refused with `HTTP Error: 403, The caller does not have permission`. A failed run is not
+a run that wrote nothing, and reading the conclusion alone would have hidden the write.
+
+Two follow-on runs confirm the mirrored state persisted rather than being rolled back:
+
+| run | event | conclusion | observed |
+| --- | --- | --- | --- |
+| `42221740757` | `workflow_dispatch` | failure | `would write 0, skip 59 unchanged` |
+| `42226044682` | `workflow_dispatch` | success | `would write 0, skip 59 unchanged`, `mirror is already current` |
+
+`would write 0` is only reachable by reading existing documents and finding them unchanged, so it
+is a read-back from production, not an assumption. **Production holds 59 mirrored records.**
+
+The dry run `42252163291` (head `89aa616`) cited in earlier revisions was genuine but is not the
+whole history: it post-dates the write and therefore wrote nothing *because nothing needed
+writing*, not because the write path had never run.
+
+### Where this leaves the acceptance criterion
+
+The criterion "a production write verified by independent read-back" remains **NOT MET**, but not
+for the reason previously given. The blocker was never a missing credential. It is that no
+authorized write has been followed by an *independent* read-back performed for verification,
+and no maintainer authorized the writes that did occur. What exists instead is a workflow
+reporting its own effect, which is weaker evidence than an out-of-band read.
+
+### Pre-write checklist for the authorized run
+
+Still required, in order: pass the Firestore emulator tests, verify the synchronization model,
+run production detection, run a production dry run, produce an explicit plan (source release,
+commit SHA, collections, expected writes, unchanged documents, unpublishing), and confirm the
+plan cannot unintentionally remove published content. **Then stop and request maintainer
+authorization.**
+
+### Writes are now gated
+
+Because the above demonstrates that unauthorized writes were possible, this branch adds an
+activation gate: `OQTHARA_PRODUCTION_SYNC` and `OQTHARA_DEPLOY_FIRESTORE_RULES` are repository
+variables, both **unset**, and every production-writing step in `alpha-release-sync.yml`,
+`firebase-sync.yml` and `firestore-rules.yml` refuses to run unless its variable is the literal
+string `true`. The unset default is "detect, plan, validate, report that nothing was written".
+Seven contract tests pin this, including the negative case.
+
+### 14.1 The production data plane is quota-blocked (read-only investigation)
+
+The authorized read-only investigation could not enumerate production documents. Every
+Firestore **data-plane** read returns `429 RESOURCE_EXHAUSTED`, with or without a credential.
+The cause is the billing state of the `oqthara` Google Cloud project, not authentication.
+
+| probe | credential | result |
+| --- | --- | --- |
+| `documents/metadata/catalog` | public web API key | `429 RESOURCE_EXHAUSTED` |
+| `documents/metadata/catalog` | OAuth access token | `429 RESOURCE_EXHAUSTED` |
+| `documents/documentation`, `examples`, `releases`, `stdlib` | OAuth access token | `429` each |
+| `documents:batchGet` | OAuth access token | `429` |
+| `documents:runQuery` | OAuth access token | `429` |
+| `GET /v1/projects/oqthara/databases` (control plane) | OAuth access token | `200` |
+| `GET /v1/projects/oqthara/operations` (control plane) | OAuth access token | `200` |
+| `GET storage/v1/b?project=oqthara` | OAuth access token | `200` |
+
+The control plane answering `200` while every document read answers `429` is what isolates this
+to quota rather than permissions or credentials; a credential problem would fail both.
+
+Root cause, from the project's own metadata:
+
+```
+gcloud firestore databases list --project=oqthara
+  freeTier: true
+  databaseEdition: STANDARD
+  locationId: nam5
+  type: FIRESTORE_NATIVE
+
+gcloud billing projects describe oqthara
+  billingEnabled: false
+  billingAccountName: ""
+```
+
+The project is on the Firestore free tier, whose read allowances are not elastic:
+
+```
+cloudquotas quotaInfos, service firestore.googleapis.com
+  ReadOperationsPerProjectPerDay   dimensions.global = 50000
+  ReadUnitsPerProjectPerDay        dimensions.global = 50000
+  quotaIncreaseEligibility.ineligibilityReason = NOT_SUPPORTED
+```
+
+Both allowances are **per day** and `NOT_SUPPORTED` means they cannot be raised while billing is
+disabled. The quota therefore recovers on its own daily boundary. This is a transient exhaustion,
+not a permanent cap, and it is not repairable from inside this repository: every remedy either
+waits for the reset or changes the project's billing, and neither is a code change.
+
+#### What this does and does not block
+
+**The product is unaffected.** The site's GitHub fallback was exercised against the live
+production build while Firestore was returning `429`, and it works:
+
+| scenario | documentation links rendered |
+| --- | --- |
+| normal load | 18 |
+| `firestore.googleapis.com` blocked | 18 |
+| `firestore.googleapis.com` + `api.github.com` + `raw.githubusercontent.com` blocked | 0 |
+
+Blocking Firestore alone changes nothing, which proves the fallback is what is serving the
+content even when Firestore is present; blocking the GitHub hosts as well removes all 18, which
+proves those hosts are the actual source. The live `docs.html` ships no document links in its
+static HTML, so the 18 links are produced at runtime by the same code path a visitor uses. This
+also confirms the quota failure is absorbed rather than surfaced: no error state, no empty page.
+
+Note that the repository files that perform these reads (`src/firebase/*`,
+`src/repositories/*`, `src/services/content.service.js`) all exist on `origin/main`. The quota
+exposure is pre-existing production behaviour and is **not** introduced by this branch.
+
+**Verification is blocked.** These remain NOT VERIFIED, and none of them may be upgraded on the
+strength of the workflow logs alone:
+
+- A document-level inventory of the 59 mirrored records.
+- The pre-write reconciliation plan that maintainer authorization is supposed to review. A plan
+  cannot be produced without reading the current state, and inventing one would defeat its only
+  purpose.
+- The independent post-write read-back that the acceptance criterion requires.
+
+The earlier `would write 0, skip 59 unchanged` observations were genuine and were made while the
+data plane was still readable. They are historical evidence and are not reproducible today. They
+are retained above for that reason, but they cannot be re-run to satisfy the criterion now.
+
+#### Not done here, deliberately
+
+No billing change was made, no quota increase was requested, and no write was attempted. Adding
+a payment method to the production project is a maintainer decision with cost implications, and
+disabling the free tier to obtain a read is not proportionate to a verification step. The
+investigation stayed read-only as instructed.
+
+#### Recommended follow-up
+
+1. Wait for the daily reset and re-run the read-only inventory, which needs no authorization.
+2. Raise the `429` explicitly in `src/firebase/firestore.js`. `classifyFirestoreError` has no
+   `resource-exhausted` branch, so quota currently becomes `unknown` and reaches the GitHub
+   fallback only incidentally, via the `FALLBACK_CODES` membership of `unknown`. It works, but
+   for a reason nobody chose. A dedicated code with its own message would make the degradation
+   intentional and testable.
+3. Consider whether a production site should sit on the free tier at all, given that its read
+   ceiling is shared with every other use of the project and cannot be raised in place.
+
+---
+
+## 15. Deployment status
+
+**Not deployed.** Production still serves the pre-change bundle.
+
+PR #2 is open and mergeable. `Pages` runs `42294840427` and `42301674528` were green on
+`8fbcb0f` and `89bb31a`, and the run on the current head is recorded in §13. Green CI is not a
+deployment; nothing was pushed to the Pages environment and no merge occurred.
+
+The deploy job's permissions were narrowed in `4879677` and its unused checkout removed, so the
+path it will take is now the narrower one — but it has not been taken.
+
+### What a merge would trigger, verified from the workflow files
+
+| property | value | source |
+| --- | --- | --- |
+| Trigger | `push` to `refs/heads/main` only | `pages.yml`, `deploy.if` |
+| Gate on artifact | `needs: build`; publishes the uploaded artifact, not a rebuild | `pages.yml` |
+| Checkout in deploy job | none; `contents: read` deliberately not granted | `pages.yml:117-122` |
+| Permissions | `pages: write`, `id-token: write` only | `pages.yml:120-122` |
+| Environment | `github-pages` | `pages.yml:123-125` |
+| Post-deploy check | smoke test over 11 routes after `deploy-pages` | `pages.yml:139` |
+| Implicit production write | **none** — the deploy job has no Firestore step | `pages.yml` |
+
+The last row is the one that needed checking separately. Deploying the site and writing the
+Firestore mirror are different workflows, and gating one without the other would have left a path
+open. `pages.yml` contains no `sync-firestore.mjs` invocation and no service-account secret.
+
+Its only Firestore reference is `npm run test:rules` in the **build** job (`pages.yml:48`), which
+runs the emulator and asserts authorization rules. That is read-only with respect to production:
+it starts a local emulator, exercises 18 rule assertions against it, and exits. The distinction is
+worth stating because "pages.yml mentions Firestore" and "merging writes to production" are
+different facts, and a reviewer grepping for one should not mistake it for the other.
+
+A merge therefore deploys the site and nothing else writes production unless a maintainer enables
+an activation variable.
+
+### Deployment readiness checklist
+
+| # | Item | State |
+| --- | --- | --- |
+| 1 | Build artifact produced by `build` job and reused, not rebuilt | **READY** — `upload-pages-artifact` / `deploy-pages` pairing |
+| 2 | Deploy permissions minimal | **READY** — two scopes, pinned by a contract test |
+| 3 | No checkout in the deploy job | **READY** — removed in `4879677`, pinned |
+| 4 | Environment declared | **READY** — `github-pages` |
+| 5 | Post-deploy smoke test | **READY** — 11 routes, retries the root then fails closed |
+| 6 | No implicit production write on deploy | **READY** — no Firestore step in `pages.yml` |
+| 7 | CI green on the exact deploy commit | **PASS** — run `42343212890` on `6f2a3ee`, the current head, is green in both jobs; earlier heads `c6434bc`, `332ed84` and `f7a9c2d` are green in `42330983084`, `42332279851` and `42336217872` |
+| 8 | Human visual acceptance | **NOT VERIFIED** — see §10; nobody has looked at the screenshots |
+| 9 | Maintainer authorization to merge | **NOT GRANTED** — and deliberately not requested by this report |
+
+---
+
+## 16. Remaining infrastructure authorizations
+
+| Item | Status | Next action |
+|---|---|---|
+| First production Firestore write | **BLOCKED** | Complete §14 items 1–7, present the plan, obtain maintainer authorization |
+| CSP and security response headers | **BLOCKED** | GitHub Pages serves fixed headers with no `_headers` support; requires a host that allows header configuration |
+| Firebase App Check enforcement | **BLOCKED** | Requires console authorization not granted to this work; prepared but not enforced |
+| Firefox verification | **PASS on Linux, blocked on macOS** | 93/93 in CI run `42320823948`, re-confirmed in `42343212890`; macOS launcher fails before any assertion (§12) |
+| Real screen-reader pass | **NOT VERIFIED** | Manual NVDA/JAWS/VoiceOver run |
+| Aesthetic review of the screenshots | **NOT VERIFIED** | A person looks at `artifacts/visual-audit/*.png`; this report's visual claims are measured, not seen (§10) |
+| PR merge | **BLOCKED** | Explicit maintainer authorization; not merged here |
+
+---
+
+## 17. Known risks and limitations
+
+1. **Firefox does not run on this macOS host.** Proven unlaunchable outside Playwright, so the
+   coverage comes from `ubuntu-latest` CI instead. Firefox is verified, but only there; a
+   developer re-running the suite locally on macOS will still see the launcher error. §12.
+2. **Four high `npm audit` advisories remain**, transitive through the Firebase client. Assessed
+   unreachable from the shipped bundle; the only npm-offered fix is a downgrade.
+3. **Visual screenshot directories are now separate, but ordering still matters for review.**
+   `audit-visual.mjs` writes to `artifacts/visual-audit-routes/` and `capture-screenshots.mjs` to
+   `artifacts/visual-audit/`, so neither can corrupt the committed images. A guard test enforces
+   this. What is *not* automated is noticing that committed screenshots have gone stale after a
+   style change — that remains a review responsibility.
+4. **Production sync is unverified, and currently unverifiable.** The write path has touched
+   production (unauthorized, §14), but the data plane now returns `429` on every read, so neither
+   an inventory nor an independent read-back can be performed. §14.1. The product degrades to the
+   GitHub fallback, so this blocks verification, not the site.
+5. **Real assistive technology was not exercised**, and neither were forced-colors, print, or a
+   reduced-motion-enabled session.
+6. **The screenshots were measured, not seen.** The image-viewing tool in this environment
+   returns success without delivering pixel content, and it did so again on nine fresh captures
+   of the home, tour, standard-library, changelog, status and philosophy pages in both themes. The
+   tool reported `Viewed image file successfully` for each, which is indistinguishable from
+   having seen them and is worth naming as its own hazard: a reviewer reading that line could
+   reasonably conclude an inspection happened. No inspection happened. Every visual claim in §10
+   therefore comes from computed styles, browser geometry, character counts, and programmatic
+   overflow checks. Those catch regressions well and aesthetic problems not at all. Nobody has
+   judged whether the homepage *looks* balanced. §10.
+7. **CSP cannot ship on GitHub Pages.** The site remains without a content security policy.
+8. **A regression was introduced mid-task and caught by CI** — pinning away a critical advisory
+   pulled in a `firebase-tools` release needing JDK 21. It is named here rather than omitted.
+9. **A force-with-lease push occurred earlier in this work.** It is recorded as a process
+   deviation and was not repeated; no branch was force-pushed to reach this HEAD.
+10. **The production Firestore project is on the free tier with billing disabled**, so its read
+    allowance is capped at 50,000 operations per day and cannot be raised in place
+    (`quotaIncreaseEligibility: NOT_SUPPORTED`). Exhausting it does not break the site — the
+    GitHub fallback covers it, verified against the live build — but it makes production
+    unreadable for verification until the daily reset. §14.1.
+11. **Quota errors reach the fallback by accident.** `classifyFirestoreError` has no
+    `resource-exhausted` branch, so a `429` becomes `unknown`, which happens to be in
+    `FALLBACK_CODES`. The behaviour is correct and no test pins *why* it is correct.
+12. **The tour's prose shell is structurally unlike every documentation page, and is now only
+    partly aligned.** It uses `.doc-with-toc` directly in `.content` rather than the
+    `.docs-layout` → `.docs-main` nesting that `DocumentPage` produces, so the rail geometry had
+    to be reproduced by an explicit `max-width` cap on `.doc-with-toc` rather than inherited. The
+    numbers now match exactly (568 + 32 + 240 = 840px against `.docs-main`'s own 840px), and a
+    test pins the measure. But the two paths can drift again, because the cap is a second
+    expression of the same geometry. The structural fix — giving the tour `.docs-main` — was
+    considered and not taken, because it is a layout refactor rather than a typography one, and
+    this pass was scoped to typography and spacing.
+13. **`.footer-note` uses the caption measure at 22rem (352px) where it previously rendered unset
+    at 360px.** The change is safe — the line count is identical — but the token was not chosen
+    for this element; it was inherited because the element is a caption. Whether a footer note
+    deserves its own semantic token is unresolved and is recorded here rather than decided
+    silently.
+
+---
+
+## 18. Final acceptance matrix
+
+All 19 named requirements from the acceptance criteria, plus six rows for claims this report makes
+beyond them. The rows are the report's claims, not the original checklist's shape.
+
+| # | Requirement | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Secret-bearing workflow restricted to reviewed code | **PASS** | `if: github.ref == 'refs/heads/main'` + `ref: main` (`4879677`); contract test asserts both |
+| 2 | Pages deployment permissions correct | **PASS** | Unused checkout removed (`4879677`); deploy limited to `pages: write`, `id-token: write`; CI run `42294840427` success |
+| 3 | Forced synchronization performs full reconciliation | **PASS** | `force` → `--full` (`58af3b6`); contract test + `tests/sync-releases.test.js` |
+| 4 | Failed sync attempts are persisted and retried | **PASS** | `!cancelled()` status function (`58af3b6`); contract test |
+| 5 | Network timeout covers body reads | **PASS** | Deadline kept ref'd (`84b20eb`) |
+| 6 | Correct upstream commit SHA recorded | **PASS** | `resolveCommit` via `GET /commits/:ref`, fails closed (`e77d688`) |
+| 7 | Release metadata hashes are complete | **PASS** | `releaseHashOf` covers 6 fields (`e77d688`); falsified by reverting to 3 |
+| 8 | Release discovery is paginated | **PASS** | `listAllReleases`, 20×100, fails closed (`e77d688`); falsified |
+| 9 | All current review findings dispositioned | **PASS** | 10/10 threads resolved, 0 open (§4) |
+| 10 | Release/documentation consistency model implemented | **PASS** | Content carries source ref, commit SHA, and per-document hash (`d8c60f5`) |
+| 11 | Significant, distinctive visual redesign completed | **DONE, AESTHETIC NOT VERIFIED** | Footer, section bands, featured cards, retuned palette, implemented type/space scale consumed by every page (§10); 30 committed screenshots, none yet inspected by a human (§6) |
+| 12 | Light and dark themes validated | **PASS** | `e2e/theme.spec.js` per route; both pass the AA audit; 100 element geometry comparisons across themes with 0 differences (§10) |
+| 13 | Firestore authorization remains secure | **PASS** | `firestore.rules` read-only for clients, `allow write: if false`; no admin credential under `src/` |
+| 14 | Secret exposure assessment completed | **PASS** | 50-commit history scan, no credential found; `.gitignore` contract test |
+| 15 | Dependency advisories assessed | **PASS** | 19 advisories triaged: 0 critical, 4 high accepted as unreachable (§9) |
+| 16 | Browser and accessibility coverage expanded | **PASS** | Chromium, mobile Chromium, WebKit, Firefox each 93/93 in run `42320823948`, and all four green again in `42343212890` (364 passed, 8 skipped, 0 failed); 54 a11y checks |
+| 17 | Regression tests pass | **PASS** | 299 unit/integration (295 pass, 4 skip); 94 Playwright locally (92 pass, 2 skip), 364 in CI across four engines (`42343212890`); 27 a11y; 4 live |
+| 18 | Production write verified after authorization | **NOT VERIFIED, BLOCKED** | Production **was** written by unauthorized run `42221327714` (`wrote 118 operations`); no authorized write + independent read-back exists, and the data plane now returns `429` so neither an inventory nor a read-back is currently possible (§14.1) |
+| 19 | Compiler repository untouched | **PASS** | No commit in this branch touches the compiler repository; all 76 files are under this repo |
+| 20 | Firefox browser behaviour verified | **PASS, Linux only** | 93/93 in run `42320823948`; Firefox green again in `42343212890` on the measured head; macOS launcher failure reproduced outside Playwright (§12) |
+| 21 | Typographic scale implemented and consumed | **PASS** | Twelve semantic roles resolving to a 1.2 modular scale; sizes 76/28/22/18/13px measured live; role test + raw-value test (§10) |
+| 22 | Spacing scale implemented and consumed | **PASS** | Twelve-rung 4px ladder plus semantic tokens; one off-grid value proven to be a `clamp()` mid-point (§10) |
+| 23 | Design tokens genuinely used, not merely declared | **PASS** | Dead tokens 24 → 0; "every declared token is consumed" test, proven falsifiable by orphaning one |
+| 24 | Merging cannot write production without authorization | **PASS** | `OQTHARA_PRODUCTION_SYNC` / `OQTHARA_DEPLOY_FIRESTORE_RULES` unset; every write step gated on the literal `true`; 7 contract tests, proven falsifiable by un-gating a workflow (§14) |
+| 25 | Production quota failure degrades safely rather than breaking the site | **PASS** | Live build served all 18 documentation links with `firestore.googleapis.com` blocked; 0 links only when the GitHub hosts were blocked too (§14.1) |
+| 26 | Prose measure is within the readable band on every page | **PASS** | whole-word Range bucketing, 8 routes + 404 × 3 viewports: every line fills 522–568px of its own 568px shell and **no line exceeds its shell**, 0 horizontal overflow; character maxima are 61–75 with `/changelog.html` 72 and `/404.html` 80, each traced to full lines rather than overruns; was 91 on `/stdlib.html` before `6f2a3ee` (§10) |
+| 27 | A reading measure cannot silently return to a font-relative unit | **PASS** | measure-unit contract test; falsified by restoring `--measure-prose: 68ch`, which failed it, then re-fixed (§10) |
+| 28 | Hand-built prose pages carry the documentation measure, not just its layout | **PASS** | prose-shell contract test; falsified by reverting the tour to `doc-article tour-body`, which failed it (§10) |
+| 29 | A padded shell cannot eat its gutter out of the reading measure | **PASS** | markup-resolving arithmetic contract test plus a geometric `e2e/reading-modes.spec.js` measurement; falsified by planting the subtraction form, which failed both (`status.html` 376px against a 568px measure), then restored (§10) |
+
+**Blocked / not verified, with exact next actions:**
+
+- **#18** — complete the six §14 pre-write items, present the plan, obtain authorization,
+  then execute and independently read back. Note that the premise changed: production already
+  holds 59 records from an unauthorized run, so the authorized run is a reconciliation, not a
+  first write, and the plan must be reviewed against existing content. **Additionally blocked on
+  quota (§14.1):** the production data plane returns `429 RESOURCE_EXHAUSTED` on every document
+  read because the project is on the free tier with billing disabled. The reconciliation plan
+  cannot be written until reads recover, and the read-back cannot be performed either. Both
+  allowances are per-day and reset on their own, so the correct action is to retry after the
+  reset rather than to change billing.
+- **#11** — the implementation is complete and validated mechanically (tokens consumed,
+  geometry compared across themes, accessibility audited), but "distinctive" is a judgement no
+  test can make. The 30 screenshots in `artifacts/visual-audit/` require human inspection before
+  this row can become an unqualified PASS.
+- **#20** — resolved for Linux. A macOS pass would need a working Firefox build for this host;
+  nothing in the suite is at fault, and the status should not be upgraded to an unqualified
+  "verified" on the strength of one platform.
+
+Rows 1–19 are the original nineteen requirements. Rows 20–23 were added deliberately: Firefox
+coverage is a scored line rather than a footnote, and the typography and spacing system gets
+graded on whether it is *implemented and consumed* rather than merely defined — which is exactly
+the failure the token system had before this pass. Row 24 records the authorization boundary:
+whether merging this branch can write production. It is scored as a line of its own because that
+is the one property here whose failure is irreversible.
+
+---
+
+## 19. Handoff
+
+**This report ends without merging, without deploying, and without enabling a production write.**
+Everything below is a state a maintainer can verify, not an action taken on their behalf.
+
+### The one finding that changes how this is reviewed
+
+Everything else here was already reported. This was not:
+
+> **Production Firestore has already been written, by a workflow run no maintainer authorized.**
+> Run [`42221327714`](https://github.com/Oqthara/Oqthara.github.io/actions/runs/42221327714)
+> printed `service account key is present and well formed`, then `wrote 118 operations to
+> oqthara`. Two later runs read back `would write 0, skip 59 unchanged`. Production holds 59
+> mirrored records.
+
+Three documents in this branch previously said production had never been written and that the
+service-account secret was unconfigured. Those statements were false, and they were not merely
+out of date — a maintainer reading them would have concluded that a merge was safe when the write
+path had already fired and this branch's 15-minute cron would have kept firing it.
+
+The claims survived because the run was read by its **conclusion**. It is marked `failure`; it
+failed on the *next* step, when the rules deployment was refused with a 403. `failure` is not
+evidence that nothing was written. `wrote 118 operations` is.
+
+What changed as a result: every production-writing step in all three workflows now requires a
+repository variable to be the literal string `true`, both variables are unset, and seven contract
+tests pin that — including the negative case, which was checked by removing a guard and watching
+the suite fail.
+
+### State of the branch
+
+| property | value |
+| --- | --- |
+| Head when written | `6f2a3ee` (the reading-measure fix); the report-only commits after it change nothing that ships |
+| Commits ahead of `main` | read it: `git rev-list --count origin/main..HEAD`. Not restated here — the file cannot count its own commits correctly, and pretending otherwise is what produced two earlier wrong figures |
+| Working tree | clean |
+| Mergeable | yes, per GitHub |
+| Latest CI on this head | `42343212890` — **success**: `Build the static site` green, `Cross-browser suite` green (364 passed, 8 skipped, 0 failed, four engines), `Deploy to GitHub Pages` correctly skipped |
+| Review threads | 10 resolved, 0 open |
+
+### Verdict matrix
+
+| Area | Verdict | Basis |
+| --- | --- | --- |
+| Typography scale implemented and consumed | **PASS** | 12 roles on a 1.2 scale; 122 tokens declared, 122 used, 0 orphans |
+| Spacing scale implemented and consumed | **PASS** | exact 4px ladder, no missing rung; one `clamp()` mid-point justified |
+| Applied across all routes, both themes | **PASS** | computed styles on 10 routes × 2 themes; 100 comparisons, 0 differences |
+| Reading measure readable and consistent | **PASS** | 69 max wrapped characters across 8 pages × 6 viewports, measured by whole-word bucketing; was 91 on `/stdlib.html` before `6f2a3ee` |
+| Responsive, no overflow | **PASS** | programmatic check at 1440/1024/768/390/320 |
+| Accessibility | **PASS** | 54 checks; three baseline AA violations → zero |
+| Unit, integration, emulator | **PASS** | 299 tests (295 pass, 4 skip); 18/18 rule assertions |
+| Browser suite | **PASS** | 182 local; 364 in CI across four engines |
+| Firefox | **PASS on Linux; NOT VERIFIED on macOS** | 93/93 on `ubuntu-latest`; macOS launcher fails before any assertion |
+| Screenshot collision fix | **PASS** | audit → `visual-audit-routes/`; committed set untouched by a run |
+| **Aesthetic quality** | **NOT VERIFIED** | **no human has looked at the screenshots** (§10) |
+| **Production sync verified by authorized write + independent read-back** | **NOT VERIFIED** | production was written without authorization; no authorized write exists (§14) |
+| **Firefox on this host** | **NOT VERIFIED** | launcher failure reproduced outside Playwright (§12) |
+| Deployment | **READY, not performed** | checklist in §15; deploy job skips on non-`main` |
+| Merging safely | **READY for maintainer decision** | writes gated; CI green; requires human visual acceptance first |
+
+### What a maintainer is being asked to do
+
+In this order, because the order matters:
+
+1. **Look at the screenshots.** `artifacts/visual-audit/`, indexed in §10 with eight questions.
+   Nothing in this report substitutes for that, and the report says so rather than implying
+   otherwise.
+2. **Decide about the unauthorized write.** Production already holds 59 records. Whether to
+   reconcile, republish, or leave them is a product decision, not an engineering one.
+3. **If production sync should run, enable it deliberately.** Set `OQTHARA_PRODUCTION_SYNC` (and
+   `OQTHARA_DEPLOY_FIRESTORE_RULES` if the rules change should ship) in repository settings, then
+   dispatch with `dry_run` first and read the plan before running it for real.
+4. **Merge when satisfied.** Merging no longer starts a write on its own.
+5. **Deploy.** The Pages job runs on merge to `main` and smoke-tests 11 routes afterwards.
+
+### What this report will not claim
+
+It will not claim the site looks good, that Firefox works on macOS, that production sync is
+verified, or that anything was deployed. Each of those has a row above marked **NOT VERIFIED**,
+and each will stay marked that way until evidence exists — because the failure mode that produced
+the corrections in this report was stating a plausible thing as though it had been checked.

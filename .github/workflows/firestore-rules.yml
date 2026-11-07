@@ -51,17 +51,27 @@ jobs:
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Check out the site repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # No job here pushes, so the job token has no reason to stay readable in .git/config.
+          persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          # Node 22: superstatic, a firebase-tools dependency, declares "18 || 20 || 22".
+          # Node 22 to match the other workflows; superstatic 10 accepts "20 || 22 || 24".
           node-version: 22
           cache: npm
 
       - name: Install
         run: npm ci
+
+      # `firebase-tools` 15 refuses to start the emulator on a JRE older than 21, and the
+      # runner image does not ship one. The emulator is the only thing that needs the JDK.
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: "21"
 
       - name: Check for the service account secret
         id: credential
@@ -73,6 +83,7 @@ jobs:
             echo "::error::FIREBASE_SERVICE_ACCOUNT is not set, so no rules can be deployed."
             exit 1
           fi
+          # shellcheck disable=SC2016  # the JavaScript below is single-quoted on purpose
           node -e '
             const raw = process.env.SERVICE_ACCOUNT;
             let parsed;
@@ -82,6 +93,25 @@ jobs:
               process.exit(1);
             }
           '
+
+      # Security rules are production state, and `firestore.rules` changes in this branch, so the
+      # `push` trigger below would release them the moment this merges. Releasing rules is not the
+      # same operation as mirroring content - it can tighten or loosen who may read the site data -
+      # so it sits behind the same opt-in switch, under its own variable. Validation and the
+      # emulator suite run regardless; only the release is gated.
+      - name: Check the rules-deployment activation gate
+        id: gate
+        env:
+          ENABLED: ${{ vars.OQTHARA_DEPLOY_FIRESTORE_RULES }}
+        run: |
+          set -euo pipefail
+          if [ "${ENABLED:-}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Rules deployment is ENABLED by the OQTHARA_DEPLOY_FIRESTORE_RULES variable."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Rules deployment is DISABLED. Set the repository variable OQTHARA_DEPLOY_FIRESTORE_RULES to \`true\` to release rules to production. Validation and the emulator suite still run."
+          fi
 
       - name: Verify the credential identity, IAM grants, and rule compilation
         env:
@@ -96,7 +126,7 @@ jobs:
         run: npm run test:rules
 
       - name: Deploy Firestore security rules
-        if: github.event_name == 'push' || inputs.mode == 'deploy'
+        if: steps.gate.outputs.enabled == 'true' && (github.event_name == 'push' || inputs.mode == 'deploy')
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
@@ -114,6 +144,7 @@ jobs:
           # authorized, and print only the two non-secret fields. This is the file the Firebase
           # CLI will read, so a mismatch here is a mismatch in the deploy itself.
           test -r "$GOOGLE_APPLICATION_CREDENTIALS"
+          # shellcheck disable=SC2016  # the JavaScript below is single-quoted on purpose
           node -e '
             const { readFileSync } = require("node:fs");
             const parsed = JSON.parse(readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8"));
@@ -129,4 +160,4 @@ jobs:
             }
           '
 
-          npx --yes firebase-tools@13 deploy --only firestore:rules --project oqthara --non-interactive
+          npx --no-install firebase-tools deploy --only firestore:rules --project oqthara --non-interactive

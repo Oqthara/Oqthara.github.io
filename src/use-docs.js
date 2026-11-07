@@ -29,6 +29,7 @@ import {
   getExamples,
   getReleases,
 } from "./services/content.service.js";
+import { loadCatalog } from "./repositories/catalog.repository.js";
 
 /**
  * Unwraps a service result into the pair the hooks keep: the value and where it came from.
@@ -118,6 +119,19 @@ export function useChannels() {
   const { status, data, source, error, retry } = useAsync(() => getReleases().then(unwrap), []);
   const channels = data ?? [];
   return { status, channels, source, error, retry };
+}
+
+/**
+ * The mirror's own record of the commit it was last reconciled from.
+ *
+ * Only meaningful for the development channel, whose content is mirrored from `main`. A release
+ * channel is read from GitHub at its tag, so its provenance is the tag rather than this record.
+ * A mirror that predates the catalogue, or could not be read, resolves to `null` and the caller
+ * says so rather than showing a commit it cannot prove.
+ */
+export function useMirrorCatalog() {
+  const { status, data, error, retry } = useAsync(() => loadCatalog().then(unwrap), []);
+  return { status, catalog: data ?? null, error, retry };
 }
 
 /** Resolves a `ref` from the URL against the live channel list. */

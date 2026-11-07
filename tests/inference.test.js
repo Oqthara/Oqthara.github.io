@@ -78,6 +78,34 @@ test("shell transcripts are recognised", () => {
   assert.equal(inferLanguage("curl -fsSL https://example.invalid/install.sh | bash"), "bash");
 });
 
+// A compiler log is not source. Prism colours what it is told to colour, so a wrong verdict
+// here does not look like a bug, it looks like the site does not know what it is showing.
+// The false positive was a file name followed by a parenthesised count: `arith.jar (99
+// classes)` matched a "method call on a receiver" rule, two such lines outvoted the `$`
+// transcript marker, and the block rendered in Oqthara keyword colours.
+const COMPILER_TRANSCRIPT = [
+  "$ java -jar oq-cli/build/libs/oq.jar build build/oqdoc/arith.oq",
+  "compiled build/oqdoc/arith.oq (1 functions, 8 main instructions)",
+  "backend=classfile (self-contained writer, JDK 21)",
+  "codepath: compiled bytecode",
+  "wrote build/oqdoc/arith.jar (99 classes, 0 skipped)",
+  "run it with: java -jar build/oqdoc/arith.jar",
+].join("\n");
+
+test("a compiler transcript is shell, even when it parenthesises counts", () => {
+  assert.equal(inferLanguage(COMPILER_TRANSCRIPT), "bash");
+});
+
+test("a file name followed by a parenthesised count is not a method call", () => {
+  assert.equal(inferLanguage("wrote build/app.jar (99 classes, 0 skipped)"), null);
+  assert.equal(inferLanguage("built dist/site.oq (1 functions)"), null);
+});
+
+test("a real method call on a receiver is still Oqthara", () => {
+  assert.equal(inferLanguage("name = value.trim()\nprint name"), "oq");
+  assert.equal(inferLanguage("xs = [1, 2, 3]\nxs.map(x -> x * 2)"), "oq");
+});
+
 test("an ASCII architecture diagram stays unlabelled", () => {
   // This is the second fenced block in docs/spec/design.md. It used to be labelled `oq`
   // because each `->` line scored as a lambda.
