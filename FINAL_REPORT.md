@@ -398,6 +398,70 @@ judgement was not exercised and is NOT VERIFIED.** A maintainer should still loo
 `artifacts/visual-audit/*.png` before merge; the numbers narrow what to look for but cannot
 replace looking.
 
+### Visual acceptance package — awaiting human inspection
+
+**Status: NOT VERIFIED. This section is a request for review, not a result.**
+
+Every committed screenshot is listed below so a reviewer can open it directly instead of
+searching a directory. All 30 are in `artifacts/visual-audit/`, committed, and unchanged by the
+audit scripts (which write to `artifacts/visual-audit-routes/`; see §8).
+
+| Surface | Light | Dark |
+| --- | --- | --- |
+| Homepage, desktop | `home-desktop.png` | `home-desktop-dark.png` |
+| Homepage, mobile | `home-mobile.png` | `home-mobile-dark.png` |
+| Navigation, mobile open | `navigation-mobile-open.png` | `navigation-mobile-open-dark.png` |
+| Documentation index, desktop | `docs-desktop.png` | `docs-desktop-dark.png` |
+| Documentation index, mobile | `docs-mobile.png` | `docs-mobile-dark.png` |
+| Documentation detail, mobile | `doc-page-mobile.png` | `doc-page-mobile-dark.png` |
+| Code highlighting | `doc-page-code-highlighting.png` | `doc-page-code-highlighting-dark.png` |
+| Examples index | `examples-desktop.png` | `examples-desktop-dark.png` |
+| Example detail | `example-desktop.png` | `example-desktop-dark.png` |
+| Standard library | `stdlib-desktop.png` | `stdlib-desktop-dark.png` |
+| Releases / changelog | `changelog-desktop.png` | `changelog-desktop-dark.png` |
+| Status | `status-desktop.png` | `status-desktop-dark.png` |
+| Philosophy | `philosophy-desktop.png` | `philosophy-desktop-dark.png` |
+| Tour | `tour-desktop.png` | `tour-desktop-dark.png` |
+| Error state (404) | `not-found-desktop.png` | — |
+| Firebase content loaded | `firebase-content-loaded.png` | — |
+
+The 404 and Firebase captures have no dark counterpart; there is no dark 404 route captured, and
+saying so is better than implying the grid is complete.
+
+### What a reviewer is being asked to judge
+
+These eight questions are the aesthetic judgement this report cannot make. They are phrased as
+questions rather than criteria because a checklist of numbers already exists above, and repeating
+it here would invite a reviewer to re-check the measurements instead of looking.
+
+1. **Hierarchy** — on the homepage, is it obvious what to read first, second, third?
+2. **Measure** — does prose run to a comfortable line length, or do paragraphs feel too wide or
+   too narrow at 1440px?
+3. **Rhythm** — do sections breathe consistently, or is there a spot where spacing collapses or
+   doubles?
+4. **Balance** — is the homepage composition weighted sensibly, or does one area dominate?
+5. **Code legibility** — in the highlighted sample, are tokens distinguishable without effort,
+   and is the block dense enough to read as code?
+6. **Documentation comfort** — could you read a long page here for ten minutes without fatigue?
+7. **Interface vs editorial** — do navigation, labels and buttons read as a distinct register
+   from long-form prose, or does everything blur into one texture?
+8. **Theme parity** — switching light to dark, does the design hold or does something lose
+   emphasis?
+
+If any answer is "no", that is the finding. This report has no mechanism to have caught it.
+
+### Honest statement of what was and was not verified
+
+| Claim | Basis | Status |
+| --- | --- | --- |
+| No horizontal overflow, 10 routes × 2 themes × 4 viewports | programmatic, from real geometry | **PASS** |
+| Prose measure ≤ 69 characters at 1024–1440px | counted from rendered paragraph boxes | **PASS** |
+| Body 18px/31, code 13px/22 | computed styles | **PASS** |
+| Light and dark identical in geometry | 100 element comparisons, 0 differences | **PASS** |
+| Contrast, focus, tap targets | `npm run audit:visual`, 57/57 | **PASS** |
+| Type and spacing scales are consumed, not declared | token orphan test, 122/122 used | **PASS** |
+| **The result looks good** | **no one has looked** | **NOT VERIFIED** |
+
 **A rendering-determinism question was investigated and closed.** Consecutive captures appeared
 to differ by 1,296,000 px — exactly 2880×450, the header band. `backdrop-filter: blur(12px)` on
 the sticky header was the first hypothesis and it was **wrong**: isolated in-process and
