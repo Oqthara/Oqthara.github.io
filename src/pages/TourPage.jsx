@@ -203,7 +203,7 @@ export function TourPage() {
 
       h(
         "div",
-        { className: "doc-article tour-body" },
+        { className: "doc-article doc tour-body" },
         SECTIONS.map((section) =>
           h(
             "section",

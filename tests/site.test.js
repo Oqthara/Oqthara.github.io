@@ -159,6 +159,27 @@ test("the two visual scripts do not write to the same directory", () => {
   );
 });
 
+test("every prose shell carries the reading measure", { skip }, () => {
+  // `.doc-article` is the layout wrapper; `.doc` is the element that applies `--measure-prose`,
+  // `--text-lead` and `--leading-doc`. Markdown pages always emit both. The tour is hand-built,
+  // so nothing tied its markup to the Markdown path, and it shipped with the wrapper but not the
+  // measure: prose rendered at 16px across 872px, 89 characters a line, while the stylesheet
+  // comment beside it claimed "the same reading measure". A comment is not a contract. This is.
+  // `tour-body` is named here because it is the other hand-built prose shell that exists today.
+  const SHELLS = ["doc-article", "tour-body"];
+  for (const file of htmlFiles(site)) {
+    const html = readPage(file);
+    for (const match of html.matchAll(/class="([^"]*)"/g)) {
+      const classes = match[1].split(/\s+/).filter(Boolean);
+      if (!classes.some((name) => SHELLS.includes(name))) continue;
+      assert.ok(
+        classes.includes("doc"),
+        `${file}: <div class="${match[1]}"> holds prose but is not .doc, so it inherits no reading measure`,
+      );
+    }
+  }
+});
+
 // --- design tokens ---------------------------------------------------------
 //
 // The typography and spacing scales live in `assets/site.css` as custom properties. A scale
