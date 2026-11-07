@@ -673,3 +673,43 @@ describe("firestore-audit workflow", () => {
     assert.match(summary, /GITHUB_SHA/);
   });
 });
+
+describe("firestore-audit invocation", () => {
+  // A workflow contract test that only greps for a script name will happily pass while the
+  // command line is wrong: an earlier version of this test did exactly that, and CI failed with
+  // "Unknown argument(s): --out <path>" because `--out` requires `=`. Extract the real command
+  // and run it through the real parser, so the workflow and the CLI cannot drift apart.
+  it("passes arguments the audit's own parser accepts", async () => {
+    const { parseArgs } = await import("../scripts/audit-production.mjs");
+    const text = await workflow("firestore-audit.yml");
+    const match = text.match(/node scripts\/audit-production\.mjs (.*)$/m);
+    assert.ok(match, "the workflow must invoke the audit");
+
+    // Stop at the first shell operator: `| tee` and `&&` are the shell's, not node's.
+    // Quoted segments become a placeholder, since the shell resolves them before node sees them.
+    const argv = match[1]
+      .split(/[|&;]/)[0]
+      .trim()
+      .replace(/"[^"]*"/g, "PLACEHOLDER")
+      .split(/\s+/)
+      .filter(Boolean);
+
+    const { unknown, options } = parseArgs(argv);
+    assert.deepEqual(unknown, [], `the audit would exit on these arguments: ${unknown.join(" ")}`);
+    assert.equal(typeof options.out, "string");
+    assert.notEqual(options.out, "", "--out must be passed; the artifact is the point of the run");
+  });
+
+  it("writes the inventory to a .json file the artifact upload can collect", async () => {
+    const text = await workflow("firestore-audit.yml");
+    // The path is a shell variable, so the parser check above sees a placeholder instead. Assert
+    // the assignment directly: an artifact holding a non-JSON path would be silently useless.
+    assert.match(text, /^\s*out="artifacts\/production\/audit-[^"]*\.json"$/m);
+  });
+
+  it("never passes --token, which would bypass the service-account identity check", async () => {
+    const text = await workflow("firestore-audit.yml");
+    assert.doesNotMatch(text, /--token\b/,
+      "the service-account path verifies the expected identity; --token would skip that");
+  });
+});

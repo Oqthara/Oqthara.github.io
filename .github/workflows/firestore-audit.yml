@@ -95,7 +95,7 @@ jobs:
         run: |
           set -euo pipefail
           out="artifacts/production/audit-${LABEL:-manual}.json"
-          node scripts/audit-production.mjs --out "$out" | tee /dev/stderr
+          node scripts/audit-production.mjs --out="$out" | tee /dev/stderr
           echo "Wrote $out"
 
       # `if: always()` with a presence guard: a quota failure still leaves the partial report
