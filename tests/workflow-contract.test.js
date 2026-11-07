@@ -67,7 +67,10 @@ describe("alpha-release-sync workflow", () => {
 
   it("records success only after the sync succeeds, and records failures without advancing", async () => {
     const text = await workflow(NAME);
-    assert.match(stepBody(text, "Record a successful sync"), /if: \$\{\{ !cancelled\(\) && steps\.sync\.outcome == 'success' \}\}/);
+    assert.match(
+      stepBody(text, "Record a successful sync"),
+      /if: \$\{\{ !cancelled\(\) && steps\.sync\.outcome == 'success' && steps\.gate\.outputs\.enabled == 'true' \}\}/,
+    );
     const failed = stepBody(text, "Record a failed sync");
     assert.match(failed, /steps\.sync\.outcome != 'success'/);
     assert.match(failed, /--record=failed/);
@@ -121,6 +124,114 @@ describe("alpha-release-sync workflow", () => {
     const text = await workflow(NAME);
     assert.match(stepBody(text, "Summarize"), /if: always\(\)/);
     assert.match(text, /GITHUB_STEP_SUMMARY/);
+  });
+});
+
+describe("production writes are opt-in, not a consequence of merging", () => {
+  // AUTHORIZATION BOUNDARY: `alpha-release-sync.yml` polls every 15 minutes on `main`, and
+  // `firebase-sync.yml` and `firestore-rules.yml` are scheduled/push-triggered too. Every one of
+  // them writes production. Merging a branch therefore used to mean "and now production is
+  // written, immediately, on a timer" - an irreversible act performed by a merge that nobody
+  // called a deployment. These tests pin the switch that makes that opt-in.
+  //
+  // The default must be *off*. A gate that defaults on is not a gate, so the assertion that
+  // matters most is the negative one: absent configuration, nothing writes.
+
+  const GATE_VAR = "OQTHARA_PRODUCTION_SYNC";
+  const RULES_VAR = "OQTHARA_DEPLOY_FIRESTORE_RULES";
+
+  const GATED_STEPS = {
+    "alpha-release-sync.yml": ["Synchronize the mirror", "Record a successful sync", "Record a failed sync"],
+    "firebase-sync.yml": ["Sync"],
+    "firestore-rules.yml": ["Deploy Firestore security rules"],
+  };
+
+  const gateStepName = (text) =>
+    text.includes("Check the rules-deployment activation gate")
+      ? "Check the rules-deployment activation gate"
+      : "Check the production-sync activation gate";
+  const gateBody = async (name) => {
+    const text = await workflow(name);
+    return stepBody(text, gateStepName(text));
+  };
+
+  it("every workflow that can write production consults a repository variable", async () => {
+    const expected = [
+      ["alpha-release-sync.yml", GATE_VAR],
+      ["firebase-sync.yml", GATE_VAR],
+      ["firestore-rules.yml", RULES_VAR],
+    ];
+    for (const [name, variable] of expected) {
+      assert.match(
+        await gateBody(name),
+        new RegExp(`\\$\\{\\{ vars\\.${variable} \\}\\}`),
+        `${name} must read ${variable}`,
+      );
+    }
+  });
+
+  it("an absent variable is read as disabled, and only the literal string \"true\" enables writes", async () => {
+    // The default has to survive the variable not existing at all. `${ENABLED:-}` with the `:-`
+    // default is what makes an unset variable an empty string instead of a `unbound variable`
+    // crash, and the comparison is against the exact lowercase literal so "TRUE", "yes", "1",
+    // and the empty string all fail closed.
+    for (const name of Object.keys(GATED_STEPS)) {
+      const gate = await gateBody(name);
+      assert.match(gate, /\$\{ENABLED:-\}/, `${name} must not crash on an unset variable`);
+      assert.match(gate, /\[ "\$\{ENABLED:-\}" = "true" \]/, `${name} must compare exactly against "true"`);
+      assert.match(gate, /enabled=false/, `${name} must have an explicit disabled branch`);
+    }
+  });
+
+  it("every step that writes production is guarded by the gate", async () => {
+    // A guard on the obvious write step is not enough. `--record=ok` advances the pointer that
+    // makes the next poll decide "no action", and `--record=failed` writes a failure record - both
+    // are production writes, and either one running while the mirror write is refused would put
+    // the recorded state ahead of the actual mirror.
+    for (const [name, steps] of Object.entries(GATED_STEPS)) {
+      const text = await workflow(name);
+      for (const step of steps) {
+        assert.match(
+          stepBody(text, step),
+          /steps\.gate\.outputs\.enabled == 'true'/,
+          `${name}: "${step}" can write production without passing the gate`,
+        );
+      }
+    }
+  });
+
+  it("a forced dispatch cannot bypass the gate", async () => {
+    // `force` exists to repair a mirror that was edited out of band, and it selects `--full`. That
+    // makes it the most destructive manual path in the repository, and the one a maintainer is
+    // most likely to reach for. It shares the same `if:` as the incremental path, so the gate
+    // covers it - this test fails if anyone ever splits them.
+    const sync = stepBody(await workflow("alpha-release-sync.yml"), "Synchronize the mirror");
+    assert.match(sync, /steps\.gate\.outputs\.enabled == 'true'/);
+    assert.match(sync, /sync-firestore\.mjs --full/);
+  });
+
+  it("detection still runs while writes are disabled, so a disabled repo can report intent", async () => {
+    // The point of the gate is to withhold the write, not to make the workflow silent. A disabled
+    // repository should still be able to answer "what is the newest upstream release, and what
+    // would a sync do?" - that is what makes the first authorized run a confirmation rather than
+    // an experiment.
+    const detect = stepBody(await workflow("alpha-release-sync.yml"), "Detect the newest upstream release");
+    assert.doesNotMatch(detect, /steps\.gate\.outputs\.enabled/, "detection must not be gated");
+  });
+
+  it("a run refused by the gate is reported as disabled rather than as a success", async () => {
+    const text = await workflow("alpha-release-sync.yml");
+    assert.match(stepBody(text, "Summarize"), /production writes/);
+    assert.match(text, /::notice::Production synchronization is DISABLED/);
+  });
+
+  it("the gate exposes no credential to an unreviewed ref", async () => {
+    // The gate is an `if:` on the write steps, not a new way to reach them. The job that holds the
+    // key is still pinned to main, so this control cannot be used to widen that boundary.
+    for (const name of Object.keys(GATED_STEPS)) {
+      const gate = await gateBody(name);
+      assert.doesNotMatch(gate, /secrets\./, `${name}: the gate step itself must not touch a secret`);
+    }
   });
 });
 

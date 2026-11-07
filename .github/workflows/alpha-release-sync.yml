@@ -137,6 +137,30 @@ jobs:
           '
           echo "present=true" >> "$GITHUB_OUTPUT"
 
+      # Production writes are opt-in, and this is the switch. A repository variable is used
+      # rather than a secret because its value is not sensitive and an operator must be able to
+      # read it back: "is this repository allowed to write production?" is a question whose
+      # answer should be visible in `gh variable list`, not hidden behind a value nobody can see.
+      #
+      # Absent, empty, or any value other than "true" means disabled. The comparison is exact so
+      # a typo like "True" or "yes" fails closed rather than being read as consent.
+      #
+      # This step sets `enabled` for the write steps below; detection stays unguarded on purpose,
+      # so a disabled repository still reports what it would have done.
+      - name: Check the production-sync activation gate
+        id: gate
+        env:
+          ENABLED: ${{ vars.OQTHARA_PRODUCTION_SYNC }}
+        run: |
+          set -euo pipefail
+          if [ "${ENABLED:-}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Production synchronization is ENABLED by the OQTHARA_PRODUCTION_SYNC variable."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Production synchronization is DISABLED. Set the repository variable OQTHARA_PRODUCTION_SYNC to \`true\` to allow writes to Firestore. Detection still runs; nothing is written."
+          fi
+
       - name: Verify the credential identity and Cloud project
         if: steps.credential.outputs.present == 'true'
         env:
@@ -197,9 +221,12 @@ jobs:
           REASON: ${{ steps.detect.outputs.reason }}
         run: printf '::notice::%s\n' "$REASON"
 
+      # The activation gate covers `--full` too: a forced reconciliation is a manual trigger, so
+      # without this it would be the one path that bypasses the switch. A refused run is `skipped`
+      # rather than `success`, so the failure recorder below must exclude it explicitly.
       - name: Synchronize the mirror
         id: sync
-        if: steps.decide.outputs.run == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        if: steps.gate.outputs.enabled == 'true' && steps.decide.outputs.run == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
@@ -225,8 +252,11 @@ jobs:
       # the state document would keep the previous success, and the next run would believe the
       # mirror was current. `!cancelled()` instead keeps it running through a failed sync while
       # still not running when the job itself was cancelled.
+      # Recording is a production write of its own: it is what makes the next poll decide "no
+      # action". Recording a sync that this gate refused would advance the published-release
+      # pointer without ever publishing the release.
       - name: Record a successful sync
-        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' && steps.gate.outputs.enabled == 'true' }}
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           OQ_RELEASE_TAG: ${{ steps.detect.outputs.tag }}
@@ -235,7 +265,9 @@ jobs:
         run: node scripts/check-upstream-release.mjs --record=ok
 
       - name: Record a failed sync
-        if: ${{ !cancelled() && steps.decide.outputs.run == 'true' && steps.sync.outcome != 'success' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        if: ${{ !cancelled() && steps.gate.outputs.enabled == 'true' && steps.decide.outputs.run == 'true' && steps.sync.outcome != 'success' && steps.sync.outcome != 'skipped' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        # `skipped` is excluded because that is what a run the activation gate refused looks
+        # like. Recording it as a failure would name a release that was never attempted.
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           OQ_RELEASE_TAG: ${{ steps.decide.outputs.tag }}
@@ -258,6 +290,7 @@ jobs:
           REASON: ${{ steps.detect.outputs.reason }}
           DECISION: ${{ steps.detect.outputs.changed == 'true' && 'synchronize' || 'no action' }}
           SYNC_OUTCOME: ${{ steps.sync.outcome }}
+          WRITES_ENABLED: ${{ steps.gate.outputs.enabled || 'unknown' }}
         run: |
           {
             echo "## Alpha release sync"
@@ -271,4 +304,10 @@ jobs:
             printf '| decision | %s |\n' "$DECISION"
             printf '| reason | %s |\n' "$REASON"
             printf '| mirror sync | %s |\n' "$SYNC_OUTCOME"
+            if [ "$WRITES_ENABLED" != "true" ]; then
+              # shellcheck disable=SC2016  # the backticks are Markdown, not command substitution
+              printf '| production writes | **disabled** (OQTHARA_PRODUCTION_SYNC is not \`true\`) |\n'
+            else
+              printf '| production writes | enabled |\n'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

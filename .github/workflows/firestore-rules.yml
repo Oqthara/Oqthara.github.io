@@ -94,6 +94,25 @@ jobs:
             }
           '
 
+      # Security rules are production state, and `firestore.rules` changes in this branch, so the
+      # `push` trigger below would release them the moment this merges. Releasing rules is not the
+      # same operation as mirroring content - it can tighten or loosen who may read the site data -
+      # so it sits behind the same opt-in switch, under its own variable. Validation and the
+      # emulator suite run regardless; only the release is gated.
+      - name: Check the rules-deployment activation gate
+        id: gate
+        env:
+          ENABLED: ${{ vars.OQTHARA_DEPLOY_FIRESTORE_RULES }}
+        run: |
+          set -euo pipefail
+          if [ "${ENABLED:-}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Rules deployment is ENABLED by the OQTHARA_DEPLOY_FIRESTORE_RULES variable."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Rules deployment is DISABLED. Set the repository variable OQTHARA_DEPLOY_FIRESTORE_RULES to \`true\` to release rules to production. Validation and the emulator suite still run."
+          fi
+
       - name: Verify the credential identity, IAM grants, and rule compilation
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
@@ -107,7 +126,7 @@ jobs:
         run: npm run test:rules
 
       - name: Deploy Firestore security rules
-        if: github.event_name == 'push' || inputs.mode == 'deploy'
+        if: steps.gate.outputs.enabled == 'true' && (github.event_name == 'push' || inputs.mode == 'deploy')
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |

@@ -92,6 +92,23 @@ jobs:
           '
           echo "present=true" >> "$GITHUB_OUTPUT"
 
+      # Same activation switch as `alpha-release-sync.yml`. Both workflows write the same
+      # collections and both are scheduled, so a gate on only one of them would be a gate on
+      # half the problem. See that file for why this is a repository variable and not a secret.
+      - name: Check the production-sync activation gate
+        id: gate
+        env:
+          ENABLED: ${{ vars.OQTHARA_PRODUCTION_SYNC }}
+        run: |
+          set -euo pipefail
+          if [ "${ENABLED:-}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Production synchronization is ENABLED by the OQTHARA_PRODUCTION_SYNC variable."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Production synchronization is DISABLED. Set the repository variable OQTHARA_PRODUCTION_SYNC to \`true\` to allow writes to Firestore."
+          fi
+
       - name: Verify the credential identity and Cloud project
         if: steps.credential.outputs.present == 'true'
         env:
@@ -115,7 +132,7 @@ jobs:
         run: node scripts/sync-firestore.mjs --dry-run ${FULL:+"$FULL"}
 
       - name: Sync
-        if: steps.credential.outputs.present == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        if: steps.gate.outputs.enabled == 'true' && steps.credential.outputs.present == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
