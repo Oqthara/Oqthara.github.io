@@ -49,8 +49,8 @@ survives despite.
 
 Commit counts for the branch as a whole have moved and will keep moving. Read them from git.
 
-The working tree was clean (`git status --porcelain` → empty) before each of the seven gates in
-§13 was run.
+The working tree was clean (`git status --porcelain` → empty) before each command in §13 was
+run.
 
 ---
 
@@ -415,15 +415,20 @@ The typescale and spacing ladder already existed in `assets/site.css` before thi
 did **not** have was consumers: 24 of its 133 tokens were declared and never referenced by any
 rule, and several components hardcoded raw `rem`/`ch` values that duplicated a token sitting
 right above them. A token nobody reads is documentation, not a design system. `24e0203` made the
-system load-bearing.
+system load-bearing: the same script that measured 24 orphans among 133 declarations now reports
+122 declared, 122 referenced, 0 orphaned.
 
-**What changed.** Dead and duplicated tokens were removed — `--code-keyword`, `--code-string`,
-`--code-number`, `--code-comment` (identical values to the live `--tok-*` block), `--step-5`
-(never referenced; the 1.2 scale skips it deliberately), `--ring`, `--shadow-1`, `--measure`,
-`--sidebar`, `--space-section-tight`, `--band-tight`, `--doc-gutter`, `--gap-group-loose`. The
-call sites that should have been reading tokens now do: `html { scroll-padding-top }`,
-`.content { padding-inline }`, prose measures, `.section` bands, the hero, sidebar and table-of-
-contents offsets, form controls, buttons, badges, notes, status blocks, principles, empty states.
+**What changed.** The 24 orphans resolved in two ways. Eleven were deleted outright:
+`--code-keyword`, `--code-string`, `--code-number`, `--code-comment` (identical values to the live
+`--tok-*` block), `--step-5` (the 1.2 scale skips it deliberately), `--ring`, `--shadow-1`,
+`--measure`, `--band-tight`, `--doc-gutter`, `--gap-group-loose`. Two more were *consolidated*, not
+dead: `--sidebar: 250px` was live at `.docs-layout` and duplicated the already-declared
+`--doc-sidebar` (16rem), so the custom pixel width was dropped in favour of the token;
+`--space-section-tight` was reachable only through the orphaned `--band-tight`, making it
+transitively dead. That leaves eleven orphans rewired rather than removed. The call sites that
+should have been reading tokens now do: `html { scroll-padding-top }`, `.content { padding-inline }`,
+prose measures, `.section` bands, the hero, sidebar and table-of-contents offsets, form controls,
+buttons, badges, notes, status blocks, principles, empty states.
 Control padding was split from button padding (`--pad-control-*` 12×8, `--pad-button-*` 24×12)
 because forcing a text field and a primary button through one pair either shrinks the button or
 inflates the field.
@@ -773,7 +778,7 @@ All 19 named requirements from the acceptance criteria, plus one deliberate twen
 
 **Blocked / not verified, with exact next actions:**
 
-- **#18** — complete the seven §14 pre-write items, present the plan, obtain authorization,
+- **#18** — complete the six §14 pre-write items, present the plan, obtain authorization,
   then execute and independently read back.
 - **#20** — resolved for Linux. A macOS pass would need a working Firefox build for this host;
   nothing in the suite is at fault, and the status should not be upgraded to an unqualified
