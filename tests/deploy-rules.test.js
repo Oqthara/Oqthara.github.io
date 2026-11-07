@@ -81,10 +81,12 @@ test("release updates the existing release and restricts the mask to rulesetName
   assert.equal(calls.length, 1);
   assert.match(calls[0].url, /\/releases\/cloud\.firestore\?updateMask=rulesetName$/);
   assert.equal(calls[0].init.method, "PATCH");
+  // The PATCH body is an UpdateReleaseRequest: the release must travel under `release`.
+  // Sending the fields at the top level is rejected with `Unknown name "rulesetName"`.
   const body = JSON.parse(calls[0].init.body);
-  assert.equal(body.rulesetName, "projects/oqthara/rulesets/abc-123");
-  // No other release field may travel in the body.
-  assert.deepEqual(Object.keys(body).sort(), ["name", "rulesetName"]);
+  assert.deepEqual(Object.keys(body), ["release"]);
+  assert.deepEqual(Object.keys(body.release).sort(), ["name", "rulesetName"]);
+  assert.equal(body.release.rulesetName, "projects/oqthara/rulesets/abc-123");
 });
 
 test("release creates the release only when the update reports 404", async () => {

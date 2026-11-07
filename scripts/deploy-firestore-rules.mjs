@@ -104,16 +104,19 @@ export async function createRuleset(projectId, { token, rulesText, fetchImpl = g
 /**
  * Points the `cloud.firestore` release at a ruleset, creating the release when absent.
  *
+ * The PATCH body is an `UpdateReleaseRequest`, so the release travels under the `release` key;
+ * sending `rulesetName` at the top level is rejected with `Unknown name "rulesetName"`.
  * `updateMask` is restricted to `rulesetName` so no other release field can be altered by this
  * call. A 404 means the release does not exist yet, which is the only case that creates one.
  */
 export async function releaseRuleset(projectId, rulesetName, { token, fetchImpl = globalThis.fetch }) {
   const base = `${RULES_ENDPOINT}/v1/projects/${encodeURIComponent(projectId)}/releases`;
+  const releaseName = `projects/${projectId}/releases/${RELEASE_ID}`;
   const updateUrl = `${base}/${encodeURIComponent(RELEASE_ID)}?updateMask=rulesetName`;
   const updated = await fetchImpl(updateUrl, {
     method: "PATCH",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ name: `projects/${projectId}/releases/${RELEASE_ID}`, rulesetName }),
+    body: JSON.stringify({ release: { name: releaseName, rulesetName } }),
   });
   const update = await describe(updated, updateUrl);
   if (update.ok) return { ...update, created: false };
@@ -123,7 +126,7 @@ export async function releaseRuleset(projectId, rulesetName, { token, fetchImpl 
   const created = await fetchImpl(createUrl, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ name: `projects/${projectId}/releases/${RELEASE_ID}`, rulesetName }),
+    body: JSON.stringify({ name: releaseName, rulesetName }),
   });
   return { ...(await describe(created, createUrl)), created: true };
 }
