@@ -15,6 +15,7 @@
     "test:rules": "npx --no-install firebase-tools emulators:exec --only firestore --project oqthara-rules-test \"node scripts/test-firestore-rules.mjs\"",
     "verify": "node verify.mjs",
     "screenshots": "node scripts/capture-screenshots.mjs",
+    "screenshot:firebase": "node scripts/capture-firebase-screenshot.mjs",
     "audit:visual": "node scripts/audit-visual.mjs",
     "serve": "node scripts/serve-site-cli.mjs _site 8811"
   },
