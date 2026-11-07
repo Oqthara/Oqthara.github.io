@@ -160,4 +160,11 @@ jobs:
             }
           '
 
-          npx --no-install firebase-tools deploy --only firestore:rules --project oqthara --non-interactive
+          # Release through the Rules API rather than `firebase deploy --only firestore:rules`.
+          # The CLI gates the deploy behind a Service Usage enablement precheck
+          # (GET projects/oqthara/services/firestore.googleapis.com) that needs
+          # `serviceusage.services.get`, which this service account does not hold. Releasing rules
+          # needs none of that: the script below compiles with projects/{project}:test, creates a
+          # ruleset, and updates the existing release, all covered by the seven permissions the
+          # IAM probe above already verified. See scripts/deploy-firestore-rules.mjs.
+          node scripts/deploy-firestore-rules.mjs
