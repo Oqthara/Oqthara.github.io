@@ -17,7 +17,8 @@
     "screenshots": "node scripts/capture-screenshots.mjs",
     "screenshot:firebase": "node scripts/capture-firebase-screenshot.mjs",
     "audit:visual": "node scripts/audit-visual.mjs",
-    "serve": "node scripts/serve-site-cli.mjs _site 8811"
+    "serve": "node scripts/serve-site-cli.mjs _site 8811",
+    "audit:production": "node scripts/audit-production.mjs"
   },
   "dependencies": {
     "firebase": "^13.2.0",
