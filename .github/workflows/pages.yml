@@ -94,8 +94,11 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Install Playwright Firefox
-        run: npx playwright install --with-deps firefox
+      # `PW_ENGINES=all` runs every project in playwright.config.js, so both engines have to be
+      # present. Installing only Firefox left Chromium launching nothing and failed the job on a
+      # missing executable rather than on a browser problem.
+      - name: Install Playwright Chromium and Firefox
+        run: npx playwright install --with-deps chromium firefox
 
       - name: Browser tests in every installed engine
         run: npx playwright test
