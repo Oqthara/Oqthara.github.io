@@ -23,18 +23,26 @@
 import { COLLECTION_CATALOG_ID, COLLECTIONS, FIELDS } from "./firebase/collections.js";
 import { invalidateReadCache, subscribeDoc } from "./firebase/firestore.js";
 import { invalidateCache as invalidateGitHubCache } from "./github-docs.js";
-import { validCommit } from "./repositories/catalog.repository.js";
+import { hexDigest as validDigest, validCommit } from "./repositories/catalog.repository.js";
 
 /**
  * A comparable identity for one published revision of the mirror.
  *
- * `sourceCommit` is authoritative when it is a real commit. A mirror that predates the
- * catalogue record — or was written by an older sync script — has no commit to compare, so the
- * fallback is the publish time plus the counts. It is a weaker signal and is treated as such:
- * two syncs from the same commit at different times stay distinct, which is what a reader
- * needs, while an empty record matches an empty record and triggers nothing.
+ * The content digest is preferred, because it is the only field that answers the question the
+ * reader is actually asking: *is what I am showing still what is stored?* The commit alone
+ * cannot answer it. A release is published by pushing a tag, and that adds a release document
+ * while `main` stays exactly where it was, so a commit-only fingerprint reports "unchanged" for
+ * a mirror that newly contains a release. The digest moves in that case and does not move when a
+ * scheduled run reconciles identical content.
+ *
+ * The commit is the fallback for a catalogue written before the digest existed, then the publish
+ * time with the counts. Both are weaker signals and are treated as such: they only decide what
+ * to do when the stronger field is absent. An empty record matches an empty record and triggers
+ * nothing.
  */
 export function revisionFingerprint(record) {
+  const digest = validDigest(record?.[FIELDS.contentDigest]);
+  if (digest) return `content:${digest}`;
   const commit = validCommit(record?.[FIELDS.sourceCommit]);
   if (commit) return `commit:${commit}`;
   const updatedAt = typeof record?.[FIELDS.updatedAt] === "string" ? record[FIELDS.updatedAt].trim() : "";
@@ -126,15 +134,19 @@ export function startContentFreshness(options = {}) {
     options,
   );
 
-  activeWatch = {
+  const handle = {
     stop() {
+      // Idempotent, and scoped to this handle. Nulling `activeWatch` unconditionally let a
+      // second `stop()` (React StrictMode runs every effect cleanup twice in development) close
+      // the *next* watch's slot while its listener stayed open, so the following `start()`
+      // opened another one and the previous socket leaked.
+      if (stopped) return;
       stopped = true;
       unsubscribe();
-      activeWatch = null;
+      if (activeWatch === handle) activeWatch = null;
     },
-    /** Test seam: the revision currently treated as "what is on screen". */
-    baseline: () => baseline,
   };
+  activeWatch = handle;
   return activeWatch;
 }
 

@@ -109,6 +109,42 @@ export function contentHashOf(content) {
   return createHash("sha256").update(String(content ?? ""), "utf8").digest("hex");
 }
 
+/**
+ * A single digest identifying the mirrored *content*, independent of when it was written.
+ *
+ * The catalogue carried only the upstream commit, and a commit is not a content identity here:
+ * a release is published by pushing a tag, so the mirror gains a release document while `main`
+ * never moves. A reader that compared commits saw no change and kept rendering the old release
+ * list. Hashing the per-document `contentHash` set fixes that without the opposite mistake of
+ * hashing `updatedAt`, which changes on every run and would refresh every open page every time
+ * the schedule fired.
+ *
+ * Deterministic: the records are sorted by the key that identifies them, so the digest depends
+ * on what is mirrored and on nothing else. Adding, removing or editing a source document changes
+ * it; a run that reconciles identical content does not.
+ */
+function compareEntries(a, b) {
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] < b[i]) return -1;
+    if (a[i] > b[i]) return 1;
+  }
+  return 0;
+}
+
+export function contentDigestOf(records = []) {
+  const entries = records
+    .map((record) => [
+      String(record?.collection ?? ""),
+      String(record?.data?.[FIELDS.path] ?? ""),
+      String(record?.data?.[FIELDS.contentHash] ?? ""),
+    ])
+    // Codepoint order, not `localeCompare`: the digest is computed on several machines (CI and
+    // locally) and collation rules are locale-dependent, so a locale-sensitive sort could hash
+    // the same content two ways.
+    .sort((a, b) => compareEntries(a, b));
+  return contentHashOf(entries.map((entry) => entry.join("\u0000")).join("\n"));
+}
+
 /** UTF-8 byte length, which is what Firestore's limit is measured in. */
 export function byteLengthOf(content) {
   return Buffer.byteLength(String(content ?? ""), "utf8");
@@ -244,6 +280,7 @@ export function buildSyncRecord({
 export function buildCatalogRecord({
   commit = "",
   counts = {},
+  contentDigest = "",
   now = new Date().toISOString(),
 } = {}) {
   return {
@@ -251,6 +288,7 @@ export function buildCatalogRecord({
     [FIELDS.status]: SYNC_STATUS.published,
     [FIELDS.sourceRef]: MIRRORED_REF,
     [FIELDS.sourceCommit]: commit,
+    [FIELDS.contentDigest]: contentDigest,
     [FIELDS.updatedAt]: now,
     counts: {
       written: Number.isFinite(counts.written) ? counts.written : 0,
@@ -766,6 +804,10 @@ export async function applyPlan(
   const catalog = buildCatalogRecord({
     commit,
     now,
+    // Digest over the documents the mirror actually holds: everything written plus everything
+    // already current. Oversized and unpublished sources are excluded because they are not
+    // stored, so a change confined to them must not look like a content change to a reader.
+    contentDigest: contentDigestOf([...plan.writes, ...plan.unchanged]),
     counts: {
       written: plan.writes.length,
       unchanged: plan.unchanged.length,

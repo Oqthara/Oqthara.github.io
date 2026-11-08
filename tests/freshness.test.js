@@ -70,9 +70,28 @@ afterEach(() => {
 });
 
 describe("revisionFingerprint", () => {
+  it("uses the content digest, so a release that moves no commit is still a change", () => {
+    // Publishing a release pushes a tag, not a commit to `main`, so `sourceCommit` stays put
+    // while the mirror gains a release document. A commit-only fingerprint reported "unchanged"
+    // and the open page never learned about the release.
+    const before = catalog({ contentDigest: "1".repeat(64) });
+    const after = catalog({ contentDigest: "2".repeat(64) });
+    assert.equal(before.sourceCommit, after.sourceCommit, "the commit is deliberately identical");
+    assert.notEqual(revisionFingerprint(before), revisionFingerprint(after));
+    assert.equal(revisionFingerprint(before), `content:${"1".repeat(64)}`);
+  });
+
   it("uses the commit whenever the record proves one", () => {
     const fingerprint = revisionFingerprint(catalog({ sourceCommit: "b".repeat(40) }));
     assert.equal(fingerprint, `commit:${"b".repeat(40)}`);
+  });
+
+  it("ignores a malformed digest rather than treating it as an identity", () => {
+    assert.equal(
+      revisionFingerprint(catalog({ contentDigest: "not-a-digest" })),
+      `commit:${"a".repeat(40)}`,
+      "a bad digest must not outrank a commit the record can prove"
+    );
   });
 
   it("is empty for a record that proves nothing, so two unknowns do not look like a change", () => {
@@ -166,6 +185,36 @@ describe("content freshness", () => {
     await settle();
     assert.equal(fake.state.listeners.length, 1);
     assert.equal(first, second);
+  });
+
+  it("survives the StrictMode start-stop-stop-start cycle without orphaning a listener", async () => {
+    // React StrictMode runs every effect cleanup twice in development, and a cleanup can be
+    // invoked again on a handle whose watch was already replaced. `stop()` used to null the
+    // module's watch slot unconditionally, so stopping a *stale* handle wiped the slot belonging
+    // to the live watch; its listener stayed open and the next `start()` opened another one,
+    // leaking the previous socket for the life of the page.
+    const fake = fakeSdk();
+    __setFirestoreForTests(fake.module);
+
+    const stale = startContentFreshness();
+    await settle();
+    stale.stop();
+
+    const live = startContentFreshness();
+    await settle();
+
+    stale.stop();
+    stale.stop();
+
+    const afterStaleStop = startContentFreshness();
+    await settle();
+
+    assert.equal(fake.state.listeners.length, 2, "the live watch is reused, not replaced");
+    assert.equal(afterStaleStop, live, "and its own handle is handed back");
+    assert.equal(fake.state.unsubscribed, 1, "no listener was closed twice or abandoned");
+
+    live.stop();
+    assert.equal(fake.state.unsubscribed, 2, "the live listener is closed by its own handle");
   });
 
   it("reports a subscription failure once and keeps the site readable", async () => {

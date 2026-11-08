@@ -17,12 +17,18 @@ export function validCommit(value) {
   return /^[0-9a-f]{40}$/.test(commit) ? commit : "";
 }
 
+/** A SHA-256 content digest as the sync script writes it, or "" when the value is not one. */
+export function hexDigest(value) {
+  const digest = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return /^[0-9a-f]{64}$/.test(digest) ? digest : "";
+}
+
 /**
  * Validates the catalogue document.
  *
- * Returns `{ sourceRef, sourceCommit, updatedAt, counts }`, with `sourceCommit` empty when the
- * record cannot prove one. An empty commit is reported honestly rather than defaulted to the
- * branch name, which would make an unverifiable mirror look verified.
+ * Returns `{ sourceRef, sourceCommit, contentDigest, updatedAt, counts }`, with `sourceCommit`
+ * empty when the record cannot prove one. An empty commit is reported honestly rather than
+ * defaulted to the branch name, which would make an unverifiable mirror look verified.
  */
 export function validateCatalogRecord(entry) {
   const counts = entry?.counts;
@@ -31,6 +37,9 @@ export function validateCatalogRecord(entry) {
       ? entry[FIELDS.sourceRef].trim()
       : MIRRORED_REF,
     sourceCommit: validCommit(entry?.[FIELDS.sourceCommit]),
+    // The digest is written by the sync script, so a record with a malformed value is treated as
+    // having none and the reader falls back to the weaker signals in `revisionFingerprint`.
+    contentDigest: hexDigest(entry?.[FIELDS.contentDigest]),
     updatedAt: typeof entry?.[FIELDS.updatedAt] === "string" ? entry[FIELDS.updatedAt] : "",
     counts: Object.freeze({
       written: Number.isFinite(counts?.written) ? counts.written : 0,

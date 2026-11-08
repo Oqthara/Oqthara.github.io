@@ -77,8 +77,18 @@ export function App({ path, search = "" }) {
   // mid-document when a sync lands should get the new content, and a reader moving between pages
   // should not pay for a new subscription each time. Nothing happens during prerendering, where
   // there is no Firestore to watch.
+  //
+  // A failed subscription is reported once and then left alone. It is not fatal - cached content
+  // and the recovery schedules still apply - but it must not be silent either, or a site that
+  // has stopped receiving live updates looks identical to a quiet one.
   useEffect(() => {
-    const watch = startContentFreshness();
+    const watch = startContentFreshness({
+      onError: (error) => {
+        if (typeof console !== "undefined" && typeof console.warn === "function") {
+          console.warn("Live content updates are unavailable; showing cached content.", error);
+        }
+      },
+    });
     return () => watch.stop();
   }, []);
 

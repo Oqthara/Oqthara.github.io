@@ -780,3 +780,91 @@ test("a batch that throws part-way publishes no catalogue at all", async () => {
   const catalog = written.find((entry) => entry.ref.id === "catalog" && entry.ref.collection === "metadata");
   assert.equal(catalog, undefined, "no catalogue is published for an operation that did not complete");
 });
+
+// The catalogue carried only the upstream commit, and a commit is not a content identity here:
+// a release is published by pushing a tag, so the mirror gains a release document while `main`
+// never moves. A reader comparing commits saw no change and kept rendering the old release list.
+
+test("the catalogue carries a content digest that a tag-only release changes", async () => {
+  const { applyPlan, buildReleaseRecord } = await import("../scripts/sync-firestore.mjs");
+  const release = (tag, published) =>
+    buildReleaseRecord(
+      { tag_name: tag, name: tag, body: "", published_at: published, html_url: `https://example.test/${tag}` },
+      { now: "2026-11-06T00:00:00.000Z" },
+    );
+
+  const record = (entry) => ({ collection: entry.collection, id: entry.id, data: entry.data, syncId: entry.id });
+  const write = (catalogues, entries) =>
+    applyPlan(
+      {
+        batch: () => ({ set() {}, async commit() {} }),
+        collection: (name) => ({
+          doc: (id) => ({
+            async set(data) {
+              if (name === COLLECTIONS.metadata && id === "catalog") catalogues.push(data);
+            },
+          }),
+        }),
+      },
+      { writes: entries.map(record), oversized: [], unchanged: [], unpublish: [] },
+      { now: "2026-11-06T00:00:00.000Z", commit: "a".repeat(40) },
+    );
+
+  const before = [];
+  await write(before, [release("v1", "2026-01-01T00:00:00Z")]);
+  const after = [];
+  await write(after, [release("v1", "2026-01-01T00:00:00Z"), release("v2", "2026-02-01T00:00:00Z")]);
+
+  const first = before.at(-1);
+  const second = after.at(-1);
+  assert.equal(first[FIELDS.sourceCommit], second[FIELDS.sourceCommit], "the commit is deliberately unchanged");
+  assert.match(first[FIELDS.contentDigest], /^[0-9a-f]{64}$/);
+  assert.notEqual(
+    first[FIELDS.contentDigest],
+    second[FIELDS.contentDigest],
+    "a newly published release must move the digest even though main did not move",
+  );
+});
+
+test("the digest is stable across runs that reconcile identical content", async () => {
+  const { contentDigestOf } = await import("../scripts/sync-firestore.mjs");
+  const record = (path, hash) => ({ collection: "documentation", data: { [FIELDS.path]: path, [FIELDS.contentHash]: hash } });
+  const a = record("docs/a.md", "1");
+  const b = record("docs/b.md", "2");
+  assert.equal(contentDigestOf([a, b]), contentDigestOf([b, a]), "order of discovery is not content");
+  assert.equal(contentDigestOf([a, b]), contentDigestOf([a, b]), "a repeat run is not a change");
+  assert.notEqual(contentDigestOf([a, b]), contentDigestOf([a, record("docs/b.md", "3")]), "an edit is a change");
+  assert.notEqual(contentDigestOf([a, b]), contentDigestOf([a]), "a removal is a change");
+  assert.equal(contentDigestOf([]), contentDigestOf());
+});
+
+test("the digest covers stored documents only, so an oversized source cannot announce itself", async () => {
+  // Oversized sources are skipped rather than stored, so a change confined to one does not alter
+  // what the site serves. Counting it would refresh every open page for no reason.
+  const { contentDigestOf } = await import("../scripts/sync-firestore.mjs");
+  const stored = { collection: "documentation", data: { [FIELDS.path]: "docs/a.md", [FIELDS.contentHash]: "1" } };
+  assert.equal(contentDigestOf([stored]), contentDigestOf([stored]));
+  assert.notEqual(contentDigestOf([stored]), contentDigestOf([]));
+});
+
+test("the digest orders records by codepoint, not by the host's collation", async () => {
+  // `localeCompare` ranks "a.md" before "B.md"; codepoint order ranks "B.md" first. A digest that
+  // followed the locale would hash the same content two ways depending on which machine ran the
+  // sync, so CI and a developer's laptop could disagree about whether anything had changed.
+  // The expected value is a known answer, computed from an explicit codepoint-sorted list.
+  const { contentDigestOf, contentHashOf } = await import("../scripts/sync-firestore.mjs");
+  const record = (path, hash) => ({ collection: "documentation", data: { [FIELDS.path]: path, [FIELDS.contentHash]: hash } });
+  const expected = contentHashOf(
+    ["documentation\u0000docs/B.md\u00002", "documentation\u0000docs/a.md\u00001"].join("\n"),
+  );
+  assert.equal(
+    contentDigestOf([record("docs/a.md", "1"), record("docs/B.md", "2")]),
+    expected,
+    "B.md (0x42) sorts before a.md (0x61) by codepoint",
+  );
+  assert.equal(
+    contentDigestOf([record("docs/B.md", "2"), record("docs/a.md", "1")]),
+    expected,
+    "discovery order must not matter",
+  );
+});

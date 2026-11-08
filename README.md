@@ -80,8 +80,10 @@ GitHub's raw CDN adds `cache-control: max-age=300` independently.
 
 Content is read from Cloud Firestore first (`src/services/content.service.js`), falling back to
 GitHub per collection and per document when the mirror is incomplete, unavailable or still
-pinned to another ref. `firestore.rules` makes every collection client-readable only when
-`published == true` and never client-writable.
+pinned to another ref. `firestore.rules` makes the mirrored content collections client-readable
+only when `published == true`, and never client-writable. Two collections are not readable at
+all: `sync` holds operator bookkeeping, and everything under `metadata` is deny-all except the
+single `metadata/catalog` document described below.
 
 That mirror stays current in two ways:
 
@@ -97,21 +99,27 @@ That mirror stays current in two ways:
 
 ### Freshness in a page that is already open
 
-Every successful sync rewrites `metadata/catalog` with the exact upstream commit it reconciled.
-The single readable document in `metadata`, it is what makes a provenance claim checkable rather
-than asserted. `src/freshness.js` subscribes to it (`onSnapshot`) for the life of the app:
+Every successful sync rewrites `metadata/catalog` with the exact upstream commit it reconciled
+and a digest of the content it stored. The single readable document in `metadata`, it is what
+makes a provenance claim checkable rather than asserted. `src/freshness.js` subscribes to it
+(`onSnapshot`) for the life of the app:
 
 - the first snapshot is a **baseline**, not a change — otherwise every page load would trigger a
   refresh burst for no new information;
-- a new `sourceCommit` (or, for a record without one, a new publish time and count shape) clears
-  both caches and re-reads the data behind every mounted hook;
+- a new content digest clears both caches and re-reads the data behind every mounted hook. The
+  commit alone is not enough to decide this: publishing a release pushes a tag, so the mirror
+  gains a release document while `main` never moves, and a commit-only comparison would report
+  "unchanged" for content that had changed. The digest is derived from what the mirror actually
+  stores, so it moves for an added, edited or removed document and stays put for a run that
+  reconciles identical content. Records written before the digest existed fall back to
+  `sourceCommit`, then to the publish time and count shape;
 - the URL is never touched. The reader keeps their route, query string, release channel and
   scroll position; only the content changes. A reload would have been easier and would have
   thrown away exactly the state the reader was using;
 - a listener failure is reported once and is not retried in a loop. Cached content stays readable,
   so losing the live signal degrades to the timer path above.
 
-**Propagation delay: seconds to minutes, not "about ten".** A documentation change merged into
+**Propagation delay: a minute or two, not "about ten".** A documentation change merged into
 `main` reaches the mirror within one dispatch latency and the open page within one snapshot. If
 the dispatch fails, the daily schedule bounds the delay instead. A release channel reads its own
 tag and never follows `main`, so a published manual is stable indefinitely.
@@ -135,13 +143,18 @@ gh variable delete OQTHARA_PRODUCTION_SYNC --repo Oqthara/Oqthara.github.io
 ```
 
 The gate compares against the literal `true`, so `1`, `yes` and an empty value all mean *off*. A
-run with the variable unset still reads GitHub and reports a plan; it writes nothing.
+scheduled run with the variable unset does not plan: `firebase-sync.yml` fails closed when the
+credential is missing, and skips the sync step when the gate is closed, so nothing is written and
+no plan is printed. To see a plan, dispatch the workflow manually with `dry_run=true`, which needs
+no credential.
 
 ### The first full reconciliation
 
-Enabling the variable does not populate the mirror, because a normal run synchronizes the
-difference rather than the whole set. The first run after activation should be a deliberate full
-pass:
+Enabling the variable does not change what a run considers: it only lifts the write gate. An
+incremental run still synchronizes the difference rather than the whole set, so against an empty
+mirror every document is new and the first run writes everything anyway. Use a full pass when the
+mirror already holds content that needs rewriting — after an out-of-band edit, or when it was
+populated by an older version of the sync script:
 
 ```bash
 # Plan only. No credential is needed and nothing is written.

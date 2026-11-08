@@ -265,11 +265,6 @@ export async function doc(...args) {
   return (await sdk()).doc(...args);
 }
 
-/** Thin wrapper: `onSnapshot` from the modular SDK. */
-export async function onSnapshot(...args) {
-  return (await sdk()).onSnapshot(...args);
-}
-
 // ---------------------------------------------------------------------------
 // Cached typed reads
 // ---------------------------------------------------------------------------

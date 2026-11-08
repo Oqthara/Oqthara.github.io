@@ -75,6 +75,17 @@ export const DocsError = GitHubError;
 /** purpose-key -> { promise, at, value }. */
 const cache = new Map();
 
+/**
+ * Bumped by `invalidateCache()`. A load captures the value when it starts and a persisted write
+ * is dropped if it no longer matches.
+ *
+ * Without this, a load that started *before* an invalidation finished *after* it and wrote the
+ * pre-invalidation value back into sessionStorage with a fresh timestamp, so the stale content
+ * survived a reload for `PERSIST_TTL_MS`. Clearing the store is not enough on its own: the
+ * in-flight request has to be told that its answer is no longer current.
+ */
+let generation = 0;
+
 /** Clears every cached promise. Tests call this between cases; nothing else does. */
 export function __resetCacheForTests() {
   cache.clear();
@@ -88,6 +99,7 @@ export function __resetCacheForTests() {
  * this module — the caller in `freshness.js` clears the Firestore cache separately.
  */
 export function invalidateCache() {
+  generation += 1;
   cache.clear();
   if (typeof window === "undefined" || !window.sessionStorage) return;
   try {
@@ -179,12 +191,15 @@ function fromPersisted(key, load, { revalidate = true } = {}) {
     // Deferred by a microtask so a hook that mounts in the same tick can subscribe before the
     // failure is published. Without this the very first reload after a failure reports nothing.
     const refresh = Promise.resolve().then(load);
+    const startedAt = generation;
     refresh.then(
       (fresh) => {
+        if (startedAt !== generation) return;
         cache.set(key, { promise: Promise.resolve(fresh), at: Date.now(), value: fresh });
-        writePersisted(key, fresh);
+        writePersisted(key, fresh, startedAt);
       },
       (error) => {
+        if (startedAt !== generation) return;
         // Keep the persisted value and tell the UI the refresh failed.
         cache.set(key, { promise: immediate, at: entry.at, value });
         for (const listener of refreshErrorListeners) listener(error);
@@ -194,7 +209,10 @@ function fromPersisted(key, load, { revalidate = true } = {}) {
   return immediate;
 }
 
-function writePersisted(key, value) {
+function writePersisted(key, value, startedAt = generation) {
+  // An answer that was already in flight when the mirror republished is not the current
+  // content, so it must not be persisted with a fresh timestamp.
+  if (startedAt !== generation) return;
   if (typeof window === "undefined" || !window.sessionStorage) return;
   try {
     window.sessionStorage.setItem(PERSIST_PREFIX + key, JSON.stringify({ at: Date.now(), value }));
@@ -309,10 +327,11 @@ export function loadText(ref, path) {
   const repoPath = normalizePath(normalizeRepoPath(path));
   const key = `text:${ref}:${repoPath}`;
   const loadTextOnce = async () => {
+    const startedAt = generation;
     const url = rawUrl(repoPath, ref);
     const response = await get(url, { path: repoPath, ref, accept: "text/plain, */*" });
     const text = await response.text();
-    writePersisted(key, text);
+    writePersisted(key, text, startedAt);
     return text;
   };
   return fromPersisted(key, loadTextOnce) ?? cached(key, loadTextOnce);
@@ -364,8 +383,9 @@ export function validateTree(payload, { ref = DEFAULT_REF } = {}) {
 export function loadTree(ref = DEFAULT_REF) {
   const key = `tree:${ref}`;
   const loadTreeOnce = async () => {
+    const startedAt = generation;
     const tree = validateTree(await getJson(treeApiUrl(ref), { ref, path: "docs" }), { ref });
-    writePersisted(key, tree);
+    writePersisted(key, tree, startedAt);
     return tree;
   };
   return fromPersisted(key, loadTreeOnce) ?? cached(key, loadTreeOnce);
@@ -559,8 +579,9 @@ export function validateReleases(payload, { includeDev = true } = {}) {
 export function loadReleases() {
   const key = "releases";
   const loadReleasesOnce = async () => {
+    const startedAt = generation;
     const channels = validateReleases(await getJson(releasesApiUrl(), { path: "releases" }));
-    writePersisted(key, channels);
+    writePersisted(key, channels, startedAt);
     return channels;
   };
   return fromPersisted(key, loadReleasesOnce) ?? cached(key, loadReleasesOnce);

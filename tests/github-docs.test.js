@@ -9,6 +9,7 @@ import {
   __resetCacheForTests,
   __setFetchForTests,
   findChannel,
+  invalidateCache,
   loadCatalog,
   loadDocument,
   loadDocumentIndex,
@@ -477,4 +478,116 @@ test("cache constants expose the documented policy", () => {
   assert.equal(FETCH_TIMEOUT_MS, 15_000);
   assert.ok(TITLE_CONCURRENCY >= 1);
   assert.equal(DEFAULT_REF, "main");
+});
+
+/** A minimal sessionStorage stand-in, installed as `globalThis.window` for one test. */
+function withSessionStorage(run) {
+  const store = new Map();
+  const previous = globalThis.window;
+  globalThis.window = {
+    sessionStorage: {
+      get length() {
+        return store.size;
+      },
+      key: (index) => [...store.keys()][index] ?? null,
+      getItem: (key) => (store.has(key) ? store.get(key) : null),
+      setItem: (key, value) => store.set(key, String(value)),
+      removeItem: (key) => store.delete(key),
+    },
+  };
+  const persisted = () =>
+    [...store.entries()]
+      .filter(([key]) => key.startsWith("oq-cache:"))
+      .map(([, value]) => JSON.parse(value).value);
+  /** Writes an entry as an earlier page load would have left it. */
+  const seed = (key, value, at) => store.set(`oq-cache:${key}`, JSON.stringify({ at, value }));
+  return Promise.resolve(run({ persisted, seed })).finally(() => {
+    if (previous === undefined) delete globalThis.window;
+    else globalThis.window = previous;
+  });
+}
+
+test("REGRESSION: a load already in flight when the mirror republishes does not re-persist itself", async () => {
+  // `invalidateCache()` cleared sessionStorage, but a request that started before it finished
+  // after it and wrote its now-stale value back with a fresh timestamp, so the stale content
+  // survived a reload for the whole persistence TTL. The generation guard drops that write.
+  await withSessionStorage(async ({ persisted }) => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    __setFetchForTests(async () => {
+      await gate;
+      return response("STALE BEFORE REPUBLISH");
+    });
+
+    const inFlight = loadText("main", "README.md");
+    await Promise.resolve();
+    invalidateCache();
+    release();
+
+    assert.equal(await inFlight, "STALE BEFORE REPUBLISH", "the caller still gets its answer");
+    assert.deepEqual(persisted(), [], "but it is not persisted as current content");
+  });
+});
+
+test("a load that starts after the invalidation does persist its value", () => {
+  return withSessionStorage(async ({ persisted }) => {
+    __setFetchForTests(async () => response("CURRENT AFTER REPUBLISH"));
+    invalidateCache();
+    assert.equal(await loadText("main", "README.md"), "CURRENT AFTER REPUBLISH");
+    assert.deepEqual(persisted(), ["CURRENT AFTER REPUBLISH"]);
+  });
+});
+
+test("invalidateCache clears what was already persisted", () => {
+  return withSessionStorage(async ({ persisted }) => {
+    __setFetchForTests(async () => response("OLD"));
+    await loadText("main", "README.md");
+    assert.deepEqual(persisted(), ["OLD"]);
+    invalidateCache();
+    assert.deepEqual(persisted(), []);
+  });
+});
+
+test("REGRESSION: an abandoned background refresh does not refill the cleared cache", () => {
+  // A stale persisted entry starts a stale-while-revalidate refresh in the background. If the
+  // mirror republishes while that request is in flight, its answer is not current and must be
+  // dropped rather than reinstated as the cache entry and as fresh persistence.
+  return withSessionStorage(async ({ persisted, seed }) => {
+    seed(
+      "tree:main",
+      [{ path: "docs/old.md", size: 1 }],
+      Date.now() - CACHE_TTL_MS - 1_000,
+    );
+
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    __setFetchForTests(async () => {
+      calls += 1;
+      if (calls === 1) {
+        await gate;
+        return response({ sha: "x", truncated: false, tree: [{ path: "docs/abandoned.md", type: "blob", size: 1 }] });
+      }
+      return response({ sha: "x", truncated: false, tree: [{ path: "docs/fresh.md", type: "blob", size: 1 }] });
+    });
+
+    const served = await loadTree("main");
+    assert.deepEqual(served.map((entry) => entry.path), ["docs/old.md"], "the persisted value is served at once");
+
+    await Promise.resolve();
+    invalidateCache();
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(persisted(), [], "the abandoned refresh is not persisted");
+    assert.deepEqual(
+      (await loadTree("main")).map((entry) => entry.path),
+      ["docs/fresh.md"],
+      "the cleared cache is not refilled by the abandoned refresh",
+    );
+  });
 });

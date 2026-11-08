@@ -87,8 +87,10 @@ A content sync **cannot** deploy rules, and a dry run cannot either.
 ## The rules are the boundary, not the queries
 
 `firestore.rules` allows reads only when a document carries the literal boolean `published:
-true`, denies every client write, hides `sync` and `metadata`, and closes everything unmatched.
-The `where('published', '==', true)` filter in `src/repositories/*.repository.js` is defence in
+true`, denies every client write, and closes everything unmatched. It also keeps two whole
+collections unreadable: `sync` holds operator bookkeeping and is deny-all, and so is `metadata`
+apart from the single `metadata/catalog` document, which is readable so a reader can check which
+upstream commit the mirror is serving. The `where('published', '==', true)` filter in `src/repositories/*.repository.js` is defence in
 depth for the UI, not a permission: Firestore rules are filters on individual documents, not a
 `WHERE` clause, so a client list query must constrain `published` itself. `npm run test:rules`
 asserts both halves against the emulator, including that an unfiltered query never returns a
@@ -111,7 +113,9 @@ newest published upstream release?*
 
 Upstream announces the moment. `Oqthara/oqthara` sends a `repository_dispatch` of type
 `alpha-release-published` when a release is published, which is what makes a new channel appear
-within seconds. The `*/15 * * * *` schedule is a **recovery mechanism**, not the propagation
+without waiting for the next tick - typically a minute or two, not instantly, because the
+dispatch has to start a workflow and that workflow still has to read the release from GitHub.
+The `*/15 * * * *` schedule is a **recovery mechanism**, not the propagation
 path: GitHub runs scheduled work on a best-effort basis and can delay or skip a run, and a
 dispatch can be dropped, so the poll recomputes the same difference and catches up. Nothing is
 queued, so a missed run costs latency, never correctness.
