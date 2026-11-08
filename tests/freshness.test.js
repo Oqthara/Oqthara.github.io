@@ -275,6 +275,39 @@ describe("cache invalidation", () => {
     assert.equal(reads, 2);
   });
 
+  it("a read that fails after a newer one replaced it does not evict the newer entry", async () => {
+    // `cachedRead` evicts a failed read so the next call retries. It must evict by identity:
+    // deleting by key alone would drop the replacement that an invalidation had already started,
+    // turning one late failure into an extra round trip against a rate-limited API.
+    let failFirst;
+    let reads = 0;
+    const fake = fakeSdk();
+    __setFirestoreForTests({
+      ...fake.module,
+      getDoc: async (ref) => {
+        reads += 1;
+        if (reads === 1) {
+          return new Promise((_, reject) => {
+            failFirst = () => reject(new Error("unavailable"));
+          });
+        }
+        return { id: ref.id, exists: () => true, data: () => ({ path: `docs/${reads}.md` }) };
+      },
+    });
+
+    const doomed = readDoc("documentation", "docs__a.md");
+    invalidateContentCaches();
+    const survivor = await readDoc("documentation", "docs__a.md");
+    failFirst();
+
+    assert.equal((await doomed).ok, false, "the abandoned read reports its failure to its caller");
+    assert.equal(reads, 2);
+    const reused = await readDoc("documentation", "docs__a.md");
+    assert.equal(reused.cached, true, "the newer entry is still cached, so it was not evicted");
+    assert.deepEqual(reused.data, survivor.data);
+    assert.equal(reads, 2, "a late failure must not force a third read");
+  });
+
   it("announcing a change clears the caches and notifies subscribers", async () => {
     let reads = 0;
     const fake = fakeSdk();

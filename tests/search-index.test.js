@@ -1,15 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { ensureIndex, invalidate } from "../src/search-index.js";
+import {
+  __resetIndexCacheForTests,
+  ensureIndex,
+  invalidate,
+  onRebuild,
+} from "../src/search-index.js";
 
-// The search index is built from the mirror's catalogue and document bodies, then cached for the
-// life of the page. A republish replaces every one of those, so an index built before it is wrong
-// in the same way a stale document body is wrong: search keeps offering links and excerpts from
-// content the site no longer serves. These cases pin the cache policy that prevents it.
+// The search index is built from the mirror's catalogue and document bodies, then cached. A
+// republish replaces every one of those, so an index built before it is wrong in the same way a
+// stale document body is wrong: search keeps offering links and excerpts for content the site no
+// longer serves, and an open results panel keeps showing them. These cases pin both halves of the
+// fix - that the cache is dropped, and that a mounted surface is told to rebuild rather than left
+// announcing a load that nothing started.
+
+test.beforeEach(() => __resetIndexCacheForTests());
 
 test("a build is reused until it is invalidated", async () => {
-  invalidate();
   let builds = 0;
   const build = () => {
     builds += 1;
@@ -24,7 +32,6 @@ test("a build is reused until it is invalidated", async () => {
 });
 
 test("a republish makes the next search rebuild", async () => {
-  invalidate();
   let builds = 0;
   const build = () => {
     builds += 1;
@@ -39,20 +46,45 @@ test("a republish makes the next search rebuild", async () => {
   assert.equal(after[0].title, "build 2", "and the caller must get the new entries");
 });
 
-test("REGRESSION: a build overtaken by a republish is discarded, not cached", async () => {
-  // The failure this pins: the index was built once per session and never invalidated, so search
-  // answered from whichever catalogue happened to be present the first time it was opened. Even
-  // after adding invalidation, a build that resolves *after* the republish would reinstall itself
-  // unless its generation is checked - it read the old catalogue, so it describes old content.
+test("REGRESSION: an open panel is told to rebuild on republish", () => {
+  // The failure this pins: invalidation and the rebuild were separate, and nothing connected
+  // them. The component dropped its entries and rendered "Loading the search index..." while no
+  // request was in flight, until the reader happened to type another character.
+  let rebuilds = 0;
+  const stop = onRebuild(() => {
+    rebuilds += 1;
+  });
+
   invalidate();
+  assert.equal(rebuilds, 1, "a republish must notify every mounted search surface");
+
+  stop();
+  invalidate();
+  assert.equal(rebuilds, 1, "and an unmounted surface must not be called");
+});
+
+test("a listener that throws does not stop the others rebuilding", () => {
+  const seen = [];
+  const stopBad = onRebuild(() => {
+    throw new Error("this subscriber is broken");
+  });
+  const stopGood = onRebuild(() => seen.push("rebuilt"));
+
+  invalidate();
+
+  assert.deepEqual(seen, ["rebuilt"]);
+  stopBad();
+  stopGood();
+});
+
+test("REGRESSION: a build overtaken by a republish is not reused", async () => {
+  // A build that resolves after the republish read the old catalogue. It still answers the caller
+  // that awaited it, but it must not be left where a later search would reuse it.
   let release;
-  const slow = [];
-  const build = () => {
-    slow.push(1);
-    return new Promise((resolve) => {
+  const build = () =>
+    new Promise((resolve) => {
       release = () => resolve([{ title: "pre-republish" }]);
     });
-  };
 
   const inFlight = ensureIndex("main", build);
   // `build` runs on a microtask, so let it start before invalidating mid-flight.
@@ -61,7 +93,6 @@ test("REGRESSION: a build overtaken by a republish is discarded, not cached", as
   release();
   assert.equal((await inFlight)[0].title, "pre-republish", "the caller still gets what it asked for");
 
-  // The stale build must not have been installed, so the next search rebuilds.
   let rebuilt = false;
   const fresh = await ensureIndex("main", () => {
     rebuilt = true;
@@ -72,7 +103,6 @@ test("REGRESSION: a build overtaken by a republish is discarded, not cached", as
 });
 
 test("a failed build is dropped so a later search can retry", async () => {
-  invalidate();
   let attempts = 0;
   const build = () => {
     attempts += 1;
@@ -87,10 +117,21 @@ test("a failed build is dropped so a later search can retry", async () => {
   assert.equal(entries[0].title, "Language");
 });
 
+test("a synchronous throw from the builder becomes a retryable rejection", async () => {
+  let attempts = 0;
+  const build = () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("bad catalogue");
+    return [{ title: "Language" }];
+  };
+
+  await assert.rejects(() => ensureIndex("main", build), /bad catalogue/);
+  assert.equal((await ensureIndex("main", build))[0].title, "Language");
+});
+
 test("each ref keeps its own index", async () => {
   // The site can be read at `main` or at a release. A search from a pinned manual must return
   // links into that manual, so one ref's index must never answer another's.
-  invalidate();
   const build = (ref) => [{ title: ref }];
 
   await ensureIndex("main", build);
@@ -100,10 +141,9 @@ test("each ref keeps its own index", async () => {
 });
 
 test("a build that fails after a newer one was installed does not evict the newer index", async () => {
-  // Both builds race for one slot. The first fails late, after a republish has already started a
+  // Both builds race for one slot. The first fails late, after an invalidation has started a
   // replacement. Evicting by key alone would throw the replacement away and force a third build,
   // so this pins the identity check that keeps the survivor.
-  invalidate();
   let failFirst;
   let builds = 0;
   const build = () => {
@@ -117,7 +157,6 @@ test("a build that fails after a newer one was installed does not evict the newe
   };
 
   const doomed = ensureIndex("main", build).catch(() => "failed");
-  await Promise.resolve();
   invalidate();
   const survivor = await ensureIndex("main", build);
   failFirst();
@@ -125,10 +164,4 @@ test("a build that fails after a newer one was installed does not evict the newe
   assert.equal(await doomed, "failed");
   assert.deepEqual(await ensureIndex("main", build), survivor);
   assert.equal(builds, 2, "the failure of the abandoned build must not force a rebuild");
-});
-
-test("invalidating when nothing is cached is harmless", () => {
-  invalidate();
-  invalidate();
-  assert.ok(true);
 });

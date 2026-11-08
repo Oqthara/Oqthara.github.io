@@ -860,11 +860,30 @@ test("the digest orders records independently of the host's collation", async ()
   assert.equal(
     contentDigestOf([record("docs/a.md", "1"), record("docs/B.md", "2")]),
     expected,
-    "B.md (0x42) sorts before a.md (0x61) by codepoint",
+    "B.md (0x42) sorts before a.md (0x61) by UTF-16 code unit",
   );
   assert.equal(
     contentDigestOf([record("docs/B.md", "2"), record("docs/a.md", "1")]),
     expected,
     "discovery order must not matter",
+  );
+});
+
+test("the digest orders astral characters the way code units do, not the way codepoints do", async () => {
+  // Astral characters are the one case where UTF-16 code-unit order and Unicode codepoint order
+  // disagree: U+1F600 is stored as the surrogate pair 0xD83D 0xDE00, and 0xD83D sorts below
+  // U+FFFD. The comment on `compareEntries` says the digest follows code units, so this pins it.
+  const { contentDigestOf, contentHashOf } = await import("../scripts/sync-firestore.mjs");
+  const record = (path) => ({ collection: "documentation", data: { [FIELDS.path]: path, [FIELDS.contentHash]: "1" } });
+  const astral = "docs/\u{1F600}.md";
+  const replacement = "docs/\uFFFD.md";
+
+  const expected = contentHashOf(
+    [`documentation\u0000${astral}\u00001`, `documentation\u0000${replacement}\u00001`].join("\n"),
+  );
+  assert.equal(
+    contentDigestOf([record(replacement), record(astral)]),
+    expected,
+    "the astral name sorts first because its leading code unit 0xD83D is below 0xFFFD (codepoint ordering would put it after)",
   );
 });

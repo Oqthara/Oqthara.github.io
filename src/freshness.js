@@ -23,6 +23,7 @@
 import { COLLECTION_CATALOG_ID, COLLECTIONS, FIELDS } from "./firebase/collections.js";
 import { invalidateReadCache, subscribeDoc } from "./firebase/firestore.js";
 import { invalidateCache as invalidateGitHubCache } from "./github-docs.js";
+import { invalidate as invalidateSearchIndex } from "./search-index.js";
 import { hexDigest as validDigest, validCommit } from "./repositories/catalog.repository.js";
 
 /**
@@ -78,13 +79,15 @@ export function onContentChange(handler) {
 /**
  * Drops every cached value the site could otherwise keep serving after a republish.
  *
- * Both caches are cleared because a page can be served from either: the Firestore mirror when it
- * is available, the GitHub fallback when it is not. Clearing only one leaves the other free to
- * answer an expired read with pre-republish content.
+ * Every content cache is cleared because a page can be served from any of them: the Firestore
+ * mirror when it is available, the GitHub fallback when it is not, and the search index built
+ * from whichever of the two answered. Clearing only one leaves another free to answer an expired
+ * read with pre-republish content.
  */
 export function invalidateContentCaches() {
   invalidateReadCache();
   invalidateGitHubCache();
+  invalidateSearchIndex();
 }
 
 /** Announces a republish to every live hook and clears the caches behind them. */
@@ -149,10 +152,9 @@ export function startContentFreshness(options = {}) {
       // effect cleanup twice in development) unsubscribed again, and nulling `activeWatch`
       // unconditionally wiped the *next* watch's slot while its listener stayed open, so the
       // following `start()` opened another one and the previous socket leaked.
-      // The identity check below is belt-and-braces: with the guard in place a handle can only
-      // be stopped once, and a handle only ever becomes `activeWatch` by `start()` installing
-      // it, so this cannot currently be false. It is kept so the slot is only cleared by the
-      // watch that owns it if that ever changes.
+      // With the guard in place the identity check below is unreachable defence: a handle can
+      // only be stopped once, and only `start()` ever makes one `activeWatch`. It is kept so the
+      // slot is cleared only by the watch that owns it if that ever stops holding.
       if (stopped) return;
       stopped = true;
       unsubscribe();
