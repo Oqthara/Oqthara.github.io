@@ -5,16 +5,23 @@ name: Alpha release sync
 #
 # Why this exists next to `firebase-sync.yml`
 # -------------------------------------------
-# `firebase-sync.yml` mirrors the tip of `main` once a day. That covers "the docs changed".
-# It does not cover "a release was published", which is the event that makes the site's release
-# channels meaningful. This workflow polls for that event every 15 minutes.
+# `firebase-sync.yml` mirrors the tip of `main` once a day, and on a `content-updated` dispatch.
+# That covers "the docs changed". It does not cover "a release was published", which is the event
+# that makes the site's release channels meaningful. This workflow handles it.
 #
-# Why a poll and not a `release` trigger
-# --------------------------------------
+# Why an event and also a poll
+# ----------------------------
 # A GitHub `release` event fires only for releases published in *this* repository. Upstream
-# releases live in `Oqthara/oqthara`, which cannot dispatch an event here without a token
-# committed in that repository — unacceptable for a read-only upstream. Polling is the honest
-# mechanism, and the brief explicitly requires it.
+# releases live in `Oqthara/oqthara`, so upstream sends a `repository_dispatch` of type
+# `alpha-release-published` when it publishes one. That dispatch is a *signal to look*, never an
+# instruction: the workflow still asks upstream for its newest published release and resolves the
+# tag to a commit itself, so a forged, stale, duplicated or missing payload cannot make it mirror
+# something upstream did not publish.
+#
+# The 15-minute poll is kept deliberately, now as a safety net rather than the primary path. A
+# dispatch can be lost — a failed API call, a disabled workflow, an expired token — and without a
+# poll nothing would retry until a human noticed. Both paths run the same detection, and the
+# comparison below makes the second one a no-op.
 #
 # Catch-up is inherent, not bolted on
 # -----------------------------------
@@ -35,6 +42,11 @@ name: Alpha release sync
 # API, and it never deploys security rules — that stays in `firestore-rules.yml`.
 
 on:
+  repository_dispatch:
+    # Sent by `Oqthara/oqthara` after a release is published. The payload may name a tag, but it
+    # is not trusted: `scripts/check-upstream-release.mjs` re-reads upstream to decide what to
+    # mirror, so the event can only cause the workflow to look, never to act on its contents.
+    types: [alpha-release-published]
   schedule:
     # Every 15 minutes. GitHub runs scheduled work on a best-effort basis and may delay or skip
     # a run under load; the comparison above makes a missed run harmless.

@@ -30,6 +30,7 @@ import {
   getReleases,
 } from "./services/content.service.js";
 import { loadCatalog } from "./repositories/catalog.repository.js";
+import { onContentChange } from "./freshness.js";
 
 /**
  * Unwraps a service result into the pair the hooks keep: the value and where it came from.
@@ -61,6 +62,11 @@ function useAsync(load, deps) {
   const [state, setState] = useState({ status: "loading", data: null, source: null, error: null, refreshing: false });
   const [nonce, setNonce] = useState(0);
   const retry = useCallback(() => setNonce((value) => value + 1), []);
+
+  // A republish in the mirror is announced out of band, so a mounted hook keeps working from its
+  // existing dependencies and simply re-reads. The URL is untouched: the reader stays on the same
+  // route, query string and channel, with the same scroll position, and only the data changes.
+  useEffect(() => onContentChange(() => setNonce((value) => value + 1)), []);
 
   // A refresh that failed while cached content was on screen has no promise left to reject, so
   // it is reported out of band. This is what makes the stale note appear.

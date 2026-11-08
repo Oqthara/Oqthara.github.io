@@ -26,10 +26,26 @@ const stepBody = (text, name) => {
 describe("alpha-release-sync workflow", () => {
   const NAME = "alpha-release-sync.yml";
 
-  it("polls on a 15-minute schedule, because upstream cannot dispatch here", async () => {
+  it("accepts an upstream release dispatch and keeps the poll as a safety net", async () => {
     const text = await workflow(NAME);
-    assert.match(text, /^ {4}- cron: "\*\/15 \* \* \* \*"$/m);
-    assert.doesNotMatch(text, /^\s+release:/m, "a release trigger would never fire for upstream releases");
+    assert.match(
+      text,
+      /^ {2}repository_dispatch:\n(?: {4}.*\n)*? {4}types: \[alpha-release-published\]$/m,
+      "upstream sends `alpha-release-published` when it publishes a release",
+    );
+    assert.match(text, /^ {4}- cron: "\*\/15 \* \* \* \*"$/m, "the poll is retained so a lost dispatch still converges");
+    assert.doesNotMatch(text, /^\s+release:/m, "a local release trigger would never fire for upstream releases");
+  });
+
+  it("treats the dispatch payload as a signal to look, never as an instruction", async () => {
+    const text = await workflow(NAME);
+    // The detection step must re-read upstream. If it trusted `client_payload`, a forged dispatch
+    // could make the mirror publish a release that upstream never made.
+    assert.doesNotMatch(
+      text,
+      /client_payload/,
+      "the payload is not read anywhere: check-upstream-release.mjs asks GitHub what was published",
+    );
   });
 
   it("offers manual dispatch with force and dry_run inputs", async () => {

@@ -109,6 +109,45 @@ export function contentHashOf(content) {
   return createHash("sha256").update(String(content ?? ""), "utf8").digest("hex");
 }
 
+/**
+ * A single digest identifying the mirrored *content*, independent of when it was written.
+ *
+ * The catalogue carried only the upstream commit, and a commit is not a content identity here:
+ * a release is published by pushing a tag, so the mirror gains a release document while `main`
+ * never moves. A reader that compared commits saw no change and kept rendering the old release
+ * list. Hashing the per-document `contentHash` set fixes that without the opposite mistake of
+ * hashing `updatedAt`, which changes on every run and would refresh every open page every time
+ * the schedule fired.
+ *
+ * Deterministic: the records are sorted by the key that identifies them, so the digest depends
+ * on what is mirrored and on nothing else. Adding, removing or editing a source document changes
+ * it; a run that reconciles identical content does not.
+ */
+// Orders by UTF-16 code unit. This differs from Unicode codepoint order for astral characters
+// (surrogate pairs), but unlike `localeCompare` it is identical on every host and in every locale,
+// which is the property the digest needs.
+function compareEntries(a, b) {
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] < b[i]) return -1;
+    if (a[i] > b[i]) return 1;
+  }
+  return 0;
+}
+
+export function contentDigestOf(records = []) {
+  const entries = records
+    .map((record) => [
+      String(record?.collection ?? ""),
+      String(record?.data?.[FIELDS.path] ?? ""),
+      String(record?.data?.[FIELDS.contentHash] ?? ""),
+    ])
+    // `compareEntries`, not `localeCompare`: the digest is computed on several machines (CI and
+    // locally) and collation rules are locale-dependent, so a locale-sensitive sort could hash
+    // the same content two ways.
+    .sort((a, b) => compareEntries(a, b));
+  return contentHashOf(entries.map((entry) => entry.join("\u0000")).join("\n"));
+}
+
 /** UTF-8 byte length, which is what Firestore's limit is measured in. */
 export function byteLengthOf(content) {
   return Buffer.byteLength(String(content ?? ""), "utf8");
@@ -244,6 +283,7 @@ export function buildSyncRecord({
 export function buildCatalogRecord({
   commit = "",
   counts = {},
+  contentDigest = "",
   now = new Date().toISOString(),
 } = {}) {
   return {
@@ -251,6 +291,7 @@ export function buildCatalogRecord({
     [FIELDS.status]: SYNC_STATUS.published,
     [FIELDS.sourceRef]: MIRRORED_REF,
     [FIELDS.sourceCommit]: commit,
+    [FIELDS.contentDigest]: contentDigest,
     [FIELDS.updatedAt]: now,
     counts: {
       written: Number.isFinite(counts.written) ? counts.written : 0,
@@ -766,6 +807,16 @@ export async function applyPlan(
   const catalog = buildCatalogRecord({
     commit,
     now,
+    // Digest over what this run published: the documents it wrote plus the documents it confirmed
+    // already current. Oversized sources are excluded because they are never stored, so a change
+    // confined to one must not look like a content change to a reader.
+    //
+    // This describes the *desired* set, not a read-back of Firestore. The two differ in one case:
+    // a document edited out-of-band is still "unchanged" here, because `planSync` compares against
+    // the recorded sync hash rather than re-reading the stored copy. Such an edit is repaired by a
+    // `--full` run, which rewrites every source and moves the digest; until then the mirror is
+    // wrong in a way no fingerprint can see from upstream alone.
+    contentDigest: contentDigestOf([...plan.writes, ...plan.unchanged]),
     counts: {
       written: plan.writes.length,
       unchanged: plan.unchanged.length,

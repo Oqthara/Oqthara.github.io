@@ -10,7 +10,9 @@ mechanism:
 
 1. **Development documentation follows `main`, continuously.** The Firestore mirror copies
    `docs/`, `examples/`, `releases/` and the standard-library reference from `main`. It is
-   reconciled every 15 minutes and on demand. It carries no version identity of its own.
+   reconciled when upstream announces a push to `main` (`repository_dispatch`, type
+   `content-updated`), and the daily `08:17 UTC` schedule recovers anything a dispatch missed.
+   It carries no version identity of its own.
 2. **Release documentation is read from GitHub at the release's tag, on demand.** Nothing is
    copied into the mirror for a release channel.
 3. **Release records are immutable once published.** A release document in the mirror is a

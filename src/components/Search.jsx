@@ -2,6 +2,7 @@ import { createElement as h, useCallback, useEffect, useMemo, useRef, useState }
 import { activeOptionId, keyAction, optionId, rankEntries } from "../search.js";
 
 import { loadCatalog, loadExamples, loadText } from "../github-docs.js";
+import { ensureIndex, onRebuild } from "../search-index.js";
 import { DEFAULT_REF, documentRoute, exampleRoute, parseQuery, sectionForPath } from "../source.js";
 
 // Site search over dynamically discovered content.
@@ -11,7 +12,8 @@ import { DEFAULT_REF, documentRoute, exampleRoute, parseQuery, sectionForPath } 
 // added to the repository is therefore searchable without a site change.
 //
 // The index is built on first use, not on page load, so a reader who never searches pays
-// nothing for it. It is built once per session and shared by every Search instance.
+// nothing for it. It is built once per ref until a republish, then rebuilt, and shared by every
+// Search instance through the cache in `../search-index.js`.
 
 function buildIndex(ref = DEFAULT_REF) {
   return Promise.all([
@@ -66,31 +68,6 @@ function excerpt(markdown) {
     .slice(0, EXCERPT_CHARS);
 }
 
-const indexCache = new Map();
-
-/**
- * The search index for a ref.
- *
- * Keyed by ref: the site can be read at `main` or at a release, and a search from a pinned
- * manual must return links into that manual, not into development.
- */
-function ensureIndex(ref) {
-  if (!indexCache.has(ref)) {
-    const promise = buildIndex(ref).catch((error) => {
-      // Let a later attempt try again instead of caching the failure forever.
-      indexCache.delete(ref);
-      throw error;
-    });
-    indexCache.set(ref, promise);
-  }
-  return indexCache.get(ref);
-}
-
-/** Test seam: forget the shared index. */
-export function __resetSearchIndexForTests() {
-  indexCache.clear();
-}
-
 export function Search() {
   const ref = typeof window === "undefined" ? DEFAULT_REF : parseQuery(window.location.search).ref;
   const [entries, setEntries] = useState(null);
@@ -99,11 +76,62 @@ export function Search() {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const requested = useRef(false);
+  // Incremented on republish. An in-flight build that resolves afterwards still belongs to the
+  // old catalogue, so its entries must not be rendered over the ones the new build produced.
+  const buildToken = useRef(0);
+  // Whether this reader has ever asked for the index. A republish rebuilds for them; a reader
+  // who has never searched stays at "not started" rather than being told a load is running.
+  const wanted = useRef(false);
+  // Bumped on republish. An effect keyed on it rebuilds, which keeps the rebuild out of the
+  // subscription callback so it always sees the current `entries` rather than a stale closure.
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const options = useRef(null);
   const container = useRef(null);
 
   const results = entries ? rankEntries(entries, query) : [];
   const expanded = open && query.trim() !== "";
+
+  const ensure = useCallback(() => {
+    if (entries || requested.current) return;
+    wanted.current = true;
+    requested.current = true;
+    setError(null);
+    const startedAt = buildToken.current;
+    ensureIndex(ref, buildIndex)
+      .then((built) => {
+        if (startedAt === buildToken.current) setEntries(built);
+      })
+      .catch((cause) => {
+        if (startedAt !== buildToken.current) return;
+        requested.current = false;
+        setError(cause?.message ?? "Search is unavailable right now.");
+      });
+  }, [entries, ref]);
+
+  // A republish invalidates the built index and calls back here. Drop the rendered entries and
+  // re-arm the one-shot guard; the effect below then rebuilds for a reader who is using search.
+  useEffect(
+    () =>
+      onRebuild(() => {
+        buildToken.current += 1;
+        setActive(-1);
+        setEntries(null);
+        setError(null);
+        setRefreshNonce((value) => value + 1);
+      }),
+    [],
+  );
+
+  // Rebuild after a republish, but only for a reader who had already asked for the index.
+  // Without this the open panel kept announcing a load that nothing had started, and stayed that
+  // way until the reader typed another character. Keyed on the nonce, so it does not re-run when
+  // `entries` changes as a result of its own rebuild.
+  useEffect(() => {
+    if (refreshNonce === 0 || !wanted.current) return;
+    requested.current = false;
+    ensure();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-running on `entries` would loop.
+  }, [refreshNonce]);
 
   useEffect(() => {
     if (!expanded || active < 0 || !options.current) return;
@@ -120,18 +148,6 @@ export function Search() {
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
   }, [expanded]);
-
-  const ensure = useCallback(() => {
-    if (entries || requested.current) return;
-    requested.current = true;
-    setError(null);
-    ensureIndex(ref)
-      .then(setEntries)
-      .catch((cause) => {
-        requested.current = false;
-        setError(cause?.message ?? "Search is unavailable right now.");
-      });
-  }, [entries, ref]);
 
   const onKeyDown = (event) => {
     // `keyAction` returns a typed action; comparing it to a string silently did nothing, which

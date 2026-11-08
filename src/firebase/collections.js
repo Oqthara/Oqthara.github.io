@@ -49,6 +49,10 @@ export const FIELDS = Object.freeze({
   sourceRef: "sourceRef",
   sourceCommit: "sourceCommit",
   contentHash: "contentHash",
+  // A digest over every mirrored document this run published. The catalogue carries it so a
+  // reader can tell that the *content* changed even when the upstream commit did not: a release
+  // is published by pushing a tag, which leaves `main` where it was.
+  contentDigest: "contentDigest",
   updatedAt: "updatedAt",
   kind: "kind",
   // Release records.

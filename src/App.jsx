@@ -13,6 +13,7 @@ import { ChangelogPage } from "./pages/ChangelogPage.jsx";
 import { NotFoundPage } from "./pages/NotFoundPage.jsx";
 import { DEFAULT_REF, parseQuery } from "./source.js";
 import { currentLocation, onNavigate } from "./navigation.js";
+import { startContentFreshness } from "./freshness.js";
 
 // The static routes. Each is one real file written by prerender.mjs, so GitHub Pages serves
 // working HTML before any JavaScript runs.
@@ -71,6 +72,27 @@ function useDeferredQuery(search) {
 export function App({ path, search = "" }) {
   const route = routeFor(path);
   const query = useDeferredQuery(search);
+
+  // Watch the mirror catalogue for the whole life of the app, not per page: a reader who is
+  // mid-document when a sync lands should get the new content, and a reader moving between pages
+  // should not pay for a new subscription each time. Nothing happens during prerendering, where
+  // there is no Firestore to watch.
+  //
+  // A subscription that fails is reported once and then left alone. It is not fatal - cached
+  // content and the recovery schedules still apply - but it must not be silent either, or a page
+  // that has stopped receiving live updates looks identical to a quiet one. Only a *failure* is
+  // reported: a build with no Firebase configured never subscribes at all and stays quiet, since
+  // reading from GitHub is the intended path there, not a fault.
+  useEffect(() => {
+    const watch = startContentFreshness({
+      onError: (error) => {
+        if (typeof console !== "undefined" && typeof console.warn === "function") {
+          console.warn("Live content updates are unavailable; showing cached content.", error);
+        }
+      },
+    });
+    return () => watch.stop();
+  }, []);
 
   if (route) {
     const Page = route.component;

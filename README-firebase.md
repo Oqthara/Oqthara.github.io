@@ -87,8 +87,10 @@ A content sync **cannot** deploy rules, and a dry run cannot either.
 ## The rules are the boundary, not the queries
 
 `firestore.rules` allows reads only when a document carries the literal boolean `published:
-true`, denies every client write, hides `sync` and `metadata`, and closes everything unmatched.
-The `where('published', '==', true)` filter in `src/repositories/*.repository.js` is defence in
+true`, denies every client write, and closes everything unmatched. It also keeps two whole
+collections unreadable: `sync` holds operator bookkeeping and is deny-all, and so is `metadata`
+apart from the single `metadata/catalog` document, which is readable so a reader can check which
+upstream commit the mirror is serving. The `where('published', '==', true)` filter in `src/repositories/*.repository.js` is defence in
 depth for the UI, not a permission: Firestore rules are filters on individual documents, not a
 `WHERE` clause, so a client list query must constrain `published` itself. `npm run test:rules`
 asserts both halves against the emulator, including that an unfiltered query never returns a
@@ -107,12 +109,20 @@ all.
 ## Watching for Alpha releases
 
 `scripts/check-upstream-release.mjs` answers one question per run: *does the mirror reflect the
-newest published upstream release?* `alpha-release-sync.yml` asks it every 15 minutes.
+newest published upstream release?*
 
-Polling is the mechanism, not a compromise. A GitHub `release` event fires only for releases
-created in the repository that owns the workflow, and upstream (`Oqthara/oqthara`) cannot
-dispatch an event here without a token committed there. Polling also makes catch-up free: nothing
-is queued, so a delayed or skipped run simply recomputes the same difference next time.
+Upstream announces the moment. `Oqthara/oqthara` sends a `repository_dispatch` of type
+`alpha-release-published` when a release is published, which is what makes a new channel appear
+without waiting for the next tick - typically a minute or two, not instantly, because the
+dispatch has to start a workflow and that workflow still has to read the release from GitHub.
+The `*/15 * * * *` schedule is a **recovery mechanism**, not the propagation
+path: GitHub runs scheduled work on a best-effort basis and can delay or skip a run, and a
+dispatch can be dropped, so the poll recomputes the same difference and catches up. Nothing is
+queued, so a missed run costs latency, never correctness.
+
+That replaced an earlier design in which polling *was* the mechanism. Polling still needs no
+trust: a dispatch is treated as a signal to look, never as an instruction, so a forged, replayed
+or stale one causes a re-read and cannot publish anything by itself.
 
 One run does three things:
 
