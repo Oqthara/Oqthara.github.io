@@ -804,9 +804,15 @@ export async function applyPlan(
   const catalog = buildCatalogRecord({
     commit,
     now,
-    // Digest over the documents the mirror actually holds: everything written plus everything
-    // already current. Oversized and unpublished sources are excluded because they are not
-    // stored, so a change confined to them must not look like a content change to a reader.
+    // Digest over what this run published: the documents it wrote plus the documents it confirmed
+    // already current. Oversized sources are excluded because they are never stored, so a change
+    // confined to one must not look like a content change to a reader.
+    //
+    // This describes the *desired* set, not a read-back of Firestore. The two differ in one case:
+    // a document edited out-of-band is still "unchanged" here, because `planSync` compares against
+    // the recorded sync hash rather than re-reading the stored copy. Such an edit is repaired by a
+    // `--full` run, which rewrites every source and moves the digest; until then the mirror is
+    // wrong in a way no fingerprint can see from upstream alone.
     contentDigest: contentDigestOf([...plan.writes, ...plan.unchanged]),
     counts: {
       written: plan.writes.length,

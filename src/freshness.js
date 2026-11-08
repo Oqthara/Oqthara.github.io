@@ -37,8 +37,12 @@ import { hexDigest as validDigest, validCommit } from "./repositories/catalog.re
  *
  * The commit is the fallback for a catalogue written before the digest existed, then the publish
  * time with the counts. Both are weaker signals and are treated as such: they only decide what
- * to do when the stronger field is absent. An empty record matches an empty record and triggers
- * nothing.
+ * to do when the stronger field is absent. The publish-time fallback is the weakest of the three,
+ * because `updatedAt` moves on every run and so refreshes an open page even when nothing changed.
+ * It is kept only for a record that proves neither a digest nor a commit, which in practice means
+ * a catalogue written by an older sync script; such a record is rewritten with both fields by the
+ * next run, so the imprecision lasts for at most one sync. An empty record matches an empty record
+ * and triggers nothing.
  */
 export function revisionFingerprint(record) {
   const digest = validDigest(record?.[FIELDS.contentDigest]);
@@ -100,6 +104,11 @@ export function announceContentChange(fingerprint = "") {
  *
  * Returns `{ stop }`. Calling it twice returns the existing watch rather than opening a second
  * listener, so a hot reload or a second import cannot double the socket count.
+ *
+ * The watch is shared, not reference-counted: the first caller's `stop()` closes it for every
+ * caller. That is deliberate while `App.jsx` is the only caller and mounts it once for the life of
+ * the app - a refcount here would be machinery with no user. A second concurrent caller would need
+ * one, so if this ever gains another, count the holders instead of handing out the same handle.
  */
 let activeWatch = null;
 

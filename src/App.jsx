@@ -78,9 +78,11 @@ export function App({ path, search = "" }) {
   // should not pay for a new subscription each time. Nothing happens during prerendering, where
   // there is no Firestore to watch.
   //
-  // A failed subscription is reported once and then left alone. It is not fatal - cached content
-  // and the recovery schedules still apply - but it must not be silent either, or a site that
-  // has stopped receiving live updates looks identical to a quiet one.
+  // A subscription that fails is reported once and then left alone. It is not fatal - cached
+  // content and the recovery schedules still apply - but it must not be silent either, or a page
+  // that has stopped receiving live updates looks identical to a quiet one. Only a *failure* is
+  // reported: a build with no Firebase configured never subscribes at all and stays quiet, since
+  // reading from GitHub is the intended path there, not a fault.
   useEffect(() => {
     const watch = startContentFreshness({
       onError: (error) => {
