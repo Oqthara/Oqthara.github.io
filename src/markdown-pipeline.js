@@ -139,7 +139,9 @@ export function buildComponents({ path = "", ref = "main" } = {}) {
       return h("img", { ...props, src: target, alt: alt ?? "", loading: "lazy" });
     },
     table({ node: _node, children, ...props }) {
-      return h("div", { className: "table-wrap" }, h("table", props, children));
+      // `overflow-x: auto` makes this a scroll container, so it has to take focus: without a
+      // focus stop a keyboard cannot scroll a wide table at all.
+      return h("div", { className: "table-wrap", tabIndex: 0 }, h("table", props, children));
     },
   };
 }
