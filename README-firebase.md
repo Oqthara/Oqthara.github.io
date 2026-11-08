@@ -107,12 +107,18 @@ all.
 ## Watching for Alpha releases
 
 `scripts/check-upstream-release.mjs` answers one question per run: *does the mirror reflect the
-newest published upstream release?* `alpha-release-sync.yml` asks it every 15 minutes.
+newest published upstream release?*
 
-Polling is the mechanism, not a compromise. A GitHub `release` event fires only for releases
-created in the repository that owns the workflow, and upstream (`Oqthara/oqthara`) cannot
-dispatch an event here without a token committed there. Polling also makes catch-up free: nothing
-is queued, so a delayed or skipped run simply recomputes the same difference next time.
+Upstream announces the moment. `Oqthara/oqthara` sends a `repository_dispatch` of type
+`alpha-release-published` when a release is published, which is what makes a new channel appear
+within seconds. The `*/15 * * * *` schedule is a **recovery mechanism**, not the propagation
+path: GitHub runs scheduled work on a best-effort basis and can delay or skip a run, and a
+dispatch can be dropped, so the poll recomputes the same difference and catches up. Nothing is
+queued, so a missed run costs latency, never correctness.
+
+That replaced an earlier design in which polling *was* the mechanism. Polling still needs no
+trust: a dispatch is treated as a signal to look, never as an instruction, so a forged, replayed
+or stale one causes a re-read and cannot publish anything by itself.
 
 One run does three things:
 

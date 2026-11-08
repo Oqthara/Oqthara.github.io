@@ -81,6 +81,28 @@ export function __resetCacheForTests() {
 }
 
 /**
+ * Clears the in-memory cache and the persisted discovery entries.
+ *
+ * Called when the mirror republishes: the cached values are the pre-republish ones, and the
+ * persisted copies would otherwise survive a page reload with the same stale content. Scoped to
+ * this module — the caller in `freshness.js` clears the Firestore cache separately.
+ */
+export function invalidateCache() {
+  cache.clear();
+  if (typeof window === "undefined" || !window.sessionStorage) return;
+  try {
+    const keys = [];
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+      const key = window.sessionStorage.key(index);
+      if (key && key.startsWith(PERSIST_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) window.sessionStorage.removeItem(key);
+  } catch {
+    // A disabled store means there is nothing persisted to clear.
+  }
+}
+
+/**
  * The API quota is 60 requests an hour for an unauthenticated browser, shared by everyone
  * behind the same address, so the two discovery responses are also persisted in
  * sessionStorage. A reload or a second tab then costs nothing, which is what keeps a normal

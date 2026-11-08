@@ -141,6 +141,20 @@ export function __resetCacheForTests() {
   cache.clear();
 }
 
+/**
+ * Drops every cached read so the next one asks Firestore again.
+ *
+ * This is the cache-invalidation half of content freshness. The mirror writes a new catalogue
+ * document after a sync, and without this the reader would keep being served the pre-sync
+ * document bodies for up to `CACHE_TTL_MS` — the freshness signal would arrive and change
+ * nothing on screen. Dropping the whole map rather than one key is deliberate: a sync rewrites
+ * many collections at once and the catalogue does not say which, so any narrower eviction
+ * would be a guess.
+ */
+export function invalidateReadCache() {
+  cache.clear();
+}
+
 async function sdk() {
   if (testSdk) return testSdk;
   if (!sdkPromise) {
@@ -249,6 +263,11 @@ export async function collection(...args) {
 /** Thin wrapper: `doc` from the modular SDK. */
 export async function doc(...args) {
   return (await sdk()).doc(...args);
+}
+
+/** Thin wrapper: `onSnapshot` from the modular SDK. */
+export async function onSnapshot(...args) {
+  return (await sdk()).onSnapshot(...args);
 }
 
 // ---------------------------------------------------------------------------
@@ -386,4 +405,60 @@ export async function readDoc(name, id, options = {}) {
     },
     { ttlMs },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Live catalogue subscription
+// ---------------------------------------------------------------------------
+
+/**
+ * Watches one document and reports every server-confirmed value.
+ *
+ * `onSnapshot` is a listener rather than a request, so it cannot return a typed result the way
+ * a read does: it stays open until it is unsubscribed. The callback therefore receives a plain
+ * `{ data }` for a value and `{ error }` for a failure, and the caller decides what a failure
+ * means. A failure is never fatal here: the site keeps reading through the cached path and the
+ * subscription reports the problem once rather than retrying in a loop.
+ *
+ * Returns an unsubscribe function. A caller that never unsubscribes leaks a listener and a
+ * socket, so every subscription here is paired with an effect cleanup.
+ */
+export function subscribeDoc(name, id, { onValue, onError } = {}, options = {}) {
+  if (!isFirebaseAvailable(options.env)) return () => {};
+  let stopped = false;
+  let unsubscribe = null;
+  let cancelled = false;
+
+  (async () => {
+    try {
+      const module = await sdk();
+      const db = await getDb();
+      if (stopped) return;
+      const handle = module.onSnapshot(
+        module.doc(db, name, id),
+        (snapshot) => {
+          if (stopped) return;
+          const exists = snapshot?.exists?.() !== false;
+          onValue?.(exists ? snapshotToPlain(snapshot).data : null);
+        },
+        (error) => {
+          if (stopped) return;
+          onError?.(classifyFirestoreError(error));
+        },
+      );
+      // The subscription may have been cancelled while the SDK was loading. Closing the
+      // handle immediately is what keeps a fast unmount from leaking a live listener.
+      if (cancelled) handle?.();
+      else unsubscribe = handle;
+    } catch (error) {
+      if (!stopped) onError?.(classifyFirestoreError(error));
+    }
+  })();
+
+  return () => {
+    stopped = true;
+    cancelled = true;
+    unsubscribe?.();
+    unsubscribe = null;
+  };
 }

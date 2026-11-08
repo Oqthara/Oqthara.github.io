@@ -13,6 +13,7 @@ import { ChangelogPage } from "./pages/ChangelogPage.jsx";
 import { NotFoundPage } from "./pages/NotFoundPage.jsx";
 import { DEFAULT_REF, parseQuery } from "./source.js";
 import { currentLocation, onNavigate } from "./navigation.js";
+import { startContentFreshness } from "./freshness.js";
 
 // The static routes. Each is one real file written by prerender.mjs, so GitHub Pages serves
 // working HTML before any JavaScript runs.
@@ -71,6 +72,15 @@ function useDeferredQuery(search) {
 export function App({ path, search = "" }) {
   const route = routeFor(path);
   const query = useDeferredQuery(search);
+
+  // Watch the mirror catalogue for the whole life of the app, not per page: a reader who is
+  // mid-document when a sync lands should get the new content, and a reader moving between pages
+  // should not pay for a new subscription each time. Nothing happens during prerendering, where
+  // there is no Firestore to watch.
+  useEffect(() => {
+    const watch = startContentFreshness();
+    return () => watch.stop();
+  }, []);
 
   if (route) {
     const Page = route.component;
