@@ -265,7 +265,7 @@ export function Grid({ children, two = false }) {
 export function Table({ head, rows }) {
   return h(
     "div",
-    { className: "table-wrap" },
+    { className: "table-wrap", tabIndex: 0, role: "region", "aria-label": "Table" },
     h(
       "table",
       null,

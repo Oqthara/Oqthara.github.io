@@ -139,7 +139,14 @@ export function buildComponents({ path = "", ref = "main" } = {}) {
       return h("img", { ...props, src: target, alt: alt ?? "", loading: "lazy" });
     },
     table({ node: _node, children, ...props }) {
-      return h("div", { className: "table-wrap" }, h("table", props, children));
+      // A horizontally scrollable region must be reachable by keyboard, or a reader who cannot
+      // use a pointer has no way to scroll a wide table. `role="region"` needs a name to be
+      // worth announcing, so the wrapper is labelled by the table it contains.
+      return h(
+        "div",
+        { className: "table-wrap", tabIndex: 0, role: "region", "aria-label": "Table" },
+        h("table", props, children),
+      );
     },
   };
 }

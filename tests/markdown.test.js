@@ -63,6 +63,14 @@ test("renders GFM tables with header and body cells", () => {
   assert.match(html, /class="table-wrap"/);
 });
 
+test("a scrollable table wrapper is reachable by keyboard", () => {
+  // A region with `overflow: auto` that cannot take focus is unreachable without a pointer:
+  // axe reports `scrollable-region-focusable`, and a reader on the keyboard cannot scroll a wide
+  // table at all. The wrapper is a named region so the focus stop is announced meaningfully.
+  const html = render(FIXTURE);
+  assert.match(html, /<div class="table-wrap" tabindex="0" role="region" aria-label="Table">/);
+});
+
 test("fenced code carries a language class before the code component consumes it", () => {
   // The same plugin set without the custom `pre` shows the class the pipeline produces and
   // CodeBlock turns into the visible label.
