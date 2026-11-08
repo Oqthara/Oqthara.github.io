@@ -63,6 +63,16 @@ test("renders GFM tables with header and body cells", () => {
   assert.match(html, /class="table-wrap"/);
 });
 
+test("a table wrapper can take focus so it can be scrolled by keyboard", () => {
+  // `overflow-x: auto` makes the wrapper scroll, and an unfocusable scroll container cannot be
+  // scrolled without a pointer. Asserted structurally rather than as an exact element string so
+  // that unrelated attribute changes do not fail it.
+  const html = render(FIXTURE);
+  const wrapper = html.match(/<div[^>]*class="table-wrap"[^>]*>/i);
+  assert.ok(wrapper, "the pipeline wraps tables in .table-wrap");
+  assert.match(wrapper[0], /tabindex="0"/i);
+});
+
 test("fenced code carries a language class before the code component consumes it", () => {
   // The same plugin set without the custom `pre` shows the class the pipeline produces and
   // CodeBlock turns into the visible label.
