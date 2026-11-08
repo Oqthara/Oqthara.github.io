@@ -287,12 +287,17 @@ function cachedRead(key, load, { ttlMs = CACHE_TTL_MS } = {}) {
     return existing.promise.then((result) => ({ ...result, cached: true }));
   }
   const promise = load();
+  // Evict by identity so a read that fails after `invalidateReadCache` and a replacement have
+  // already moved on does not drop the newer entry and force a second fetch.
+  const evictIfCurrent = () => {
+    if (cache.get(key)?.promise === promise) cache.delete(key);
+  };
   cache.set(key, { promise, at: now });
   promise.then(
     (result) => {
-      if (!result?.ok) cache.delete(key);
+      if (!result?.ok) evictIfCurrent();
     },
-    () => cache.delete(key),
+    evictIfCurrent,
   );
   return promise;
 }

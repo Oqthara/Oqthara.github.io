@@ -145,10 +145,14 @@ export function startContentFreshness(options = {}) {
 
   const handle = {
     stop() {
-      // Idempotent, and scoped to this handle. Nulling `activeWatch` unconditionally let a
-      // second `stop()` (React StrictMode runs every effect cleanup twice in development) close
-      // the *next* watch's slot while its listener stayed open, so the following `start()`
-      // opened another one and the previous socket leaked.
+      // Idempotent. Without the `stopped` guard, a second `stop()` (React StrictMode runs every
+      // effect cleanup twice in development) unsubscribed again, and nulling `activeWatch`
+      // unconditionally wiped the *next* watch's slot while its listener stayed open, so the
+      // following `start()` opened another one and the previous socket leaked.
+      // The identity check below is belt-and-braces: with the guard in place a handle can only
+      // be stopped once, and a handle only ever becomes `activeWatch` by `start()` installing
+      // it, so this cannot currently be false. It is kept so the slot is only cleared by the
+      // watch that owns it if that ever changes.
       if (stopped) return;
       stopped = true;
       unsubscribe();

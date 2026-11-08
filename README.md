@@ -109,9 +109,11 @@ makes a provenance claim checkable rather than asserted. `src/freshness.js` subs
 - a new content digest clears both caches and re-reads the data behind every mounted hook. The
   commit alone is not enough to decide this: publishing a release pushes a tag, so the mirror
   gains a release document while `main` never moves, and a commit-only comparison would report
-  "unchanged" for content that had changed. The digest is derived from what the mirror actually
-  stores, so it moves for an added, edited or removed document and stays put for a run that
-  reconciles identical content. Records written before the digest existed fall back to
+  "unchanged" for content that had changed. The digest is derived from the set of documents the
+  run reconciled, so it moves for an added, edited or removed document and stays put for a run
+  that reconciles identical content. It is not a read-back of Firestore: a document edited
+  outside the sync is recorded as `unchanged` on an incremental run and only repaired, and only
+  reflected in the digest, by a `--full` run. Records written before the digest existed fall back to
   `sourceCommit`, then to the publish time and count shape;
 - the URL is never touched. The reader keeps their route, query string, release channel and
   scroll position; only the content changes. A reload would have been easier and would have

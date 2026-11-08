@@ -847,11 +847,11 @@ test("the digest covers stored documents only, so an oversized source cannot ann
   assert.notEqual(contentDigestOf([stored]), contentDigestOf([]));
 });
 
-test("the digest orders records by codepoint, not by the host's collation", async () => {
-  // `localeCompare` ranks "a.md" before "B.md"; codepoint order ranks "B.md" first. A digest that
+test("the digest orders records independently of the host's collation", async () => {
+  // `localeCompare` ranks "a.md" before "B.md"; code-unit order ranks "B.md" first. A digest that
   // followed the locale would hash the same content two ways depending on which machine ran the
   // sync, so CI and a developer's laptop could disagree about whether anything had changed.
-  // The expected value is a known answer, computed from an explicit codepoint-sorted list.
+  // The expected value is a known answer, computed from an explicit code-unit-sorted list.
   const { contentDigestOf, contentHashOf } = await import("../scripts/sync-firestore.mjs");
   const record = (path, hash) => ({ collection: "documentation", data: { [FIELDS.path]: path, [FIELDS.contentHash]: hash } });
   const expected = contentHashOf(

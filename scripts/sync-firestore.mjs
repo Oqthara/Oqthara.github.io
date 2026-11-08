@@ -123,6 +123,9 @@ export function contentHashOf(content) {
  * on what is mirrored and on nothing else. Adding, removing or editing a source document changes
  * it; a run that reconciles identical content does not.
  */
+// Orders by UTF-16 code unit. This differs from Unicode codepoint order for astral characters
+// (surrogate pairs), but unlike `localeCompare` it is identical on every host and in every locale,
+// which is the property the digest needs.
 function compareEntries(a, b) {
   for (let i = 0; i < a.length; i += 1) {
     if (a[i] < b[i]) return -1;
@@ -138,7 +141,7 @@ export function contentDigestOf(records = []) {
       String(record?.data?.[FIELDS.path] ?? ""),
       String(record?.data?.[FIELDS.contentHash] ?? ""),
     ])
-    // Codepoint order, not `localeCompare`: the digest is computed on several machines (CI and
+    // `compareEntries`, not `localeCompare`: the digest is computed on several machines (CI and
     // locally) and collation rules are locale-dependent, so a locale-sensitive sort could hash
     // the same content two ways.
     .sort((a, b) => compareEntries(a, b));

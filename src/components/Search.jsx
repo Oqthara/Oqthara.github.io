@@ -2,6 +2,8 @@ import { createElement as h, useCallback, useEffect, useMemo, useRef, useState }
 import { activeOptionId, keyAction, optionId, rankEntries } from "../search.js";
 
 import { loadCatalog, loadExamples, loadText } from "../github-docs.js";
+import { onContentChange } from "../freshness.js";
+import { ensureIndex as ensureSearchIndex, invalidate as invalidateSearchCache } from "../search-index.js";
 import { DEFAULT_REF, documentRoute, exampleRoute, parseQuery, sectionForPath } from "../source.js";
 
 // Site search over dynamically discovered content.
@@ -66,29 +68,24 @@ function excerpt(markdown) {
     .slice(0, EXCERPT_CHARS);
 }
 
-const indexCache = new Map();
-
 /**
  * The search index for a ref.
  *
- * Keyed by ref: the site can be read at `main` or at a release, and a search from a pinned
- * manual must return links into that manual, not into development.
+ * The cache itself lives in `../search-index.js`: it holds the invalidation policy, which is the
+ * part worth testing, and this file holds the fetching and the DOM.
  */
 function ensureIndex(ref) {
-  if (!indexCache.has(ref)) {
-    const promise = buildIndex(ref).catch((error) => {
-      // Let a later attempt try again instead of caching the failure forever.
-      indexCache.delete(ref);
-      throw error;
-    });
-    indexCache.set(ref, promise);
-  }
-  return indexCache.get(ref);
+  return ensureSearchIndex(ref, (target) => buildIndex(target));
+}
+
+/** Forgets every built index. Called on republish and by tests. */
+export function invalidateSearchIndex() {
+  invalidateSearchCache();
 }
 
 /** Test seam: forget the shared index. */
 export function __resetSearchIndexForTests() {
-  indexCache.clear();
+  invalidateSearchCache();
 }
 
 export function Search() {
@@ -99,11 +96,28 @@ export function Search() {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const requested = useRef(false);
+  // Incremented on republish. An in-flight build that resolves afterwards still belongs to the
+  // old catalogue, so its entries must not be rendered over the ones the new build produced.
+  const buildToken = useRef(0);
   const options = useRef(null);
   const container = useRef(null);
 
   const results = entries ? rankEntries(entries, query) : [];
   const expanded = open && query.trim() !== "";
+
+  // A republish invalidates the built index. Drop the rendered entries and the one-shot guard so
+  // the next search rebuilds against the current mirror rather than the pre-republish one.
+  useEffect(
+    () =>
+      onContentChange(() => {
+        invalidateSearchIndex();
+        buildToken.current += 1;
+        requested.current = false;
+        setEntries(null);
+        setError(null);
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (!expanded || active < 0 || !options.current) return;
@@ -125,9 +139,13 @@ export function Search() {
     if (entries || requested.current) return;
     requested.current = true;
     setError(null);
+    const startedAt = buildToken.current;
     ensureIndex(ref)
-      .then(setEntries)
+      .then((built) => {
+        if (startedAt === buildToken.current) setEntries(built);
+      })
       .catch((cause) => {
+        if (startedAt !== buildToken.current) return;
         requested.current = false;
         setError(cause?.message ?? "Search is unavailable right now.");
       });
