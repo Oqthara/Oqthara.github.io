@@ -17,6 +17,16 @@ name: Firestore audit
 # the secret should not show a red build for a check it cannot perform.
 
 on:
+  # The mirror is reconciled with or without a human watching: `firebase-sync.yml` runs once a
+  # day, and the Alpha release sync can add a channel at any time. An audit that only runs when
+  # someone remembers to start it therefore describes the mirror of an arbitrary past day, which
+  # is the same thing as having no drift detection. The schedule puts the inventory on a cadence
+  # slightly behind the daily sync, so a report exists for every day the mirror changed.
+  #
+  # 06:41 rather than an on-the-hour time: GitHub's scheduler is busiest at :00 and delays or
+  # drops runs there first.
+  schedule:
+    - cron: "41 6 * * *"
   workflow_dispatch:
     inputs:
       label:
