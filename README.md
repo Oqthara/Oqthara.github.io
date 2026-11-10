@@ -6,6 +6,23 @@ and served by GitHub Pages from the root of this repository.
 Because the owning account is `Oqthara`, this is GitHub's *user site* repository: the site is
 served from the domain root, not from an `/oqthara/` project path.
 
+## Branch protection
+
+`main` is protected by an active ruleset (`main-protection`). Pull requests are mandatory, direct
+pushes and non-fast-forward pushes are rejected, review threads must be resolved before merging,
+and `Build the static site` and `Cross-browser suite` are required with strict status checks (the
+branch must be up to date before merging). There are no bypass actors.
+
+`Deploy to GitHub Pages` runs only on `main`, so a required check on a pull request would never
+report. The two checks above are the ones a pull request can actually satisfy; the deploy job
+stays a post-merge step, and a failure there blocks the site, not the merge.
+
+The required approving review count is **zero** under the project's documented solo-maintainer
+exception: Oqthara has one human maintainer, and `JoaoGaValentim` is that same person's second
+account rather than an independent reviewer. The exception is recorded in the language
+repository's Alpha 3 closure report, and it must be reconsidered when a second human maintainer
+joins.
+
 ## Content lives in the language repository
 
 `Oqthara/oqthara` is the only source of everything the site displays. This repository holds no

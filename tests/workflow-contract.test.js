@@ -682,6 +682,22 @@ describe("firestore-audit workflow", () => {
     assert.match(upload, /actions\/upload-artifact@/);
   });
 
+  it("runs on a schedule, so the mirror is audited without anyone remembering to start it", async () => {
+    const text = await workflow(NAME);
+    // Drift detection that a human has to trigger is not drift detection: the report describes
+    // whichever day someone last ran it, and the twenty-nine days in between are unobserved.
+    const cron = text.match(/^\s+- cron: "([^"]+)"$/m);
+    assert.ok(cron, "a schedule is required; workflow_dispatch alone leaves the mirror unaudited");
+    const [minute, hour, day, month, weekday] = cron[1].split(/\s+/);
+    assert.equal(weekday, "*", "a daily audit, not a weekly one");
+    assert.equal(month, "*");
+    assert.equal(day, "*");
+    // An on-the-hour time is where GitHub's scheduler is busiest and most likely to delay or drop
+    // the run, which for an audit is indistinguishable from a day with nothing to report.
+    assert.notEqual(minute, "0", "off the hour, so the cron is not competing with every other job");
+    assert.ok(Number(hour) >= 0 && Number(hour) <= 23);
+  });
+
   it("records the run in the job summary so the artifact is traceable to a commit", async () => {
     const text = await workflow(NAME);
     const summary = stepBody(text, "Summarise the outcome");

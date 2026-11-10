@@ -164,6 +164,24 @@ export function bytesOf(content) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Statuses worth retrying. Firestore answers a burst of reads with 429 `RESOURCE_EXHAUSTED` and
+ * a momentary overload with 503; both clear on their own. Retrying costs one delay, while not
+ * retrying costs the whole inventory, because a single failed `listCollectionIds` aborts the run
+ * before any document is compared.
+ *
+ * 401 and 403 are never retried: a bad credential does not improve by asking again.
+ */
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const MAX_ATTEMPTS = 4;
+
+/** How long to wait before attempt `n` (1-based), so a stalled quota has time to reset. */
+export function retryDelayMs(attempt) {
+  return 500 * 2 ** (attempt - 1);
+}
+
+const defaultSleep = (ms) => new Promise((done) => setTimeout(done, ms));
+
+/**
  * A Firestore REST client that can only read.
  *
  * Deliberately has no `write`, `set`, `commit` or `delete` method. The "read-only" claim in the
@@ -171,13 +189,29 @@ export function bytesOf(content) {
  * read methods below, one of which uses HTTP POST because `listCollectionIds` carries a body.
  * The guarantee is the absence of mutation methods and document writes, not the absence of POST.
  */
-export function readOnlyClient({ token, project = PROJECT, fetchImpl = globalThis.fetch }) {
+export function readOnlyClient({ token, project = PROJECT, fetchImpl = globalThis.fetch, sleepImpl = defaultSleep }) {
   const base = `${FIRESTORE}/projects/${project}/databases/(default)/documents`;
+
+  /**
+   * One read attempt per entry in `RETRYABLE_STATUSES`, then whatever the server last said.
+   *
+   * The body is read inside the loop because a retry needs a fresh one; returning `text` as well
+   * keeps every caller's error message byte-identical to before.
+   */
+  async function request(url, init) {
+    for (let attempt = 1; ; attempt += 1) {
+      const response = await fetchImpl(url, init);
+      const text = await response.text();
+      if (response.ok || !RETRYABLE_STATUSES.has(response.status) || attempt >= MAX_ATTEMPTS) {
+        return { response, text };
+      }
+      await sleepImpl(retryDelayMs(attempt));
+    }
+  }
   const headers = { authorization: `Bearer ${token}`, "x-goog-user-project": project };
 
   async function get(url) {
-    const response = await fetchImpl(url, { headers });
-    const text = await response.text();
+    const { response, text } = await request(url, { headers });
     if (!response.ok) {
       throw new Error(`${response.status} ${url.replace(base, "")} ${text.slice(0, 300)}`);
     }
@@ -186,12 +220,11 @@ export function readOnlyClient({ token, project = PROJECT, fetchImpl = globalThi
 
   return {
     async listCollections() {
-      const response = await fetchImpl(`${base}:listCollectionIds`, {
+      const { response, text } = await request(`${base}:listCollectionIds`, {
         method: "POST",
         headers: { ...headers, "content-type": "application/json" },
         body: JSON.stringify({ pageSize: 100 }),
       });
-      const text = await response.text();
       if (!response.ok) throw new Error(`${response.status} listCollectionIds ${text.slice(0, 300)}`);
       return JSON.parse(text).collectionIds ?? [];
     },

@@ -10,8 +10,10 @@ import {
   compareSyncRecord,
   decodeFields,
   formatReport,
+  readOnlyClient,
   recordedHashMatches,
   resolveToken,
+  retryDelayMs,
 } from "../scripts/audit-production.mjs";
 import { buildReleaseRecord, contentHashOf } from "../scripts/sync-firestore.mjs";
 import { COLLECTIONS, FIELDS } from "../src/firebase/collections.js";
@@ -576,4 +578,51 @@ test("formatting a malformed release-watch record reports it instead of crashing
     const text = formatReport(report);
     assert.match(text, /Release watch: INVALID/, "a malformed record is reported, not swallowed");
   }
+});
+
+// A scheduled audit must survive a momentary quota answer. The live run on 2026-11-08 died on
+// `429 listCollectionIds ... RESOURCE_EXHAUSTED` before comparing a single document, so the
+// retry below is the difference between an audit that runs and one that never finishes.
+test("a retryable status is retried and the eventual answer is returned", async () => {
+  const seen = [];
+  const answers = [
+    { status: 429, body: JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED" } }) },
+    { status: 503, body: "unavailable" },
+    { status: 200, body: JSON.stringify({ collectionIds: ["documentation"] }) },
+  ];
+  const fetchImpl = async () => {
+    const answer = answers[seen.length];
+    seen.push(answer.status);
+    return { ok: answer.status < 400, status: answer.status, text: async () => answer.body };
+  };
+  const slept = [];
+  const client = readOnlyClient({ token: "t", fetchImpl, sleepImpl: async (ms) => slept.push(ms) });
+
+  assert.deepEqual(await client.listCollections(), ["documentation"]);
+  assert.deepEqual(seen, [429, 503, 200], "each transient answer is retried exactly once");
+  assert.deepEqual(slept, [retryDelayMs(1), retryDelayMs(2)], "the wait grows between attempts");
+});
+
+test("a non-retryable status fails at once instead of spending the retry budget", async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return { ok: false, status: 403, text: async () => "forbidden" };
+  };
+  const client = readOnlyClient({ token: "t", fetchImpl, sleepImpl: async () => {} });
+
+  await assert.rejects(() => client.listCollections(), /403 listCollectionIds forbidden/);
+  assert.equal(calls, 1, "a bad credential does not improve by asking again");
+});
+
+test("retries are bounded, then the last answer is reported", async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return { ok: false, status: 429, text: async () => "quota" };
+  };
+  const client = readOnlyClient({ token: "t", fetchImpl, sleepImpl: async () => {} });
+
+  await assert.rejects(() => client.listCollections(), /429 listCollectionIds quota/);
+  assert.equal(calls, 4, "MAX_ATTEMPTS bounds the retries so a stuck quota cannot hang the job");
 });
