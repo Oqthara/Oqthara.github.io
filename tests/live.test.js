@@ -9,7 +9,7 @@ import {
   loadReleases,
   loadTree,
 } from "../src/github-docs.js";
-import { isDocumentPath, isExamplePath } from "../src/source.js";
+import { isDocumentPath, isExamplePath, isPublishedDocument } from "../src/source.js";
 
 const live = process.env.OQ_LIVE_DOCS === "1";
 
@@ -56,6 +56,35 @@ test("live: main exposes at least 15 Markdown docs and 30 examples", { skip: !li
   assert.ok(examples.length >= 30, `expected >= 30 examples, got ${examples.length}`);
   assert.ok(docs.every((entry) => entry.path.startsWith("docs/")));
   assert.ok(examples.every((entry) => entry.path.startsWith("examples/")));
+});
+
+// The published set is an allowlist, so a directory renamed upstream with no edit here would
+// quietly empty the site rather than fail. This pins the guarantee that the allowlist still names
+// real directories in the language repository: a small published set is a signal, an empty one is
+// a mistake.
+test("live: the publication allowlist still matches the upstream tree", { skip: !live }, async () => {
+  __resetCacheForTests();
+  __setFetchForTests(null);
+
+  const tree = await loadTree("main");
+  const docs = tree.filter((entry) => isDocumentPath(entry.path));
+  const published = docs.filter((entry) => isPublishedDocument(entry.path));
+
+  assert.ok(published.length >= 8, `expected >= 8 published docs, got ${published.length}`);
+  assert.ok(
+    published.length < docs.length,
+    "development documentation should be excluded, so published must be a strict subset",
+  );
+  for (const section of ["spec", "reference", "stdlib"]) {
+    assert.ok(
+      published.some((entry) => entry.path.startsWith(`docs/${section}/`)),
+      `expected a published document under docs/${section}/`,
+    );
+  }
+  assert.ok(
+    !published.some((entry) => /^docs\/(adr|governance)\//.test(entry.path)),
+    "decision records and governance documents must stay on GitHub",
+  );
 });
 
 test("live: docs/spec/language.md at main has an h1 and a table", { skip: !live }, async () => {
