@@ -26,10 +26,30 @@ export const DOCUMENT_ROUTE = "/document.html";
 /** Canonical example page. One file serves every example. */
 export const EXAMPLE_ROUTE = "/example.html";
 
-/** Paths the site will render. Anything else is rejected before a request is made. */
+/** Paths the site will fetch. Anything else is rejected before a request is made. */
 const DOC_PATH = /^docs\/.+\.md$/i;
 const EXAMPLE_PATH = /^examples\/.+\.oq$/i;
 export const CHANGELOG_PATH = "CHANGELOG.md";
+
+/**
+ * The `docs/` directories this site publishes.
+ *
+ * This is a separate decision from whether a path is *safe to fetch*, and it is an allowlist
+ * rather than a deny list because the default has to be "not published": a new top-level
+ * directory under `docs/` is a working document until someone decides it is reader-facing.
+ *
+ * `docs/spec/` stays because it is the normative language and backend reference readers need,
+ * and because the status page renders `docs/spec/backend.md`. `docs/adr/` (decision records) and
+ * `docs/governance/` (the requirement matrix, risk register and closure reports) are development
+ * material and are read on GitHub, next to the commits they describe.
+ *
+ * `guides` is named because the site's section titles already anticipate it; the language
+ * repository has no such directory yet, so for now it publishes nothing.
+ */
+const PUBLISHED_SECTIONS = new Set(["spec", "reference", "stdlib", "guides"]);
+
+/** Files at the root of `docs/` that are published alongside those sections. */
+const PUBLISHED_ROOT_FILES = new Set(["readme.md"]);
 
 const SCHEME = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
 const CONTROL_OR_SPACE = /^[\u0000-\u0020]+/;
@@ -66,6 +86,21 @@ export function normalizePath(path) {
 export function isDocumentPath(path) {
   const normalized = normalizePath(normalizeRepoPath(path));
   return DOC_PATH.test(normalized);
+}
+
+/**
+ * True when a document is part of the published user documentation.
+ *
+ * Deliberately implies nothing about safety: call `isDocumentPath` first, or use
+ * `isPublishedDocument` where a fetch may follow.
+ */
+export function isPublishedDocument(path) {
+  const normalized = normalizePath(normalizeRepoPath(path));
+  if (!isDocumentPath(normalized)) return false;
+  const parts = normalized.split("/");
+  // docs/README.md
+  if (parts.length === 2) return PUBLISHED_ROOT_FILES.has(parts[1].toLowerCase());
+  return PUBLISHED_SECTIONS.has(parts[1].toLowerCase());
 }
 
 /** True when the resolved path is an example file the site is allowed to fetch. */

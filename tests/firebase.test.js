@@ -54,6 +54,7 @@ import {
 } from "../src/services/content.service.js";
 import {
   buildDocumentRecord,
+  classifyPath,
   buildSyncRecord,
   contentHashOf,
   loadCredentials,
@@ -77,7 +78,7 @@ test("docIdFor flattens a repository path deterministically", () => {
 });
 
 test("sync ids are namespaced per collection and release ids are path-derived", () => {
-  assert.equal(syncIdFor("documentation", "docs/a.md"), "documentation__docs__a.md");
+  assert.equal(syncIdFor("documentation", "docs/spec/a.md"), "documentation__docs__spec__a.md");
   assert.notEqual(
     syncIdFor("documentation", "docs/stdlib/reference.md"),
     syncIdFor("stdlib", "docs/stdlib/reference.md"),
@@ -231,7 +232,7 @@ function fakeSdk({ docs = [], getDocs, getDoc } = {}) {
 test("two concurrent identical reads share one request", async () => {
   __resetCacheForTests();
   __resetDbForTests();
-  const fake = fakeSdk({ docs: [{ id: "docs__a.md", data: { path: "docs/a.md" } }] });
+  const fake = fakeSdk({ docs: [{ id: "docs__spec__a.md", data: { path: "docs/spec/a.md" } }] });
   __setFirestoreForTests(fake.module);
 
   const builder = (module, base) => module.query(base, module.limit(5));
@@ -244,7 +245,7 @@ test("two concurrent identical reads share one request", async () => {
   assert.equal(first.ok, true);
   assert.equal(second.ok, true);
   assert.equal(second.cached, true);
-  assert.equal(first.data[0].id, "docs__a.md");
+  assert.equal(first.data[0].id, "docs__spec__a.md");
   __setFirestoreForTests(null);
   __resetCacheForTests();
 });
@@ -322,10 +323,10 @@ test("validateDocumentRecord accepts a valid record and skips malformed ones", (
 
   const cases = [
     { entry: { id: "x", data: null }, reason: /not an object/ },
-    { entry: docEntry("docs/a.md", { content: 42 }), reason: /content is not a string/ },
-    { entry: docEntry("docs/a.md", { published: "true" }), reason: /not published/ },
-    { entry: docEntry("docs/a.md", { title: "" }), reason: /title/ },
-    { entry: { id: "wrong-id", data: { ...validDocument, path: "docs/a.md" } }, reason: /id does not match/ },
+    { entry: docEntry("docs/spec/a.md", { content: 42 }), reason: /content is not a string/ },
+    { entry: docEntry("docs/spec/a.md", { published: "true" }), reason: /not published/ },
+    { entry: docEntry("docs/spec/a.md", { title: "" }), reason: /title/ },
+    { entry: { id: "wrong-id", data: { ...validDocument, path: "docs/spec/a.md" } }, reason: /id does not match/ },
     { entry: docEntry("examples/a.oq"), reason: /mirrored document path/ },
   ];
   for (const { entry, reason } of cases) {
@@ -347,7 +348,7 @@ test("example, release and stdlib validators reject the wrong shapes", () => {
   });
   assert.equal(example.record.name, "hello");
   assert.equal(example.record.category, "basics");
-  assert.equal(validateExampleRecord(docEntry("docs/a.md")).record, undefined);
+  assert.equal(validateExampleRecord(docEntry("docs/spec/a.md")).record, undefined);
 
   const release = validateReleaseRecord({
     id: releaseIdFor("v0.1.0"),
@@ -377,7 +378,7 @@ test("listDocumentation filters published records and reports skipped ones", asy
   __resetDbForTests();
   const fake = fakeSdk({
     docs: [
-      docEntry("docs/a.md", { title: "A" }),
+      docEntry("docs/spec/a.md", { title: "A" }),
       docEntry("docs/b.md", { content: 7 }),
       docEntry("docs/c.md", { published: false }),
       { id: "docs__d.md", data: { path: "docs/d.md", published: true } },
@@ -387,11 +388,11 @@ test("listDocumentation filters published records and reports skipped ones", asy
 
   const result = await listDocumentation();
   assert.equal(result.ok, true);
-  assert.deepEqual(result.data.map((record) => record.path), ["docs/a.md"]);
+  assert.deepEqual(result.data.map((record) => record.path), ["docs/spec/a.md"]);
   assert.equal(result.warnings.length, 3);
 
   const catalog = await listDocumentationCatalog();
-  assert.equal(catalog.data[0].section, "Overview");
+  assert.equal(catalog.data[0].section, "Specification");
   assert.equal(catalog.data[0].title, "A");
   __setFirestoreForTests(null);
   __resetCacheForTests();
@@ -438,7 +439,7 @@ test("the service uses Firestore when it has data", async () => {
     firestore: {
       listDocumentationCatalog: async () => ({
         ok: true,
-        data: [{ path: "docs/a.md", section: "Overview", title: "A", route: "/x", sourceUrl: "" }],
+        data: [{ path: "docs/spec/a.md", section: "Overview", title: "A", route: "/x", sourceUrl: "" }],
         warnings: [],
         cached: false,
       }),
@@ -455,7 +456,7 @@ test("the service marks a cached Firestore hit as cache and stale", async () => 
     firestore: {
       listDocumentationCatalog: async () => ({
         ok: true,
-        data: [{ path: "docs/a.md" }],
+        data: [{ path: "docs/spec/a.md" }],
         warnings: [],
         cached: true,
       }),
@@ -644,7 +645,7 @@ test("the credential diagnostic names both supported variables and invents nothi
 
 test("a dry run with no credential reads sources and exits 0 without writing", async () => {
   const desired = [
-    buildDocumentRecord({ path: "docs/a.md", content: "# A", collection: "documentation" }),
+    buildDocumentRecord({ path: "docs/spec/a.md", content: "# A", collection: "documentation" }),
   ];
   const lines = [];
   const code = await main(["--dry-run"], {
@@ -700,4 +701,19 @@ test("redirectToEmulator connects only for a well-formed host", () => {
 
   assert.equal(redirectToEmulator(module, db, "127.0.0.1:8080"), db);
   assert.deepEqual(calls, [[db, "127.0.0.1", 8080]]);
+});
+
+// The mirror is a second publication path: a document the reader can never be offered should not
+// occupy a Firestore collection either. classifyPath imports the allowlist from `source.js`, so
+// this asserts the wiring rather than restating the scope.
+test("classifyPath mirrors published documents only", () => {
+  assert.equal(classifyPath("docs/spec/language.md").collection, "documentation");
+  assert.equal(classifyPath("docs/reference/cli.md").collection, "documentation");
+  assert.equal(classifyPath("docs/README.md").collection, "documentation");
+  assert.equal(classifyPath("CHANGELOG.md").kind, "changelog");
+  assert.equal(classifyPath("examples/hello.oq").kind, "example");
+
+  assert.equal(classifyPath("docs/adr/0003-bytecode.md"), null);
+  assert.equal(classifyPath("docs/governance/alpha-3-closure-report.md"), null);
+  assert.equal(classifyPath("docs/alpha-4-phase-0-assessment.md"), null);
 });

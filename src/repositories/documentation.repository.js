@@ -12,6 +12,7 @@ import {
   blobUrl,
   documentRoute,
   isDocumentPath,
+  isPublishedDocument,
   sectionForPath,
   titleFromPath,
 } from "../source.js";
@@ -140,7 +141,7 @@ export async function listDocumentation({ ref = MIRRORED_REF, limit: max = MAX_D
   }
   // CHANGELOG.md is mirrored so the changelog page can read it, but it is not part of the
   // documentation catalogue that /docs.html lists.
-  const catalogued = records.filter((record) => isDocumentPath(record.path));
+  const catalogued = records.filter((record) => isPublishedDocument(record.path));
   catalogued.sort((a, b) => a.path.localeCompare(b.path));
   return { ok: true, data: catalogued, error: null, warnings, cached: Boolean(result.cached) };
 }

@@ -52,6 +52,7 @@ import {
   REPO,
   normalizePath,
   normalizeRepoPath,
+  isPublishedDocument,
   rawUrl,
   releasesApiUrl,
   titleFromMarkdown,
@@ -154,9 +155,9 @@ export function byteLengthOf(content) {
 }
 
 /**
- * A repository path is mirrored when it is a document, the changelog, an example, or the
- * generated stdlib reference. `source.js` already owns those predicates; this mirrors them for
- * the tree walker without importing the browser-oriented module surface.
+ * A repository path is mirrored when it is a published document, the changelog, an example, or
+ * the generated stdlib reference. The publication scope is imported from `source.js` rather than
+ * restated here: a second copy of the allowlist would drift exactly like the keyword grammar did.
  */
 export function classifyPath(path) {
   const normalized = normalizePath(normalizeRepoPath(path));
@@ -166,7 +167,7 @@ export function classifyPath(path) {
     // and in the dedicated stdlib collection (so the stdlib page can ask for it directly).
     return { collection: COLLECTIONS.documentation, kind: "documentation", also: COLLECTIONS.stdlib };
   }
-  if (/^docs\/.+\.md$/i.test(normalized)) return { collection: COLLECTIONS.documentation, kind: "documentation" };
+  if (isPublishedDocument(normalized)) return { collection: COLLECTIONS.documentation, kind: "documentation" };
   if (/^examples\/.+\.oq$/i.test(normalized)) return { collection: COLLECTIONS.examples, kind: "example" };
   return null;
 }

@@ -34,6 +34,7 @@ import {
   blobUrl,
   documentRoute,
   isDocumentPath,
+  isPublishedDocument,
   isExamplePath,
   normalizePath,
   normalizeRepoPath,
@@ -401,7 +402,7 @@ export function loadTree(ref = DEFAULT_REF) {
 export async function loadDocumentIndex(ref = DEFAULT_REF) {
   const tree = await loadTree(ref);
   const docs = tree
-    .filter((entry) => isDocumentPath(entry.path))
+    .filter((entry) => isPublishedDocument(entry.path))
     .map((entry) => ({
       path: entry.path,
       section: sectionForPath(entry.path),
@@ -481,7 +482,7 @@ export async function loadExamples(ref = DEFAULT_REF) {
 /** Loads one Markdown document: `{ path, title, markdown, sourceUrl }`. */
 export function loadDocument(ref, path) {
   const repoPath = normalizePath(normalizeRepoPath(path));
-  if (!isDocumentPath(repoPath)) {
+  if (!isPublishedDocument(repoPath)) {
     return Promise.reject(
       new GitHubError(`Not a documentation path: ${String(path)}`, {
         url: blobUrl("docs", ref),
