@@ -195,16 +195,22 @@ test("an untagged pre gets the inferred language class", () => {
   assert.deepEqual(tree.children[0].children[0].properties.className, ["language-oq"]);
 });
 
-test("the grammar's keyword list matches the canonical lexer", () => {
-  // Guard against the earlier defect: the grammar listed `elseif`, `raise`, `is` and `until`,
-  // none of which the lexer defines, and omitted `true`, `false` and `nothing`.
+test("the grammar's keyword list is a well-formed set within the language budget", () => {
+  // This deliberately does not assert the names. The previous version compared the grammar
+  // against a second hardcoded copy of the list written in this file, so the two could only
+  // disagree with each other: both fell behind the language and the test kept passing while
+  // the site mis-coloured `const` on every page. The names are compared against the generated
+  // reference by `scripts/audit-grammar.mjs`, which CI runs. What is asserted here is what a
+  // unit test can check with no network and no second copy.
   const source = readFileSync(join(HERE, "..", "src", "lib", "oqthara-grammar.js"), "utf8");
   const match = /export const OQ_KEYWORDS = \[([\s\S]*?)\];/.exec(source);
   assert.ok(match, "OQ_KEYWORDS array is present");
-  const keywords = [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]).sort();
-  assert.deepEqual(keywords, [
-    "and", "break", "catch", "continue", "data", "else", "end", "false", "for", "fun",
-    "if", "in", "not", "nothing", "or", "return", "true", "try", "use", "while",
-  ]);
-  assert.equal(keywords.length, 20);
+  const keywords = [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
+
+  assert.equal(new Set(keywords).size, keywords.length, "no keyword is listed twice");
+  for (const keyword of keywords) assert.match(keyword, /^[a-z]+$/, `${keyword} is a bare word`);
+  // The language fixes a budget of 30 keywords; a list longer than that is a stale grammar.
+  assert.ok(keywords.length <= 30, `${keywords.length} keywords is within the budget of 30`);
+  // `const` was the keyword this guard missed for an entire release, so it is named here.
+  assert.ok(keywords.includes("const"), "const is classified");
 });

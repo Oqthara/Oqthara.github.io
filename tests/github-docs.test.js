@@ -89,7 +89,7 @@ test("REGRESSION: loadCatalog resolves to an array with path, section, title and
 
   // "e is not iterable" happened because this was an object, not an array.
   assert.ok(Array.isArray(catalog), `loadCatalog must return an array, got ${typeof catalog}`);
-  assert.equal(catalog.length, 3);
+  assert.equal(catalog.length, 2);
   for (const entry of catalog) {
     assert.equal(typeof entry.path, "string");
     assert.equal(typeof entry.section, "string");
@@ -97,9 +97,11 @@ test("REGRESSION: loadCatalog resolves to an array with path, section, title and
     assert.match(entry.route, /^\/document\.html\?path=.+&ref=main$/);
     assert.ok(entry.title.length > 0);
   }
+  // The tree also carries `docs/adr/0003-bytecode.md`. Decision records are development
+  // material and stay on GitHub, so the catalogue must not include them — the site publishes
+  // user documentation only.
   assert.deepEqual(catalog.map((entry) => entry.path).sort(), [
     "docs/README.md",
-    "docs/adr/0003-bytecode.md",
     "docs/spec/language.md",
   ]);
   assert.equal(catalog.find((entry) => entry.path === "docs/spec/language.md").title, "Title of docs/spec/language.md");
@@ -118,7 +120,7 @@ test("validateTree rejects a payload without a tree array", () => {
 test("validateTree keeps only blob entries with string paths and ignores nested directories", () => {
   const payload = {
     tree: [
-      { path: "docs/a.md", type: "blob", size: 12 },
+      { path: "docs/spec/a.md", type: "blob", size: 12 },
       { path: "docs/spec", type: "tree", size: 0 },
       { path: "docs/b/c.md", type: "blob", size: "34" },
       { path: null, type: "blob", size: 0 },
@@ -131,7 +133,7 @@ test("validateTree keeps only blob entries with string paths and ignores nested 
   };
   const result = validateTree(payload);
   assert.deepEqual(result, [
-    { path: "docs/a.md", size: 12 },
+    { path: "docs/spec/a.md", size: 12 },
     { path: "docs/b/c.md", size: 34 },
     { path: "docs/c.md", size: 0 },
   ]);
@@ -141,7 +143,7 @@ test("loadTree uses the recursive tree API for the requested ref", async () => {
   const calls = [];
   __setFetchForTests(async (url) => {
     calls.push(url);
-    return response(treePayload(["docs/a.md"]));
+    return response(treePayload(["docs/spec/a.md"]));
   });
   const tree = await loadTree("v0.1.0-alpha.2");
   assert.equal(tree.length, 1);
@@ -150,7 +152,7 @@ test("loadTree uses the recursive tree API for the requested ref", async () => {
 });
 
 test("loadCatalog reads each Markdown title with bounded concurrency", async () => {
-  const paths = Array.from({ length: 20 }, (_, index) => `docs/doc-${index}.md`);
+  const paths = Array.from({ length: 20 }, (_, index) => `docs/spec/doc-${index}.md`);
   let inFlight = 0;
   let maxInFlight = 0;
   let titleRequests = 0;
@@ -176,9 +178,9 @@ test("loadCatalog reads each Markdown title with bounded concurrency", async () 
 test("loadCatalog keeps the path-derived title when one document cannot be read", async () => {
   __setFetchForTests(async (url) => {
     if (url === TREE_URL("main")) {
-      return response(treePayload(["docs/good.md", "docs/broken.md"]));
+      return response(treePayload(["docs/spec/good.md", "docs/spec/broken.md"]));
     }
-    if (url.endsWith("/docs/broken.md")) {
+    if (url.endsWith("/docs/spec/broken.md")) {
       return response("missing", { status: 404 });
     }
     return response("# Good Title\n");
@@ -187,10 +189,10 @@ test("loadCatalog keeps the path-derived title when one document cannot be read"
   const catalog = await loadCatalog("main");
   assert.ok(Array.isArray(catalog));
   assert.equal(catalog.length, 2);
-  const broken = catalog.find((entry) => entry.path === "docs/broken.md");
+  const broken = catalog.find((entry) => entry.path === "docs/spec/broken.md");
   assert.ok(broken, "the unreadable document must stay in the index");
   assert.equal(broken.title, "Broken");
-  assert.equal(catalog.find((entry) => entry.path === "docs/good.md").title, "Good Title");
+  assert.equal(catalog.find((entry) => entry.path === "docs/spec/good.md").title, "Good Title");
 });
 
 test("loadExamples returns every examples/**/*.oq, categorised and sorted", async () => {
@@ -250,7 +252,7 @@ test("loadExample rejects a non-example path without any network call", async ()
     calls += 1;
     return response("nope");
   });
-  await assert.rejects(loadExample("main", "docs/a.md"), (error) => {
+  await assert.rejects(loadExample("main", "docs/spec/a.md"), (error) => {
     assert.ok(error instanceof GitHubError);
     assert.match(error.message, /Not an example path/);
     return true;
@@ -339,8 +341,8 @@ test("caching: two loads of the same document make one request", async () => {
     calls += 1;
     return response("# Same\n");
   });
-  const first = await loadDocument("main", "docs/a.md");
-  const second = await loadDocument("main", "docs/a.md");
+  const first = await loadDocument("main", "docs/spec/a.md");
+  const second = await loadDocument("main", "docs/spec/a.md");
   assert.equal(calls, 1);
   assert.equal(first.title, second.title);
 });
@@ -353,9 +355,9 @@ test("caching: concurrent loads of the same document dedupe", async () => {
     return response("# Deduped\n");
   });
   const [a, b, c] = await Promise.all([
-    loadDocument("main", "docs/a.md"),
-    loadDocument("main", "docs/a.md"),
-    loadDocument("main", "docs/a.md"),
+    loadDocument("main", "docs/spec/a.md"),
+    loadDocument("main", "docs/spec/a.md"),
+    loadDocument("main", "docs/spec/a.md"),
   ]);
   assert.equal(calls, 1);
   assert.deepEqual([a, b, c].map((doc) => doc.title), ["Deduped", "Deduped", "Deduped"]);
@@ -367,10 +369,10 @@ test("caching: a different ref is a separate entry", async () => {
     calls.push(url);
     return response("# Doc\n");
   });
-  await loadDocument("main", "docs/a.md");
-  await loadDocument("v1", "docs/a.md");
+  await loadDocument("main", "docs/spec/a.md");
+  await loadDocument("v1", "docs/spec/a.md");
   assert.equal(calls.length, 2);
-  assert.deepEqual(calls, [rawUrl("docs/a.md", "main"), rawUrl("docs/a.md", "v1")]);
+  assert.deepEqual(calls, [rawUrl("docs/spec/a.md", "main"), rawUrl("docs/spec/a.md", "v1")]);
 });
 
 test("caching: a failed first load is not cached, so retry refetches", async () => {
@@ -380,8 +382,8 @@ test("caching: a failed first load is not cached, so retry refetches", async () 
     if (calls === 1) return response("boom", { status: 500 });
     return response("# Recovered\n");
   });
-  await assert.rejects(loadDocument("main", "docs/a.md"), GitHubError);
-  const doc = await loadDocument("main", "docs/a.md");
+  await assert.rejects(loadDocument("main", "docs/spec/a.md"), GitHubError);
+  const doc = await loadDocument("main", "docs/spec/a.md");
   assert.equal(calls, 2);
   assert.equal(doc.title, "Recovered");
 });
@@ -390,7 +392,7 @@ test("a 403 and a 429 produce rateLimited errors", async () => {
   for (const status of [403, 429]) {
     __resetCacheForTests();
     __setFetchForTests(async () => response("limited", { status }));
-    await assert.rejects(loadDocument("main", "docs/a.md"), (error) => {
+    await assert.rejects(loadDocument("main", "docs/spec/a.md"), (error) => {
       assert.equal(error.rateLimited, true);
       assert.equal(error.status, status);
       assert.match(error.message, /rate limit/i);
@@ -401,7 +403,7 @@ test("a 403 and a 429 produce rateLimited errors", async () => {
 
 test("a 404 is not rateLimited and carries a GitHub URL", async () => {
   __setFetchForTests(async () => response("missing", { status: 404 }));
-  await assert.rejects(loadDocument("v1", "docs/a.md"), (error) => {
+  await assert.rejects(loadDocument("v1", "docs/spec/a.md"), (error) => {
     assert.equal(error.rateLimited, false);
     assert.equal(error.status, 404);
     assert.match(error.url, /^https:\/\/github\.com\/Oqthara\/oqthara\//);
@@ -414,7 +416,7 @@ test("a network rejection produces a useful message", async () => {
   __setFetchForTests(async () => {
     throw new Error("ECONNREFUSED");
   });
-  await assert.rejects(loadDocument("main", "docs/a.md"), (error) => {
+  await assert.rejects(loadDocument("main", "docs/spec/a.md"), (error) => {
     assert.ok(error instanceof GitHubError);
     assert.match(error.message, /could not be reached/i);
     assert.match(error.url, /github\.com/);
@@ -429,7 +431,7 @@ test("an AbortError becomes a timeout message without waiting", async () => {
     throw error;
   });
   const started = Date.now();
-  await assert.rejects(loadDocument("main", "docs/a.md"), (error) => {
+  await assert.rejects(loadDocument("main", "docs/spec/a.md"), (error) => {
     assert.match(error.message, /time/i);
     return true;
   });
@@ -458,19 +460,23 @@ test("a malformed JSON tree body is an error, not an empty list", async () => {
 test("loadText is keyed by path and ref, and loadDocumentIndex is sorted", async () => {
   __setFetchForTests(async (url) => {
     if (url === TREE_URL("main")) {
-      return response(treePayload(["docs/zeta.md", "docs/alpha.md", "docs/spec/language.md"]));
+      return response(
+        treePayload(["docs/stdlib/reference.md", "docs/spec/language.md", "docs/README.md"]),
+      );
     }
     return response("# T\n");
   });
   const index = await loadDocumentIndex("main");
+  // Section first, then path inside a section: `Overview`, then `Specification`, then
+  // `Standard library`. The tree is deliberately not in this order.
   assert.deepEqual(index.map((entry) => entry.path), [
-    "docs/alpha.md",
-    "docs/zeta.md",
+    "docs/README.md",
     "docs/spec/language.md",
+    "docs/stdlib/reference.md",
   ]);
-  assert.equal(index[2].section, "Specification");
-  assert.equal(index[2].route, documentRoute("docs/spec/language.md", "main"));
-  assert.equal(index[1].sourceUrl, blobUrl("docs/zeta.md", "main"));
+  assert.deepEqual(index.map((entry) => entry.section), ["Overview", "Specification", "Standard library"]);
+  assert.equal(index[1].route, documentRoute("docs/spec/language.md", "main"));
+  assert.equal(index[2].sourceUrl, blobUrl("docs/stdlib/reference.md", "main"));
 });
 
 test("cache constants expose the documented policy", () => {

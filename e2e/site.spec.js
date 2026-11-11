@@ -110,7 +110,7 @@ test.describe("site", () => {
 
   test("4. documentation index is discovered from GitHub and grouped", async ({ page }) => {
     await openDocs(page);
-    expect(await page.locator(".doc-list a").count()).toBeGreaterThanOrEqual(15);
+    expect(await page.locator(".doc-list a").count()).toBeGreaterThanOrEqual(10);
     expect(await page.locator(".section-group").count()).toBeGreaterThanOrEqual(1);
     await expect(page.locator(".section-group h2").first()).toBeVisible();
   });
@@ -125,15 +125,25 @@ test.describe("site", () => {
   });
 
   test("6. a document outside every site list opens directly", async ({ page }) => {
-    await page.goto(DOC("docs/adr/0003-bytecode.md"));
+    // A published document that no index route links to still renders at its own address.
+    await page.goto(DOC("docs/spec/states/04-unified.md"));
     await waitForArticle(page);
     const text = await article(page).innerText();
     expect(text.length).toBeGreaterThan(200);
   });
 
+  // Development documentation lives on GitHub, next to the commits it describes. Accepting a
+  // decision record here would publish 47 of them, so the boundary gets its own assertion rather
+  // than trusting the allowlist to hold by accident.
+  test("6b. development documentation is refused with an explanation", async ({ page }) => {
+    await page.goto(DOC("docs/adr/0003-bytecode.md"));
+    await expect(page.locator(".status-block[role=alert]")).toBeVisible({ timeout: 25000 });
+    await expect(page.locator(".status-block[role=alert]")).toContainText("not published here");
+  });
+
   test("7. a directory-derived section appears in the index", async ({ page }) => {
     await openDocs(page);
-    await expect(page.locator(".section-group h2", { hasText: "Decision records" })).toBeVisible();
+    await expect(page.locator(".section-group h2", { hasText: "Specification" })).toBeVisible();
   });
 
   test("8. relative Markdown links resolve to canonical document routes", async ({ page }) => {

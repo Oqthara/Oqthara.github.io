@@ -6,38 +6,28 @@
 // set. It is registered with refractor so `rehype-prism-plus` can tokenise fenced blocks the
 // same way it handles Python, Java, JSON or Bash.
 //
-// Keyword budget: the language fixes its keyword count at 20 (see the docs sync check in the
-// language repository). The list below is those keywords, not an approximation.
+// Keyword budget: the language fixes its keyword count at a budget of 30 and currently uses
+// 21 (see the generated `docs/stdlib/reference.md` in the language repository, which renders
+// both numbers from the implementation). The list below is that set, not an approximation.
+//
+// Nothing here is enforced by comment. `scripts/audit-grammar.mjs` compares these lists with
+// the generated reference and fails when they disagree; before it existed the keyword list had
+// silently fallen one keyword behind and the builtin list was missing 70 of 155 functions.
 //
 // The order of the token definitions matters: a function call must be recognised before a
 // plain identifier, and a string before punctuation, or the first match wins and the rest of
 // the line is coloured as plain text.
 
 // The exact set from `Lexer.KEYWORDS` in Oqthara/oqthara, verified against the generated
-// standard library reference, which counts 20 keywords with a budget of 30. Anything not on
+// standard library reference, which counts 21 keywords with a budget of 30. Anything not on
 // this list is an identifier. In particular `elseif`, `raise`, `is` and `until` are not
 // keywords: `to` and `until` are contextual range operators recognised by the parser, and a
 // block continuation is written `else` followed by `if`.
 export const OQ_KEYWORDS = [
-  "and",
-  "break",
-  "catch",
-  "continue",
-  "data",
-  "else",
-  "end",
-  "false",
-  "for",
-  "fun",
-  "if",
-  "in",
-  "not",
-  "nothing",
-  "or",
-  "return",
-  "true",
-  "try",
-  "use",
+  "and", "break", "catch", "const", "continue",
+  "data", "else", "end", "false", "for",
+  "fun", "if", "in", "not", "nothing",
+  "or", "return", "true", "try", "use",
   "while",
 ];
 
@@ -45,31 +35,64 @@ export const OQ_KEYWORDS = [
 export const OQ_RANGE_OPERATORS = ["to", "until"];
 
 /**
- * Built-in functions that are always called with parentheses.
+ * Global functions: the names that may be called as `name(...)` with no receiver.
  *
  * Taken from the generated standard library reference (`docs/stdlib/reference.md`, produced by
- * `oq doc` from the implementation), not from memory. Methods such as `.upper()` are not listed:
- * `upper` is not a global function, and colouring it as one would be a lie.
+ * `oq doc` from the implementation), not from memory. That page's `## Global functions` table
+ * is the whole list, and this array is a copy of it.
+ *
+ * A name may be both a global function and a method. `upper` was previously excluded here on
+ * the argument that it is only a method, which was wrong: `upper("ab")` and `"ab".upper()` both
+ * return `AB`. Forgetting a name is not harmless — it falls through to the identifier rule and
+ * is coloured as a plain variable, which is the shape of a typo rather than a call.
+ *
+ * Methods that have *no* global equivalent (`.get()`, `.to_list()`) are still not listed. Only
+ * the reference's global table is authoritative for this list.
  */
 export const OQ_BUILTINS = [
-  "abs", "append", "args", "assert", "await", "ceil", "clamp", "clone", "contains",
-  "cpu_count", "cwd", "datetime", "delete", "done", "env", "error", "exists", "exit",
-  "file_size", "filter", "floor", "format", "http_get", "http_post", "input", "is_nothing",
-  "is_number", "is_text", "join", "json", "json_parse", "json_pretty", "json_write", "keys",
-  "length", "list", "list_files", "lower", "make_dir", "map", "matches", "max", "memory_mb",
-  "min", "now", "number", "par_map", "path_join", "path_name", "path_parent", "pop", "pow",
-  "random", "random_item", "range", "range_list", "read", "read_lines", "regex", "replace",
-  "repr", "reverse", "round", "run_command", "save", "set", "sleep", "sort", "sort_by",
-  "spawn", "split", "sqrt", "sum", "text", "timestamp", "today", "trim", "type_of", "unique",
-  "upper", "values", "write", "write_text", "zip",
+  "abs", "append", "arg_parse", "args", "assert",
+  "await", "base64_decode", "base64_encode", "bisect_left", "bisect_right",
+  "ceil", "clamp", "clone", "contains", "copy_file",
+  "cpu_count", "csv_parse", "csv_write", "cwd", "date_parse",
+  "datetime", "db_execute", "db_query", "db_transaction", "dedent_text",
+  "delete", "done", "enumerate", "env", "error",
+  "exists", "exit", "file_size", "fill_text", "filter",
+  "floor", "fnmatch", "format", "frozenset", "glob",
+  "gzip_compress", "gzip_decompress", "heap_pop", "heap_push", "hex_decode",
+  "hex_encode", "hmac_sha256", "http_get", "http_post", "indent_text",
+  "input", "instant_parse", "is_dir", "is_file", "is_nothing",
+  "is_number", "is_text", "is_uuid", "join", "json",
+  "json_parse", "json_pretty", "json_write", "keys", "length",
+  "list", "list_files", "log_debug", "log_enabled", "log_error",
+  "log_info", "log_level", "log_warn", "lower", "make_dir",
+  "map", "matches", "max", "md5", "mean",
+  "median", "memory_mb", "min", "mode", "move_file",
+  "mutex", "now", "number", "par_map", "path_join",
+  "path_name", "path_parent", "pbkdf2_sha256", "percentile", "pop",
+  "pow", "print", "push", "query_encode", "query_parse",
+  "random", "random_item", "range", "range_list", "read",
+  "read_bytes", "read_lines", "regex", "replace", "repr",
+  "reverse", "round", "run_command", "save", "secure_equal",
+  "secure_random_hex", "set", "sha1", "sha256", "shorten_text",
+  "sleep", "sort", "sort_by", "sorted", "spawn",
+  "split", "sqrt", "stdev", "sum", "text",
+  "timestamp", "today", "trim", "type_of", "tz_convert",
+  "unified_diff", "unique", "upper", "url_decode", "url_encode",
+  "url_join", "url_parse", "uuid", "values", "variance",
+  "walk", "wrap_text", "write", "write_bytes", "write_text",
+  "zip", "zip_compress", "zip_decompress", "zlib_compress", "zlib_decompress",
 ];
 
 /**
- * Built-ins that read as statements rather than calls.
+ * Global functions that also read as statements.
  *
  * `print "Hello"` and `input "Name? "` take their argument without parentheses, so they cannot
- * use the `name(` lookahead the call built-ins rely on. Without this list they fell through to
+ * use the `name(` lookahead the call builtins rely on. Without this list they fell through to
  * the generic identifier rule and were coloured as ordinary variables.
+ *
+ * Both names are also in `OQ_BUILTINS`, because `print("Hello")` is equally valid — the two
+ * patterns are alternatives, and listing a name in both is deliberate. The statement rules run
+ * first, so the parenthesised form is still coloured as a call through the `builtin` rule below.
  */
 export const OQ_STATEMENT_BUILTINS = ["print", "input"];
 

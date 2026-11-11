@@ -9,6 +9,7 @@ import {
   normalizePath,
   normalizeRepoPath,
   isDocumentPath,
+  isPublishedDocument,
   isExamplePath,
   isRenderablePath,
   rawUrl,
@@ -39,8 +40,8 @@ test("documentRoute builds the canonical document URL with an encoded path and r
   );
   // A ref containing a slash must not escape the query parameter.
   assert.equal(
-    documentRoute("docs/a.md", "feature/next"),
-    "/document.html?path=docs%2Fa.md&ref=feature%2Fnext",
+    documentRoute("docs/spec/a.md", "feature/next"),
+    "/document.html?path=docs%2Fspec%2Fa.md&ref=feature%2Fnext",
   );
 });
 
@@ -63,17 +64,17 @@ test("parseQuery round-trips a canonical route and defaults ref to main", () => 
     ref: "v0.1.0-alpha.2",
   });
 
-  assert.deepEqual(parseQuery("?path=docs/a.md"), { path: "docs/a.md", ref: DEFAULT_REF });
-  assert.deepEqual(parseQuery("path=docs/a.md&ref="), { path: "docs/a.md", ref: DEFAULT_REF });
+  assert.deepEqual(parseQuery("?path=docs/spec/a.md"), { path: "docs/spec/a.md", ref: DEFAULT_REF });
+  assert.deepEqual(parseQuery("path=docs/spec/a.md&ref="), { path: "docs/spec/a.md", ref: DEFAULT_REF });
 });
 
 test("parseQuery strips a leading ? and normalizes ./ and backslashes", () => {
-  assert.deepEqual(parseQuery("?path=./docs/a.md&ref=main"), { path: "docs/a.md", ref: "main" });
+  assert.deepEqual(parseQuery("?path=./docs/spec/a.md&ref=main"), { path: "docs/spec/a.md", ref: "main" });
   assert.deepEqual(parseQuery("?path=docs\\spec\\language.md&ref=main"), {
     path: "docs/spec/language.md",
     ref: "main",
   });
-  assert.deepEqual(parseQuery("?path=./docs/a.md&ref=main"), { path: "docs/a.md", ref: "main" });
+  assert.deepEqual(parseQuery("?path=./docs/spec/a.md&ref=main"), { path: "docs/spec/a.md", ref: "main" });
   assert.deepEqual(parseQuery(""), { path: "", ref: "main" });
 });
 
@@ -94,7 +95,7 @@ test("traversal cannot climb out of docs/", () => {
 });
 
 test("isDocumentPath accepts only docs/**/*.md", () => {
-  assert.equal(isDocumentPath("docs/a.md"), true);
+  assert.equal(isDocumentPath("docs/spec/a.md"), true);
   assert.equal(isDocumentPath("docs/x/y/z.md"), true);
   assert.equal(isDocumentPath("docs/a.MD"), true); // case-insensitive extension
   assert.equal(isDocumentPath("docs/a.txt"), false);
@@ -102,6 +103,49 @@ test("isDocumentPath accepts only docs/**/*.md", () => {
   assert.equal(isDocumentPath("docs/../x.md"), false);
   assert.equal(isDocumentPath(""), false);
   assert.equal(isDocumentPath("examples/a.md"), false);
+});
+
+// Fetch safety and publication scope are different questions. `isDocumentPath` guards the fetch;
+// `isPublishedDocument` decides whether the reader is ever offered the result. Development
+// documentation stays on GitHub, so the published set is an allowlist and the default is "not
+// published" -- a newly added docs/ directory is invisible until someone opts it in.
+test("isPublishedDocument publishes user documentation and nothing else", () => {
+  for (const path of [
+    "docs/spec/language.md",
+    "docs/reference/cli.md",
+    "docs/stdlib/reference.md",
+    "docs/guides/getting-started.md",
+    "docs/README.md",
+    "docs/spec/a.MD",
+    "docs\\spec\\a.md",
+  ]) {
+    assert.equal(isPublishedDocument(path), true, path);
+  }
+
+  for (const path of [
+    "docs/governance/alpha-4-requirement-matrix.md",
+    "docs/governance/alpha-3-closure-report.md",
+    "docs/adr/0003-bytecode.md",
+    "docs/alpha-4-phase-0-assessment.md",
+    "docs/some-new-directory/report.md",
+    "docs/language.md",
+    "docs/a.MD",
+    "README.md",
+    "examples/a.md",
+    "docs/a.txt",
+    "docs/../x.md",
+    "",
+  ]) {
+    assert.equal(isPublishedDocument(path), false, path);
+  }
+});
+
+test("isPublishedDocument never widens fetch safety", () => {
+  // Every published path must already be a fetchable document path.
+  for (const path of ["docs/spec/language.md", "docs/reference/cli.md", "docs/README.md"]) {
+    assert.equal(isPublishedDocument(path), true);
+    assert.equal(isDocumentPath(path), true);
+  }
 });
 
 test("isExamplePath accepts only examples/**/*.oq", () => {
@@ -188,19 +232,19 @@ test("resolveRelative builds canonical document routes and preserves the ref", (
 
 test("resolveRelative handles changelog, examples, unrendered files and external URLs", () => {
   assert.equal(resolveRelative("README.md", "CHANGELOG.md", "v1"), "/changelog.html");
-  assert.equal(resolveRelative("docs/a.md", "../CHANGELOG.md#v010", "main"), "/changelog.html#v010");
+  assert.equal(resolveRelative("docs/spec/a.md", "../../CHANGELOG.md#v010", "main"), "/changelog.html#v010");
   assert.equal(
     resolveRelative("README.md", "./examples/basics/hello.oq", "v2"),
     "/example.html?path=examples%2Fbasics%2Fhello.oq&ref=v2",
   );
   assert.equal(
-    resolveRelative("docs/a.md", "LICENSE", "main"),
-    "https://github.com/Oqthara/oqthara/blob/main/docs/LICENSE",
+    resolveRelative("docs/spec/a.md", "LICENSE", "main"),
+    "https://github.com/Oqthara/oqthara/blob/main/docs/spec/LICENSE",
   );
-  assert.equal(resolveRelative("docs/a.md", "https://example.com/x", "main"), "https://example.com/x");
-  assert.equal(resolveRelative("docs/a.md", "#local", "main"), "#local");
-  assert.equal(resolveRelative("docs/a.md", "javascript:alert(1)", "main"), null);
-  assert.equal(resolveRelative("docs/a.md", "?path=docs/a.md", "main"), "?path=docs/a.md");
+  assert.equal(resolveRelative("docs/spec/a.md", "https://example.com/x", "main"), "https://example.com/x");
+  assert.equal(resolveRelative("docs/spec/a.md", "#local", "main"), "#local");
+  assert.equal(resolveRelative("docs/spec/a.md", "javascript:alert(1)", "main"), null);
+  assert.equal(resolveRelative("docs/spec/a.md", "?path=docs/spec/a.md", "main"), "?path=docs/spec/a.md");
 });
 
 test("resolveImage sends relative images to the raw CDN and keeps absolute ones", () => {
@@ -208,9 +252,9 @@ test("resolveImage sends relative images to the raw CDN and keeps absolute ones"
     resolveImage("docs/adr/0001-x.md", "../assets/diagram.png", "v1"),
     "https://raw.githubusercontent.com/Oqthara/oqthara/v1/docs/assets/diagram.png",
   );
-  assert.equal(resolveImage("docs/a.md", "https://cdn.example/x.png", "main"), "https://cdn.example/x.png");
-  assert.equal(resolveImage("docs/a.md", "javascript:alert(1)", "main"), null);
-  assert.equal(resolveImage("docs/a.md", "mailto:x@y.z", "main"), null);
+  assert.equal(resolveImage("docs/spec/a.md", "https://cdn.example/x.png", "main"), "https://cdn.example/x.png");
+  assert.equal(resolveImage("docs/spec/a.md", "javascript:alert(1)", "main"), null);
+  assert.equal(resolveImage("docs/spec/a.md", "mailto:x@y.z", "main"), null);
 });
 
 test("safeUrl rejects script-bearing schemes and accepts safe ones", () => {
@@ -231,8 +275,8 @@ test("safeUrl rejects script-bearing schemes and accepts safe ones", () => {
     "http://example.com",
     "mailto:team@example.com",
     "#anchor",
-    "?path=docs/a.md",
-    "docs/a.md",
+    "?path=docs/spec/a.md",
+    "docs/spec/a.md",
     "../a.md",
     "",
   ]) {
@@ -278,8 +322,8 @@ test("isLegacyContentRoute recognises /docs/** and /examples/**", () => {
 });
 
 test("normalizeRepoPath is conservative but predictable", () => {
-  assert.equal(normalizeRepoPath("/docs/a.md"), "docs/a.md");
-  assert.equal(normalizeRepoPath("./docs/a.md"), "docs/a.md");
+  assert.equal(normalizeRepoPath("/docs/spec/a.md"), "docs/spec/a.md");
+  assert.equal(normalizeRepoPath("./docs/spec/a.md"), "docs/spec/a.md");
   assert.equal(normalizeRepoPath("docs\\a.md"), "docs/a.md");
   assert.equal(normalizeRepoPath(null), "");
 });
