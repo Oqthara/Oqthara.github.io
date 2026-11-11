@@ -13,8 +13,13 @@ on:
 permissions:
   contents: read
 
+# A pull request must not be able to cancel the run that is deploying production. Sharing one
+# group does exactly that: a merge landing while a push run is still in its browser suite
+# cancels the push run, and the commit that is actually being published then goes out with its
+# suite cut short. The group is keyed by ref so a newer push to the same branch still supersedes
+# an older one, while pull requests queue behind their own ref instead of cancelling `main`.
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
