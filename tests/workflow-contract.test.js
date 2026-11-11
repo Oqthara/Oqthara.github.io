@@ -491,6 +491,19 @@ describe("every job that checks out has read access to contents", () => {
     assert.equal(deploy.needs, "build");
   });
 
+  it("a pull request can never cancel the run that deploys production", async () => {
+    // Observed on 56eccac: the push run deployed successfully, but its `Cross-browser suite` was
+    // cancelled by a pull-request run that had joined the same `pages` group. The commit that
+    // went to production was therefore published with its browser suite cut short, and the run
+    // still reported success overall. The group must be keyed by ref so that only a newer run of
+    // the same ref supersedes an older one.
+    const document = await parsedWorkflow("pages.yml");
+    assert.equal(document.concurrency.group, "pages-${{ github.ref }}",
+      "a shared concurrency group lets a pull request cancel a main run");
+    assert.equal(document.concurrency["cancel-in-progress"], true,
+      "superseding an older run of the same ref is still wanted");
+  });
+
   it("the deploy job still runs after the artifact it publishes", async () => {
     const document = await parsedWorkflow("pages.yml");
     const build = document.jobs.build;
