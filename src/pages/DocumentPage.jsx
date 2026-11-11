@@ -111,7 +111,7 @@ export function DocumentPage({ query }) {
     );
   }
 
-  // A `path` that is not a documentation file is an error the reader can understand, not a
+  // A `path` outside the published documentation is an error the reader can understand, not a
   // request this site will ever make. It used to leave the loading skeleton on screen forever.
   if (!isPublishedDocument(path)) {
     return h(
@@ -123,8 +123,13 @@ export function DocumentPage({ query }) {
         h(
           "div",
           null,
-          h("h2", null, "That is not a documentation path"),
-          h("p", null, h("code", null, path), " is not a Markdown file under docs/."),
+          h("h2", null, "That document is not published here"),
+          h("p", null, h("code", null, path), " is not part of the published documentation."),
+          h(
+            "p",
+            null,
+            "Design notes, decision records and project governance are kept in the repository, next to the commits they describe.",
+          ),
           h(
             "div",
             { className: "status-block-actions" },
