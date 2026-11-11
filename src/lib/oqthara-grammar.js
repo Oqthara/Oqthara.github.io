@@ -222,7 +222,12 @@ export function oqtharaGrammar(Prism) {
     variable: /\b[a-zA-Z_]\w*\b/,
 
     // Longest first, or `**` is read as two `*` tokens and `->` as `-` then `>`.
-    operator: /\*\*|->|\.\.|[-+*/%=<>!|]=?/,
+    //
+    // `->` is the lambda arrow (`double = x -> x * 2`). It is not in the lexer's operator tables
+    // because the parser recognises it, the same way it recognises `to` and `until`.
+    // There is no `..` operator: the language has no such token, and the lexer reads two dots as
+    // a DOT followed by a DOT, which the parser rejects as a missing field name.
+    operator: /\*\*|->|[-+*/%=<>!|]=?/,
     punctuation: /[{}[\];,.:()]/,
   };
 }

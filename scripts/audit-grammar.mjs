@@ -23,17 +23,18 @@
 //
 // Scope
 // -----
-// Three lists are checked, because those are the three the grammar hardcodes:
+// Four checks, one per hardcoded structure in the grammar:
 //
 //   * `OQ_KEYWORDS` against the reference's `## Keywords` section;
 //   * `OQ_BUILTINS` plus `OQ_STATEMENT_BUILTINS` against `## Global functions`;
-//   * `OQ_RANGE_OPERATORS` against the range operators the parser recognises.
+//   * `OQ_RANGE_OPERATORS` against the range operators the parser recognises;
+//   * the grammar's operator rule against the lexer's two-character operator table.
 //
-// The third has no generated artefact, so it is read from the language repository's parser --
-// from GitHub by default, or from a checkout with `--local`. If the parser cannot be read at all
-// the check is reported as not evaluated rather than as a pass. The distinction matters: a check
-// that silently does nothing is worse than no check, because the absence of a failure is read as
-// evidence.
+// The last two have no generated artefact, so they are read from the language repository's parser
+// and lexer -- from GitHub by default, or from a checkout with `--local`. If a source cannot be
+// read the check is reported as not evaluated rather than as a pass. The distinction matters: a
+// check that silently does nothing is worse than no check, because the absence of a failure is
+// read as evidence.
 //
 // Exit codes
 // ----------
@@ -56,6 +57,7 @@ const DEFAULT_REF = "main";
 /** The generated reference, the only hand-editing-proof description of the language. */
 const REFERENCE_PATH = "docs/stdlib/reference.md";
 const PARSER_PATH = "oq-core/src/main/java/dev/oqthara/core/Parser.java";
+const LEXER_PATH = "oq-core/src/main/java/dev/oqthara/core/Lexer.java";
 
 const GRAMMAR_PATH = "src/lib/oqthara-grammar.js";
 
@@ -139,6 +141,72 @@ export function parserRangeOperators(source) {
   return filtered.length > 0 ? filtered : null;
 }
 
+/**
+ * The multi-character operators the lexer recognises.
+ *
+ * These are declared in `Lexer.TWO_CHAR`, so unlike the word operators they are a real table and
+ * can be read directly. A one-character operator is not collected: the grammar's pattern ends in
+ * a character class that already covers all of them, and listing 20 single characters would report
+ * noise rather than drift. What this catches is a new two-character operator -- the shape a
+ * language grows by -- added to the lexer and forgotten in the grammar.
+ */
+export function lexerOperators(source) {
+  const table = /TWO_CHAR\.put\("([^"]+)"/g;
+  const names = [...source.matchAll(table)].map((entry) => entry[1]);
+  return names.length > 0 ? [...new Set(names)].sort() : null;
+}
+
+/**
+ * The multi-character operators the grammar's operator pattern recognises.
+ *
+ * The grammar writes one alternation, ending in a character class for the single-character
+ * operators. Only the literal alternatives before that class are operators in their own right,
+ * so they are read separately from the class.
+ */
+export function grammarOperators(source) {
+  // The rule is written as `operator: /\*\*|->|[-+*/%=<>!|]=?/,` -- one line per rule, so the
+  // first match is the top-level operator rule rather than the one inside string interpolation.
+  const rule = /^\s*operator:\s*\/(.+?)\/,\s*$/m.exec(source);
+  if (!rule) return null;
+  const body = rule[1];
+  const classStart = body.lastIndexOf("[");
+  // The class covers the single-character operators, so the literal alternatives are only what
+  // precedes it: here `**` and `->`.
+  const literals = (classStart < 0 ? body : body.slice(0, classStart))
+    .split("|")
+    .map((part) => part.replace(/\\/g, ""))
+    .filter((part) => part.length > 0);
+  const classBody = classStart < 0 ? "" : body.slice(classStart + 1, body.lastIndexOf("]"));
+  const optional = /=\?$/.test(body.slice(body.lastIndexOf("]") + 1));
+  return {
+    literals: [...new Set(literals)],
+    // A character class is a set of first characters, so with a trailing `=?` it matches either
+    // the character alone or the character followed by `=`.
+    classChars: classBody.replace(/\\/g, ""),
+    optionalEquals: optional,
+  };
+}
+
+/**
+ * Two-character operators the grammar does not colour.
+ *
+ * Coverage, not set equality: the grammar names `**` and `->` as literals and covers the rest
+ * with a character class plus an optional `=`, which is a more compact spelling of the same
+ * table. Comparing sets would report `+=` as missing from a grammar that plainly handles it, so
+ * the check asks whether each declared operator can be matched at all.
+ */
+export function uncoveredOperators(operators, grammar) {
+  if (!operators || !grammar) return null;
+  const missing = operators.filter((operator) => {
+    if (grammar.literals.includes(operator)) return false;
+    if (operator.length === 1) return !grammar.classChars.includes(operator);
+    const [first, ...rest] = operator;
+    if (rest.length === 1 && rest[0] === "=") return !(grammar.optionalEquals && grammar.classChars.includes(first));
+    return true;
+  });
+  return { missing: missing.sort(), canonical: operators.length };
+}
+
 async function readRemote(path, ref) {
   const url = `https://raw.githubusercontent.com/${REPO}/${encodeURIComponent(ref)}/${path}`;
   const response = await fetch(url, { headers: { Accept: "text/plain" } });
@@ -168,7 +236,7 @@ function reportHuman(result) {
     const parts = [];
     if (check.missing.length) parts.push(`missing ${check.missing.join(", ")}`);
     if (check.unknown.length) parts.push(`unknown ${check.unknown.join(", ")}`);
-    if (check.suppressed.length) parts.push(`${check.suppressed.length} knowingly omitted`);
+    if (check.suppressed?.length) parts.push(`${check.suppressed.length} knowingly omitted`);
     lines.push(`- ${check.name} (${check.canonical} canonical): ${parts.length ? parts.join("; ") : "in step"}`);
   }
   return lines.join("\n");
@@ -186,19 +254,25 @@ async function main() {
     }
   }
 
+  const readSource = (path) =>
+    options.local
+      ? readFileSync(join(options.local, path), "utf8")
+      : readRemote(path, options.ref);
+
   let reference;
   let rangeOperators = null;
+  let operators = null;
   try {
-    reference = options.local
-      ? readFileSync(join(options.local, REFERENCE_PATH), "utf8")
-      : await readRemote(REFERENCE_PATH, options.ref);
+    reference = await readSource(REFERENCE_PATH);
     try {
-      const parserSource = options.local
-        ? readFileSync(join(options.local, PARSER_PATH), "utf8")
-        : await readRemote(PARSER_PATH, options.ref);
-      rangeOperators = parserRangeOperators(parserSource);
+      rangeOperators = parserRangeOperators(await readSource(PARSER_PATH));
     } catch {
       rangeOperators = null;
+    }
+    try {
+      operators = uncoveredOperators(lexerOperators(await readSource(LEXER_PATH)), grammarOperators(grammarSource));
+    } catch {
+      operators = null;
     }
   } catch (error) {
     console.error(`audit-grammar: ${error.message}`);
@@ -230,9 +304,17 @@ async function main() {
     {
       name: "range operators",
       evaluated: rangeOperators !== null,
-      reason: rangeOperators === null ? "--local=<checkout> is required to read the parser" : "",
+      reason: rangeOperators === null ? "the parser could not be read" : "",
       canonical: rangeOperators?.length ?? 0,
       ...compare(arrays.get("OQ_RANGE_OPERATORS") ?? [], rangeOperators ?? []),
+    },
+    {
+      name: "operator coverage",
+      evaluated: operators !== null,
+      reason: operators === null ? "the lexer or the grammar operator rule could not be read" : "",
+      canonical: operators?.canonical ?? 0,
+      missing: operators?.missing ?? [],
+      unknown: [],
     },
   ];
 

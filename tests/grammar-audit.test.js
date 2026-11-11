@@ -7,10 +7,13 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  grammarOperators,
+  lexerOperators,
   parserRangeOperators,
   readGrammarArrays,
   referenceFunctions,
   referenceKeywords,
+  uncoveredOperators,
 } from "../scripts/audit-grammar.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -167,3 +170,63 @@ function runAuditWithReference(reference) {
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Operators
+// ---------------------------------------------------------------------------
+
+const LEXER = `
+        TWO_CHAR.put("**", Token.Kind.STARSTAR);
+        TWO_CHAR.put("==", Token.Kind.EQEQ);
+        TWO_CHAR.put("!=", Token.Kind.NOTEQ);
+        TWO_CHAR.put("<=", Token.Kind.LE);
+        TWO_CHAR.put("+=", Token.Kind.PLUS_ASSIGN);
+`;
+
+test("lexerOperators reads the declared two-character table", () => {
+  assert.deepEqual(lexerOperators(LEXER), ["!=", "**", "+=", "<=", "=="]);
+  assert.equal(lexerOperators("no table here"), null);
+});
+
+test("grammarOperators separates the literals from the character class", () => {
+  const rule = "    operator: /\\*\\*|->|[-+*/%=<>!|]=?/,";
+  assert.deepEqual(grammarOperators(rule), {
+    literals: ["**", "->"],
+    classChars: "-+*/%=<>!|",
+    optionalEquals: true,
+  });
+  assert.equal(grammarOperators("no operator rule"), null);
+});
+
+test("coverage accepts the compact character-class spelling", () => {
+  const grammar = { literals: ["**", "->"], classChars: "-+*/%=<>!|", optionalEquals: true };
+  assert.deepEqual(uncoveredOperators(["**", "==", "+=", "<="], grammar), { missing: [], canonical: 4 });
+});
+
+test("coverage reports an operator the grammar cannot match", () => {
+  const grammar = { literals: ["**"], classChars: "-+", optionalEquals: false };
+  const result = uncoveredOperators(["**", "==", "->"], grammar);
+  assert.deepEqual(result.missing, ["->", "=="]);
+});
+
+test("coverage is evaluated, not skipped, when a source is unreadable", () => {
+  assert.equal(uncoveredOperators(null, { literals: [], classChars: "", optionalEquals: false }), null);
+  assert.equal(uncoveredOperators(["**"], null), null);
+});
+
+// The language has no `..` operator: the lexer reads two dots as a DOT then a DOT, and
+// `x .. 3` is rejected as a missing field name. A grammar rule for it would colour a token that
+// cannot occur, so this asserts the phantom stays gone.
+test("the grammar defines no operator the language lacks", () => {
+  const rule = /^\s*operator:\s*\/(.+?)\/,\s*$/m.exec(GRAMMAR);
+  assert.ok(rule, "the top-level operator rule should be present");
+  assert.ok(!rule[1].includes("\\."), "the operator rule must not carry a `..` alternative");
+});
+
+test("the grammar covers every operator the lexer declares", () => {
+  // The lexer fixture above is the shape of `Lexer.TWO_CHAR`; the real table is read by the live
+  // audit against GitHub, so this asserts the reader and the grammar agree on a realistic sample.
+  const result = uncoveredOperators(lexerOperators(LEXER), grammarOperators(GRAMMAR));
+  assert.deepEqual(result.missing, []);
+  assert.equal(result.canonical, 5);
+});
