@@ -591,6 +591,54 @@ test("the sync planner writes only changed documents and never hard-deletes", ()
   assert.deepEqual(fullPlan.writes.map((write) => write.data.path), ["docs/changed.md", "docs/kept.md"]);
 });
 
+// The scope change is a migration, not just a filter for new content. Before the publication
+// allowlist existed, `classifyPath` accepted anything under `docs/`, so a governance document or
+// a decision record may already be mirrored and readable. Narrowing the allowlist only stops
+// *new* writes; those documents leave the mirror only if the planner reports them as unpublish
+// candidates, which is what this asserts.
+test("documents that leave the publication allowlist become unpublish candidates", () => {
+  const now = new Date().toISOString();
+  const publishedBefore = [
+    "docs/adr/0003-bytecode.md",
+    "docs/governance/alpha-3-closure.md",
+    "docs/spec/language.md",
+  ];
+
+  // `classifyPath` now refuses the two governance paths outright.
+  assert.equal(classifyPath("docs/adr/0003-bytecode.md"), null);
+  assert.equal(classifyPath("docs/governance/alpha-3-closure.md"), null);
+
+  // A mirror written under the old rule still holds records for them.
+  const existing = new Map(
+    publishedBefore.map((path) => [
+      syncIdFor("documentation", path),
+      buildSyncRecord({
+        collection: "documentation",
+        path,
+        status: "published",
+        contentHash: contentHashOf("# whatever"),
+        now,
+      }).data,
+    ]),
+  );
+
+  // Reconciling against the current (narrower) allowlist must withdraw them, not leave them up.
+  const desired = publishedBefore
+    .filter((path) => classifyPath(path))
+    .map((path) => buildDocumentRecord({ path, content: "# doc", collection: "documentation", now }));
+  const plan = planSync({ desired, existing });
+
+  assert.deepEqual(
+    plan.unpublish.map((entry) => entry.path).sort(),
+    ["docs/adr/0003-bytecode.md", "docs/governance/alpha-3-closure.md"],
+    "a document dropped from the allowlist must be withdrawn, not silently left published",
+  );
+  // The kept document's fixture hash does not match its new content, so it is rewritten rather
+  // than reported unchanged; what matters here is that it is not withdrawn.
+  assert.deepEqual(plan.writes.map((entry) => entry.data.path), ["docs/spec/language.md"]);
+  assert.deepEqual(plan.unchanged, []);
+});
+
 test("oversized content is skipped whole and recorded, never truncated", () => {
   const big = buildDocumentRecord({
     path: "docs/big.md",
