@@ -110,6 +110,53 @@ test("hand-written blocks highlight through the same grammar set", () => {
   assert.match(html, /token interpolation/);
 });
 
+// The constructs Alpha 4 added -- classes, contracts, init blocks, `implements` and `immutable`
+// data -- are not lexer keywords, so before these rules existed the site rendered them as plain
+// variables: the declaration had no shape at all. Each case below is coloured only in the
+// position the parser accepts it.
+test("contextual keywords colour in the position the parser accepts them", () => {
+  for (const [code, rule, word] of [
+    ["class Point\n  x = 1\nend", "class-declaration", "class"],
+    ["contract Shape\n  area()\nend", "contract-declaration", "contract"],
+    ["init\n  x = 1\nend", "init-block", "init"],
+    ["class P implements Shape\nend", "implements-clause", "implements"],
+    ["data Point(x, y) immutable", "immutable-modifier", "immutable"],
+  ]) {
+    const html = renderToStaticMarkup(h(Fragment, null, highlightToReact(code, "oq")));
+    assert.match(html, new RegExp(`token[^"]*${rule}`), `${word} is marked as ${rule}`);
+    // The word itself must carry keyword colouring inside that structure, not merely sit next to
+    // it: a rule that matched the trailing name and left the word plain would still pass the
+    // assertion above.
+    assert.match(
+      html,
+      new RegExp(`token keyword">\\s*${word}|token [a-z-]+ keyword">\\s*${word}`),
+      `${word} is itself a keyword inside ${rule}`,
+    );
+  }
+});
+
+// The mirror image: the same words used as ordinary identifiers must stay plain. Colouring them
+// everywhere would be a lie, because `immutable = 1` names a variable (ADR-0028) and `class` is a
+// perfectly good variable name.
+test("the same words stay plain when used as identifiers", () => {
+  for (const [code, word] of [
+    ["immutable = 1", "immutable"],
+    ["class = 5", "class"],
+    ["init = 3", "init"],
+    ["x = init + 1", "init"],
+    ["immutable = 1\nprint immutable", "immutable"],
+    ["data P(a) immutable = 1", "immutable"],
+  ]) {
+    const html = renderToStaticMarkup(h(Fragment, null, highlightToReact(code, "oq")));
+    assert.doesNotMatch(
+      html,
+      /token[^"]*(class-declaration|contract-declaration|implements-clause|init-block|immutable-modifier)/,
+      `${code} carries no structural colour`,
+    );
+    assert.match(html, new RegExp(`token variable">[^<]*${word}`), `${word} is a plain variable in ${code}`);
+  }
+});
+
 test("python, java, json and bash highlight outside Markdown too", () => {
   for (const [language, code] of Object.entries({
     python: "x = 1",

@@ -8,7 +8,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   grammarOperators,
+  lexerKeywords,
   lexerOperators,
+  parserContextualKeywords,
   parserRangeOperators,
   readGrammarArrays,
   referenceFunctions,
@@ -63,7 +65,13 @@ test("the global functions table stops at the next section", () => {
 
 test("the grammar's exported arrays are read by name", () => {
   const arrays = readGrammarArrays(GRAMMAR);
-  for (const name of ["OQ_KEYWORDS", "OQ_BUILTINS", "OQ_STATEMENT_BUILTINS", "OQ_RANGE_OPERATORS"]) {
+  for (const name of [
+    "OQ_KEYWORDS",
+    "OQ_BUILTINS",
+    "OQ_STATEMENT_BUILTINS",
+    "OQ_RANGE_OPERATORS",
+    "OQ_CONTEXTUAL_KEYWORDS",
+  ]) {
     assert.ok(arrays.has(name), `${name} is declared`);
     assert.ok(arrays.get(name).length > 0, `${name} is not empty`);
   }
@@ -212,6 +220,59 @@ test("coverage reports an operator the grammar cannot match", () => {
 test("coverage is evaluated, not skipped, when a source is unreadable", () => {
   assert.equal(uncoveredOperators(null, { literals: [], classChars: "", optionalEquals: false }), null);
   assert.equal(uncoveredOperators(["**"], null), null);
+});
+
+test("the lexer's keyword set is read from its declaration", () => {
+  const lexer = 'KEYWORDS = Set.of("if", "else", "fun");';
+  assert.deepEqual(lexerKeywords(lexer), ["else", "fun", "if"]);
+  assert.equal(lexerKeywords("no declaration here"), null);
+});
+
+// `class`, `contract`, `init`, `immutable` and `implements` are not lexer keywords: `immutable = 1`
+// names a variable (ADR-0028). The parser reads them by comparing the lexeme, so they only get
+// coloured because the grammar names them. This is the check that notices when the grammar does
+// not -- before it existed, all five rendered as plain variables and nothing failed.
+test("contextual keywords are read from the parser's lexeme comparisons", () => {
+  const lexer = 'KEYWORDS = Set.of("if", "else", "fun", "data");';
+  const parser = [
+    'if (peek().lexeme().equals("class")) return declaration();',
+    'if (peek().lexeme().equals("contract")) return contract();',
+    'if (matchKeyword("init")) return block();',
+    // `if` and `data` are real tokens; testing for them does not make them contextual.
+    'if (peek().lexeme().equals("if")) return ifStatement();',
+    'if (peek().lexeme().equals("data")) return dataDeclaration();',
+  ].join("\n");
+  const reserved = lexerKeywords(lexer);
+  assert.deepEqual(parserContextualKeywords(parser, reserved), ["class", "contract", "init"]);
+});
+
+test("range operators are not also reported as contextual keywords", () => {
+  // `to` and `until` are read the same way, but the range-operator check already owns them.
+  // Reporting them twice would make one missing rule look like two.
+  const lexer = 'KEYWORDS = Set.of("if");';
+  const parser = 'text.equals("to") || text.equals("until") || text.equals("class")';
+  const ranges = parserRangeOperators(parser);
+  assert.deepEqual(parserContextualKeywords(parser, lexerKeywords(lexer), ranges), ["class"]);
+});
+
+test("no contextual keywords is null, so the audit cannot pass by reading nothing", () => {
+  assert.equal(parserContextualKeywords("nothing here", ["if"]), null);
+});
+
+test("the grammar covers every contextual keyword the parser reads", () => {
+  // The real parser is read by the live audit; this pins the exported array against a realistic
+  // sample so a rule removed from the grammar fails here as well as in `npm run audit:grammar`.
+  const arrays = readGrammarArrays(GRAMMAR);
+  const declared = arrays.get("OQ_CONTEXTUAL_KEYWORDS");
+  assert.deepEqual(declared, ["class", "contract", "immutable", "implements", "init"].sort());
+  const parser = [
+    'peek().lexeme().equals("class")',
+    'peek().lexeme().equals("contract")',
+    'peek().lexeme().equals("implements")',
+    'peek().lexeme().equals("immutable")',
+    'matchKeyword("init")',
+  ].join("\n");
+  assert.deepEqual(parserContextualKeywords(parser, []), [...declared].sort());
 });
 
 // The language has no `..` operator: the lexer reads two dots as a DOT then a DOT, and
