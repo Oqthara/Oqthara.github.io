@@ -28,10 +28,11 @@
 //   * `OQ_KEYWORDS` against the reference's `## Keywords` section;
 //   * `OQ_BUILTINS` plus `OQ_STATEMENT_BUILTINS` against `## Global functions`;
 //   * `OQ_RANGE_OPERATORS` against the range operators the parser recognises;
-//   * the grammar's operator rule against the lexer's two-character operator table.
+//   * the grammar's operator rule against the lexer's two-character operator table;
+//   * `OQ_CONTEXTUAL_KEYWORDS` against the words the parser reads by position.
 //
-// The last two have no generated artefact, so they are read from the language repository's parser
-// and lexer -- from GitHub by default, or from a checkout with `--local`. If a source cannot be
+// The last three have no generated artefact, so they are read from the language repository's
+// parser and lexer -- from GitHub by default, or from a checkout with `--local`. If a source cannot be
 // read the check is reported as not evaluated rather than as a pass. The distinction matters: a
 // check that silently does nothing is worse than no check, because the absence of a failure is
 // read as evidence.
@@ -142,6 +143,42 @@ export function parserRangeOperators(source) {
 }
 
 /**
+ * The declaration and body words the parser reads by position rather than as tokens.
+ *
+ * `class`, `contract`, `init`, `immutable` and `implements` are identifiers everywhere else, so
+ * they cannot be lexer keywords -- `immutable = 1` names a variable (ADR-0028). The parser
+ * recognises them by comparing the lexeme, which is the same shape `to` and `until` take, so the
+ * same kind of reading finds them.
+ *
+ * Candidate words are taken from every string literal the parser compares a lexeme against, then
+ * narrowed to the ones the lexer does *not* already declare. That narrowing is what tells a
+ * contextual word apart from an ordinary keyword the parser happens to test for: `if`, `else`,
+ * `end`, `fun`, `data` and `catch` all appear in such comparisons and all are real tokens.
+ *
+ * The lexer's keyword set is passed in rather than hardcoded, so the split cannot drift from it.
+ * `to` and `until` are subtracted for the same reason: the range-operator check already owns them,
+ * and reporting them twice would make one missing rule look like two.
+ */
+export function parserContextualKeywords(source, lexerKeywords, rangeOperators) {
+  const reserved = new Set([...(lexerKeywords ?? []), ...(rangeOperators ?? [])]);
+  const compared = new Set();
+  // `peek().lexeme().equals("class")` and `matchKeyword("else")` are the two spellings the
+  // parser uses; reading only one missed whichever style a given construct happened to use.
+  for (const match of source.matchAll(/\.equals\("([a-z_]+)"\)/g)) compared.add(match[1]);
+  for (const match of source.matchAll(/matchKeyword\("([a-z_]+)"\)/g)) compared.add(match[1]);
+  const contextual = [...compared].filter((word) => !reserved.has(word)).sort();
+  return contextual.length > 0 ? contextual : null;
+}
+
+/** The keywords the lexer declares, as the reserved set. */
+export function lexerKeywords(source) {
+  const declared = /KEYWORDS\s*=\s*Set\.of\(([\s\S]*?)\)/.exec(source);
+  if (!declared) return null;
+  const names = [...declared[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]).sort();
+  return names.length > 0 ? names : null;
+}
+
+/**
  * The multi-character operators the lexer recognises.
  *
  * These are declared in `Lexer.TWO_CHAR`, so unlike the word operators they are a real table and
@@ -247,7 +284,12 @@ async function main() {
 
   const grammarSource = readFileSync(GRAMMAR_PATH, "utf8");
   const arrays = readGrammarArrays(grammarSource);
-  for (const required of ["OQ_KEYWORDS", "OQ_BUILTINS", "OQ_STATEMENT_BUILTINS"]) {
+  for (const required of [
+    "OQ_KEYWORDS",
+    "OQ_BUILTINS",
+    "OQ_STATEMENT_BUILTINS",
+    "OQ_CONTEXTUAL_KEYWORDS",
+  ]) {
     if (!arrays.has(required)) {
       console.error(`audit-grammar: ${GRAMMAR_PATH} no longer declares ${required}`);
       process.exit(3);
@@ -262,12 +304,20 @@ async function main() {
   let reference;
   let rangeOperators = null;
   let operators = null;
+  let contextual = null;
   try {
     reference = await readSource(REFERENCE_PATH);
     try {
-      rangeOperators = parserRangeOperators(await readSource(PARSER_PATH));
+      const parserSource = await readSource(PARSER_PATH);
+      rangeOperators = parserRangeOperators(parserSource);
+      contextual = parserContextualKeywords(
+        parserSource,
+        lexerKeywords(await readSource(LEXER_PATH)),
+        rangeOperators,
+      );
     } catch {
       rangeOperators = null;
+      contextual = null;
     }
     try {
       operators = uncoveredOperators(lexerOperators(await readSource(LEXER_PATH)), grammarOperators(grammarSource));
@@ -307,6 +357,13 @@ async function main() {
       reason: rangeOperators === null ? "the parser could not be read" : "",
       canonical: rangeOperators?.length ?? 0,
       ...compare(arrays.get("OQ_RANGE_OPERATORS") ?? [], rangeOperators ?? []),
+    },
+    {
+      name: "contextual keywords",
+      evaluated: contextual !== null,
+      reason: contextual === null ? "the parser or lexer could not be read" : "",
+      canonical: contextual?.length ?? 0,
+      ...compare(arrays.get("OQ_CONTEXTUAL_KEYWORDS") ?? [], contextual ?? []),
     },
     {
       name: "operator coverage",

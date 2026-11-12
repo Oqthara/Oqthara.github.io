@@ -35,6 +35,21 @@ export const OQ_KEYWORDS = [
 export const OQ_RANGE_OPERATORS = ["to", "until"];
 
 /**
+ * Declaration and body words the parser reads by position rather than as tokens.
+ *
+ * `Lexer.KEYWORDS` does not contain these and must not: `immutable = 1` still names a variable
+ * (ADR-0028), and `class` is only a declaration when a name and a field list follow it. The
+ * parser decides by looking at the word and its neighbours, which is why they are called
+ * contextual.
+ *
+ * They are still structure, and a reader sees them as structure. `class Counter` and `init`
+ * were rendered as plain variables until this list existed, so the two constructs Alpha 4 added
+ * on top of `data` — classes and contracts — were the only parts of the language with no
+ * colour at all.
+ */
+export const OQ_CONTEXTUAL_KEYWORDS = ["class", "contract", "immutable", "implements", "init"];
+
+/**
  * Global functions: the names that may be called as `name(...)` with no receiver.
  *
  * Taken from the generated standard library reference (`docs/stdlib/reference.md`, produced by
@@ -178,6 +193,55 @@ export function oqtharaGrammar(Prism) {
         keyword: /\bdata\b/,
         "class-name": /[A-Z]\w*$/,
       },
+    },
+
+    // The contextual words of `OQ_CONTEXTUAL_KEYWORDS`, each coloured only in the position the
+    // parser accepts it. Colouring them as plain keywords would be wrong: `class` and `init`
+    // are ordinary identifiers anywhere else, and `immutable = 1` names a variable.
+    "class-declaration": {
+      pattern: /\bclass\s+[A-Z]\w*/,
+      inside: {
+        keyword: /\bclass\b/,
+        "class-name": /[A-Z]\w*$/,
+      },
+    },
+
+    "contract-declaration": {
+      pattern: /\bcontract\s+[A-Z]\w*/,
+      inside: {
+        keyword: /\bcontract\b/,
+        "class-name": /[A-Z]\w*$/,
+      },
+    },
+
+    // `class Circle(r) implements Shape` -- the clause, and the contract it names.
+    "implements-clause": {
+      pattern: /\bimplements\s+[A-Z]\w*/,
+      inside: {
+        keyword: /\bimplements\b/,
+        "class-name": /[A-Z]\w*$/,
+      },
+    },
+
+    // `init` is the initialiser block, written alone on its line inside a class body. The
+    // parser accepts it only there, so a line of exactly `init` is the shape to match.
+    "init-block": {
+      pattern: /^[ \t]*init[ \t]*$/m,
+      inside: {
+        keyword: /\binit\b/,
+      },
+    },
+
+    // `data Point(x, y) immutable` -- the trailing modifier.
+    //
+    // The parser reads it immediately after a `data` field list's closing `)` and requires the
+    // line to end there (ADR-0028). Matching only the end-of-line half was not enough: in
+    // `print immutable` the argument is also the last thing on its line, so the word was
+    // coloured as a modifier on a line that declares nothing.
+    "immutable-modifier": {
+      pattern: /(?<=\)) +immutable\b(?=[ \t]*(?:;|\n|$))/,
+      greedy: true,
+      alias: "keyword",
     },
 
     "function-definition": {
