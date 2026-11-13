@@ -53,12 +53,14 @@ jobs:
           path: .docs
           persist-credentials: false
 
-      # Advisory, not gating: the grammar's coverage of the language is tracked by
-      # `scripts/audit-grammar.mjs`, and this reports what a reader would actually see in the
-      # published examples. Requiring it to pass would block a documentation fix on a grammar
-      # fix, and the two are deliberately allowed to move independently.
+      # Blocking. The audit reports drift -- a documented structure the grammar cannot colour --
+      # and untagged blocks that would render with no grammar at all. Its baseline on `main` is
+      # clean, so any finding is a regression introduced by the change under review.
+      #
+      # This used to be advisory on the theory that a documentation fix should not wait for a
+      # grammar fix. That reasoning was wrong: a finding in this audit *is* the pairing of the
+      # two, and the change that introduces it is the change that can resolve it.
       - name: Audit the published code blocks
-        continue-on-error: true
         run: node scripts/audit-code-blocks.mjs --docs=.docs
 
       # `firebase-tools` 15 refuses to start the emulator on a JRE older than 21, and the

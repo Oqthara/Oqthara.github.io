@@ -14,9 +14,10 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   audit,
@@ -25,6 +26,7 @@ import {
   knownStructures,
   publishedDocuments,
   publishedSections,
+  isTranscript,
   stripCommentsAndStrings,
 } from "../scripts/audit-code-blocks.mjs";
 
@@ -146,6 +148,62 @@ test("an Oqthara-shaped block with no tag is reported as untagged", () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test("an untagged block that infers no language is reported as uncoloured", () => {
+  // The site infers a language for a bare fence before rendering it, so an untagged block is
+  // only a defect when the inference declines too: then the example is drawn with no grammar at
+  // all. Two `print` lines score above the threshold, so the block is untagged but still
+  // coloured, and the two counts must not be confused.
+  const root = project({ document: "```\nprint upper(\"a\")\nprint length(\"a\")\n```\n" });
+  const result = run(root);
+  assert.equal(result.untagged.length, 1);
+  assert.equal(result.uncoloured.length, 0, "inference colours this block, so it is not a defect");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("an untagged block the inference declines is reported as uncoloured", () => {
+  // A single short call carries one weak signal -- `upper` is a builtin, `fraction_add` is not
+  // in the grammar's builtin list -- so the score stays under the threshold and the block would
+  // render plain while still being Oqthara. This is the finding the phase exists to catch.
+  const root = project({ document: "```\nfraction_add(1, 2)\n```\n" });
+  const result = run(root);
+  assert.deepEqual(
+    result.uncoloured.map((u) => u.line),
+    [1],
+    "the block contains a canonical structure and infers no language",
+  );
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("quoted diagnostics are output, not source, and are not reported", () => {
+  // The canonical documents quote compiler output inside bare fences. `error` is itself a
+  // grammar word, so a word-matching audit reports these blocks; plain rendering is correct for
+  // them and colouring them as Oqthara would teach a structure the transcript does not have.
+  const root = project({ document: "```\nerror: upper() needs 1 argument\n```\n" });
+  const result = run(root);
+  assert.equal(result.uncoloured.length, 0);
+  assert.equal(isTranscript("error: upper() needs 1 argument"), true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("a shell prompt introducing a command is a transcript, not an example", () => {
+  assert.equal(isTranscript("$ java -jar oq.jar build hello.oq"), true);
+  assert.equal(isTranscript("codepath: interpreter launcher"), true);
+  // A real program is never mistaken for a transcript, whichever line it starts on.
+  assert.equal(isTranscript('print upper("a")'), false);
+});
+
+test("a diagram is not reported as an uncoloured example", () => {
+  // `looksLikeArt` already decides this for the renderer, so the audit inherits the site's own
+  // answer instead of inventing a second, disagreeing rule.
+  const diagram = "source (.oq)\n   |\n   v\n Lexer -> tokens\n   |\n   v\n Parser -> AST";
+  assert.equal(isTranscript(diagram), true);
+});
+
+test("an example that mentions an output line is still source", () => {
+  // The exclusion must not swallow a real program: one source line is enough to keep the block.
+  assert.equal(isTranscript('print upper("a")\nerror: nope'), false);
+});
+
 test("a block tagged with another language is not scanned", () => {
   // The body is Oqthara on purpose: were the language filter removed, this block would be
   // scanned and `fraction_add` reported. A body that is not Oqthara either way would let the
@@ -163,6 +221,45 @@ test("an annotated shell comment is not mistaken for an Oqthara block", () => {
   const result = run(root);
   assert.deepEqual(result.findings, []);
   assert.equal(result.untagged.length, 0);
+  rmSync(root, { recursive: true, force: true });
+});
+
+// The exit code is the audit's contract with CI, and it lives in the command-line entry point
+// rather than in `audit()`, so it is only tested by running the script. Three mutations that
+// broke the contract in the past were invisible to tests that called `audit()` directly.
+// Run from the fixture root so the script resolves `src/lib/oqthara-grammar.js` against the
+// fixture grammar. The script reads that path relative to the working directory, which is what
+// lets a test control it without importing the module under test.
+function runCli(root) {
+  return spawnSync(process.execPath, [resolve("scripts/audit-code-blocks.mjs"), `--docs=${root}`], {
+    cwd: root,
+    encoding: "utf8",
+  });
+}
+
+test("the audit exits 2 when an untagged block would render uncoloured", () => {
+  // `upper` is in the grammar, so this block produces no drift finding. The only finding is
+  // that it would render uncoloured, which is what makes this case isolate the exit contract:
+  // an implementation that only counts grammar drift exits 0 here.
+  const root = project({ document: "```\nupper(\"a\")\n```\n" });
+  const result = runCli(root);
+  assert.equal(result.status, 2, "a block that renders with no grammar is drift");
+  assert.match(result.stdout, /UNCOLOURED/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("the audit exits 2 when a canonical structure is missing from the grammar", () => {
+  const root = project({ document: "```oq\nfraction_add(1, 2)\n```\n" });
+  const result = runCli(root);
+  assert.equal(result.status, 2, "a structure the grammar cannot colour is drift");
+  assert.match(result.stdout, /DRIFT/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("the audit exits 0 when every block is coloured and every structure known", () => {
+  const root = project({ document: "```oq\nprint upper(\"a\")\n```\n" });
+  const result = runCli(root);
+  assert.equal(result.status, 0, "a clean baseline must not fail CI");
   rmSync(root, { recursive: true, force: true });
 });
 

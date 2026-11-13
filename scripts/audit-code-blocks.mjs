@@ -40,11 +40,18 @@
 //
 // Exit codes
 // ----------
-//   0  every structure in the published blocks is one the grammar knows
+//   0  every structure in the published blocks is one the grammar knows, and every untagged
+//      block containing canonical structures still infers a language and renders coloured
 //   1  usage error
-//   2  drift: a block uses a structure the grammar cannot colour, or an Oqthara-looking block
-//      is not tagged, so it is rendered with no grammar at all
+//   2  drift: a block uses a structure the grammar cannot colour, or an untagged block that
+//      contains canonical structures is left with no language at all and renders uncoloured
 //   3  the documents could not be read
+//
+// "Untagged" and "uncoloured" are not the same thing. The site runs the same inference before
+// rendering (`src/lib/infer-language.js`), so a bare fence is usually coloured anyway; only a
+// block the inference *declines* renders plain. Transcribed output -- an `error:` diagnostic, a
+// `codepath:` trace, a `$` prompt, or a diagram -- is expected to render plain, because colouring
+// it would assert a program structure the text does not have.
 //
 // Usage
 //   node scripts/audit-code-blocks.mjs --docs=/path/to/oqthara
@@ -52,6 +59,7 @@
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { inferLanguage, looksLikeArt } from "../src/lib/infer-language.js";
 
 /** The grammar's own source, read the same way `audit-grammar.mjs` reads it. */
 const GRAMMAR_PATH = "src/lib/oqthara-grammar.js";
@@ -265,6 +273,36 @@ export function stripCommentsAndStrings(body) {
 }
 
 /**
+ * A line that can only be program *output*, never program source.
+ *
+ * The canonical documents quote diagnostics inside bare fences: an `error:` line, a `help:`
+ * hint, a `codepath:` launcher trace, or a `$` prompt introducing a command. Those blocks
+ * mention canonical names -- `error`, `values` and `use` are grammar words in their own right --
+ * so a word-matching test alone reports them. Plain rendering is correct for output, and
+ * colouring it as Oqthara would assert a structure the transcript does not have.
+ */
+const OUTPUT_LINE =
+  /^\s*(?:\$|>|PS>|error:|warning:|help:|note:|codepath:|Exception\b|at\s+[\w.$]+\()/;
+
+/**
+ * True when a block is a transcript or a diagram rather than a program.
+ *
+ * Two independent signals, both conservative:
+ *
+ *   - it is art (a diagram, a tree, or a table), which `looksLikeArt` already decides for the
+ *     renderer, so the audit and the site agree about it by construction; or
+ *   - every non-empty line is an output line, so there is no source line anywhere in it.
+ */
+export function isTranscript(body) {
+  if (looksLikeArt(body)) return true;
+  const lines = String(body ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  return lines.length > 0 && lines.every((line) => OUTPUT_LINE.test(line));
+}
+
+/**
  * The audit itself: which canonical structures appear in the published blocks while the grammar
  * cannot colour them, and which Oqthara-shaped blocks carry no tag at all.
  *
@@ -282,6 +320,7 @@ export function audit({ root, docs, grammar, known, canonical }) {
   const allCanonical = new Set([...canonical.keywords, ...canonical.functions, ...DECLARATION_WORDS]);
   const findings = [];
   const untagged = [];
+  const uncoloured = [];
   let blocks = 0;
   let oqBlocks = 0;
   let scannedBlocks = 0;
@@ -301,7 +340,17 @@ export function audit({ root, docs, grammar, known, canonical }) {
       const canonicalHere = [...words.keys()].filter((word) => allCanonical.has(word));
       if (canonicalHere.length === 0) continue;
       scannedBlocks += 1;
-      if (!tagged) untagged.push({ document, line: block.line });
+      if (!tagged) {
+        // An untagged block is not automatically a defect: the site runs the same inference
+        // used here before rendering, so most bare fences are coloured as Oqthara anyway. What
+        // matters is whether inference *succeeds*. A block that contains canonical structures
+        // and infers to nothing is the real finding -- it is rendered with no grammar at all.
+        const inferred = inferLanguage(block.body);
+        untagged.push({ document, line: block.line, inferred });
+        if (inferred === null && !isTranscript(block.body)) {
+          uncoloured.push({ document, line: block.line });
+        }
+      }
 
       for (const word of canonicalHere.sort()) {
         if (known.has(word)) continue;
@@ -319,6 +368,7 @@ export function audit({ root, docs, grammar, known, canonical }) {
     canonicalTotal: allCanonical.size,
     grammarTotal: known.size,
     untagged,
+    uncoloured,
     findings,
   };
 }
@@ -374,7 +424,7 @@ function main() {
     const lines = [
       `Oqthara code-block audit over ${result.documents} published documents`,
       `- ${result.blocks} fenced blocks, ${result.oqBlocks} tagged as Oqthara, ${result.scannedBlocks} containing canonical structures`,
-      `- ${result.untagged.length} Oqthara-shaped blocks carry no tag`,
+      `- ${result.untagged.length} blocks carry no tag (${result.untagged.length - result.uncoloured.length} inferred as Oqthara and coloured anyway, ${result.uncoloured.length} left uncoloured)`,
       `- ${result.canonicalTotal} canonical structures, ${result.grammarTotal} the grammar can colour`,
     ];
     if (result.findings.length) {
@@ -389,11 +439,20 @@ function main() {
     } else {
       lines.push("  every structure in the published blocks is one the grammar knows");
     }
+    if (result.uncoloured.length) {
+      for (const block of result.uncoloured.slice(0, 5)) {
+        lines.push(`  untagged and uncoloured \`${block.document}:${block.line}\``);
+      }
+      if (result.uncoloured.length > 5) {
+        lines.push(`  ... and ${result.uncoloured.length - 5} more`);
+      }
+      lines.push("UNCOLOURED: an untagged block containing canonical structures infers no language.");
+    }
     console.log(lines.join("\n"));
   }
 
   if (!result.evaluated) process.exit(3);
-  process.exit(result.findings.length > 0 ? 2 : 0);
+  process.exit(result.findings.length > 0 || result.uncoloured.length > 0 ? 2 : 0);
 }
 
 if (process.argv[1]?.endsWith("audit-code-blocks.mjs")) main();
