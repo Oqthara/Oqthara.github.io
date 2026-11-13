@@ -5,12 +5,14 @@
 // unreadable because the block was never tagged, and an example can be correct while the grammar
 // draws its constructs as plain identifiers.
 //
-// Two failure modes are tested because a check that has only ever passed cannot be told apart
+// Three failure modes are tested because a check that has only ever passed cannot be told apart
 // from one that never runs:
 //
 //   * a block that uses a canonical structure the grammar does not know -- the real finding;
 //   * a block that uses a name the *example itself* defines -- which must stay silent, because
-//     a report full of user-defined classes is a report nobody reads.
+//     a report full of user-defined classes is a report nobody reads;
+//   * a block that calls a name neither the reference nor the block accounts for -- the provider
+//     question, which the grammar cannot answer because it colours any `name(` it sees.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -21,6 +23,7 @@ import { join, resolve } from "node:path";
 
 import {
   audit,
+  canonicalMethods,
   canonicalStructures,
   fences,
   knownStructures,
@@ -52,6 +55,12 @@ const REFERENCE = [
   "| `length` | built-in |",
   "| `fraction_add` | built-in |",
   "",
+  "## Methods on values",
+  "",
+  "### Numbers and text",
+  "",
+  "| `.to_list()` | `.join(separator)` | `.upper()` |",
+  "",
 ].join("\n");
 
 /** A repository with an allowlist, the grammar, the reference and one document. */
@@ -76,6 +85,7 @@ function run(root) {
     grammar: GRAMMAR,
     known: knownStructures(GRAMMAR),
     canonical: canonicalStructures(REFERENCE),
+    methods: canonicalMethods(REFERENCE),
   });
 }
 
@@ -221,6 +231,69 @@ test("an annotated shell comment is not mistaken for an Oqthara block", () => {
   const result = run(root);
   assert.deepEqual(result.findings, []);
   assert.equal(result.untagged.length, 0);
+  rmSync(root, { recursive: true, force: true });
+});
+
+// The structure check asks a fourth question: does a block call a name nobody accounts for --
+// not the reference's global functions, not its methods, and not something the block declares?
+// These five cases pin the rule and each of its exemptions, because a rule that reports every
+// locally-declared method is a rule that fires on correct documentation.
+
+test("a block calling a method the reference does not list is reported", () => {
+  // The block also calls a method the reference *does* list, because the audit only asks the
+  // question of a block it has already recognised as Oqthara: a block with no canonical
+  // structure could belong to any language.
+  const root = project({ document: "```oq\nprint [1].to_list().shuffle_secretly()\n```\n" });
+  const result = run(root);
+  assert.deepEqual(result.unresolved.map((u) => u.word), ["shuffle_secretly"]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("a method the reference lists is accounted for", () => {
+  const root = project({ document: "```oq\nprint [1].to_list()\nprint [1].upper()\n```\n" });
+  const result = run(root);
+  assert.deepEqual(result.unresolved, []);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("a method the block declares itself is accounted for", () => {
+  // `bump` is structure the *example* introduces, exactly like a `data` type. Reporting it
+  // would fire on every worked example of a class and teach a maintainer to skip the report.
+  const root = project({
+    document: "```oq\nclass Counter(n)\n  fun bump()\n    return n\n  end\nend\nCounter(1).bump()\n```\n",
+  });
+  const result = run(root);
+  assert.deepEqual(result.unresolved, []);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("a call through a local binding is accounted for", () => {
+  // `a = make_adder(10)` then `a(5)`: the name is the example's choice, not a structure with a
+  // provider of its own, so there is nothing for the reference to list.
+  const root = project({
+    document: "```oq\nfun make_adder(n)\n  return n\nend\na = make_adder(10)\nprint upper(a(5))\n```\n",
+  });
+  const result = run(root);
+  assert.deepEqual(result.unresolved, []);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("a block that reaches into Java is not asked which members exist", () => {
+  // One `use java.time.LocalDate` puts an entire foreign class on the page. No list here could
+  // enumerate `plusDays`, so the block is exempt as a whole rather than word by word.
+  const root = project({
+    document: '```oq\nuse java.time.LocalDate\ntoday = LocalDate.now()\nprint today.plusDays(30)\n```\n',
+  });
+  const result = run(root);
+  assert.deepEqual(result.unresolved, []);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("the audit exits 2 when a block calls an unaccounted name", () => {
+  const root = project({ document: "```oq\nprint [1].to_list().shuffle_secretly()\n```\n" });
+  const result = runCli(root);
+  assert.equal(result.status, 2, "an unaccounted call is drift, not a warning");
+  assert.match(result.stdout, /UNACCOUNTED/);
   rmSync(root, { recursive: true, force: true });
 });
 

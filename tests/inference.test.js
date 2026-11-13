@@ -72,6 +72,24 @@ test("lambdas are recognised as Oqthara, not as diagram art", () => {
   assert.equal(inferLanguage('xs.map(x -> x * 2)'), "oq");
 });
 
+// Both blocks are copied verbatim from docs/spec/language.md, in its section on range values.
+// Each is a single line, and each scored exactly 2 -- a method call on a receiver scored the
+// first, nothing at all scored the second -- so both fell under the threshold of 3 and were
+// rendered with no grammar. The blocking code-block audit caught them against `main`, and the
+// defect was here in the inference rather than in the documents, which are correct.
+test("a range used as a value is recognised as Oqthara", () => {
+  assert.equal(inferLanguage("print (5 to 1).to_list()"), "oq");
+  assert.equal(inferLanguage("print length(0 to 3000000000)"), "oq");
+  // A builtin called after another word, and a range closed by any bracket.
+  assert.equal(inferLanguage("print length(names)"), "oq");
+  assert.equal(inferLanguage("xs = [0 until 10]"), "oq");
+});
+
+test("prose that mentions a span is not a range expression", () => {
+  // The recogniser must not treat a sentence with a bracketed duration as code.
+  assert.equal(inferLanguage("waits (5 to 10 seconds) before the retry"), null);
+});
+
 test("shell transcripts are recognised", () => {
   assert.equal(inferLanguage(SHELL_SAMPLE), "bash");
   assert.equal(inferLanguage(GRADLE_SAMPLE), "bash");
