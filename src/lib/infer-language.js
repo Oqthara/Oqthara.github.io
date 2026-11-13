@@ -31,6 +31,21 @@ const CONTINUED = /\\\s*$/;
 const OQ_ASSIGNMENT = /^[A-Za-z_]\w*\s*=\s*(?!=)(?!.*\b(?:if|then|fi)\b)/;
 const OQ_CALL = /^[A-Za-z_]\w*\s*"/;
 
+/** Every `name(` in a line, so a builtin can be recognised where it is not the first word. */
+const CALL_SITE = /(^|[^\w.])([A-Za-z_]\w*)\s*\(/g;
+
+/**
+ * A range written as an expression rather than as a loop header: `(5 to 1)`, `[0 until n]`.
+ *
+ * The parenthesis or bracket is the whole signal. `for x in 0 to 10` is already recognised by
+ * the `for` rule, but the specification also shows ranges as values -- `(5 to 1).to_list()` and
+ * `length(0 to 3000000000)` -- and those scored nothing at all.
+ *
+ * The closing bracket must follow the upper bound directly, so prose that merely mentions a
+ * span -- `(5 to 10 seconds)` -- does not match and stays plain.
+ */
+const RANGE_VALUE = /\b(?:to|until)\s+[-\w."']+[)\]]/;
+
 function shellScore(lines) {
   let score = 0;
   for (const line of lines) {
@@ -63,6 +78,21 @@ function oqtharaScore(lines) {
       else if (BUILTINS.has(word[1])) score += 2;
     }
     if (OQ_CALL.test(trimmed)) score += 2;
+    // A builtin called anywhere on the line, not only as its first word. The specification
+    // writes `print length(0 to 3000000000)` and `print (5 to 1).to_list()`, where the builtin
+    // that makes the line Oqthara is `length` or `to_list`, never the leading `print`.
+    //
+    // A leading builtin is skipped: it was already scored above, and counting the same evidence
+    // twice would lift a lone `fraction_add(1, 2)` over the threshold and label a block that
+    // carries one weak signal as Oqthara.
+    for (const call of trimmed.matchAll(CALL_SITE)) {
+      if (call.index + call[1].length === 0) continue;
+      if (BUILTINS.has(call[2])) {
+        score += 2;
+        break;
+      }
+    }
+    if (RANGE_VALUE.test(trimmed)) score += 2;
     // A method call on a receiver, `xs.map(x -> x * 2)`, is Oqthara. It appears as a single
     // line in the language reference and scored nothing before.
     //

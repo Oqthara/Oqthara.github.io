@@ -201,6 +201,109 @@ export function canonicalStructures(markdown) {
 const DECLARATION_WORDS = new Set(["fun", "data", "class", "contract", "use", "immutable", "implements"]);
 
 /**
+ * The method names the reference lists under `## Methods on values`.
+ *
+ * Every `### type` subsection is a run of ``.name()` entries, so the whole section is read at
+ * once rather than per type: a method that moves between types is still a method, and a block
+ * calling `.to_list()` does not have to know which receiver it has.
+ *
+ * Read from the reference for the same reason `canonicalStructures` is: `oq doc` writes that
+ * table from the registration table, so it cannot fall behind the implementation. It is a
+ * third structure list the audit previously ignored entirely, which meant a method renamed in
+ * the language left every example calling it silently uncoloured.
+ */
+export function canonicalMethods(markdown) {
+  const start = markdown.indexOf("## Methods on values");
+  if (start < 0) return null;
+  const rest = markdown.slice(start + "## Methods on values".length);
+  const next = rest.search(/\n## /);
+  const section = next < 0 ? rest : rest.slice(0, next);
+  const names = new Set();
+  for (const match of section.matchAll(/`\.([a-z][a-z0-9_]*)\(\)`/g)) names.add(match[1]);
+  return names.size > 0 ? names : null;
+}
+
+/**
+ * Local calls a published block makes without declaring them, and why each is legitimate.
+ *
+ * Every entry is a name the *document* provides and the *language* does not, so no structure
+ * list can contain it and the block is not at fault:
+ *
+ *   - `twice` and `Point` are declared by the `# helper.oq` block that introduces module
+ *     splitting, and called by the `# main.oq` block beside it. The audit reads one block at a
+ *     time, so it cannot see the declaration.
+ *   - `expensive` is a placeholder in the concurrency example, deliberately undefined because
+ *     the point is `spawn(fun() ... end)` rather than the body.
+ *
+ * A callable *binding* needs no allowance: `a = make_adder(10)` followed by `a(5)` is read as a
+ * local name and is accounted for by `unresolvedCalls` itself, because a binding that assigns a
+ * function to a name is ordinary Oqthara rather than a structure with a name of its own.
+ *
+ * The list is keyed by name and requires a reason, so a *new* undeclared call still fails. That
+ * is the property that matters: this check exists to notice a language release adding a
+ * structure the site does not know, and an allowance for two cross-block names and one
+ * placeholder cannot hide the next one.
+ */
+const ALLOWED_UNRESOLVED = new Map([
+  ["twice", "declared by the helper module in the module-splitting example"],
+  ["Point", "declared by the helper module in the module-splitting example"],
+  ["expensive", "a deliberate placeholder in the concurrency example"],
+]);
+
+/**
+ * The call shapes in a block whose provider the document has to declare.
+ *
+ * Three shapes are structure the reference names, and each is checked by the caller against the
+ * list that owns it: a global function, a builtin, and a method the reference lists. What is left
+ * is a call whose provider is *local* -- `Counter()`, `p.with(...)`, `c.bump()` -- and that is
+ * only legitimate when the block declares it, either by naming it in a `data`/`class`/`contract`
+ * header or in a `fun` body. An undeclared local call is a structure the site cannot account
+ * for, and it is reported.
+ *
+ * Java interoperability is exempt and for a principled reason: `use java.time.LocalDate` puts an
+ * entire foreign class on the page, and `today.plusDays(30)` calls a method that belongs to the
+ * JDK rather than to Oqthara. No list in this repository could enumerate those, so a block that
+ * imports a Java package, or that calls a static member of a capitalised name, is not asked the
+ * question.
+ */
+export function unresolvedCalls(body, { globals, methods, builtins }) {
+  const stripped = stripCommentsAndStrings(body);
+  // A block that reaches into Java -- an import, or `Comparator.naturalOrder()` -- is out of
+  // scope for the whole block, because one `use` can introduce any number of members.
+  if (/\buse\s+(?:java|javax|jdk)\./.test(stripped) || /\b[A-Z]\w*\.\w+\s*\(/.test(stripped)) {
+    return [];
+  }
+  // Declarations the block makes itself: `data Point(x, y)`, `class Counter(v)`, `fun bump()`.
+  // A method a block declares is structure the *example* introduces, so it is accounted for
+  // exactly as a global function is.
+  const declared = new Set(
+    [...stripped.matchAll(/\b(?:fun|data|class|contract)\s+([A-Za-z_]\w*)/g)].map((m) => m[1]),
+  );
+  // A name the block binds itself. `a = make_adder(10)` then `a(5)` is a call through a local
+  // variable, and the name is the example's choice rather than a structure with a provider.
+  for (const match of stripped.matchAll(/^\s*([A-Za-z_]\w*)\s*=(?!=)/gm)) declared.add(match[1]);
+  const calls = new Set([...globals, ...builtins]);
+
+  const unresolved = new Set();
+  // A method call: `[1].to_list()`. Its provider is the type the reference documents under
+  // `## Methods on values`, so a method renamed in the language leaves the block calling a name
+  // that no longer exists -- and the block would still render, because the grammar colours any
+  // `name(`. That silent case is exactly what this check exists to catch.
+  for (const match of stripped.matchAll(/\.([A-Za-z_]\w*)\s*\(/g)) {
+    if (!methods.has(match[1]) && !declared.has(match[1])) unresolved.add(match[1]);
+  }
+  // A local call: `Counter(1)`, `twice(3)`. The word after a declaration word is the name the
+  // example chose, so it is not a call and is skipped.
+  for (const match of stripped.matchAll(/(^|[^\w.])([A-Za-z_]\w*)\s*\(/g)) {
+    const word = match[2];
+    if (calls.has(word) || declared.has(word) || ALLOWED_UNRESOLVED.has(word)) continue;
+    if (/\b(?:fun|class|contract|data)\s+$/.test(stripped.slice(0, match.index + match[1].length))) continue;
+    unresolved.add(word);
+  }
+  return [...unresolved].sort();
+}
+
+/**
  * The call-shaped words in a block: `name(` where `name` is not a method call and not part of a
  * declaration header.
  *
@@ -310,7 +413,7 @@ export function isTranscript(body) {
  * word, or a global function -- rather than by the absence of a shell prompt, because "not
  * obviously shell" is true of a great many blocks that are not Oqthara either.
  */
-export function audit({ root, docs, grammar, known, canonical }) {
+export function audit({ root, docs, grammar, known, canonical, methods = new Set() }) {
   const sections = publishedSections(readFileSync(join(root, "src", "source.js"), "utf8"));
   if (!sections) return { evaluated: false, reason: "src/source.js no longer declares the allowlist" };
 
@@ -321,6 +424,7 @@ export function audit({ root, docs, grammar, known, canonical }) {
   const findings = [];
   const untagged = [];
   const uncoloured = [];
+  const unresolved = [];
   let blocks = 0;
   let oqBlocks = 0;
   let scannedBlocks = 0;
@@ -338,8 +442,23 @@ export function audit({ root, docs, grammar, known, canonical }) {
         ...structureWords(block.body),
       ]);
       const canonicalHere = [...words.keys()].filter((word) => allCanonical.has(word));
-      if (canonicalHere.length === 0) continue;
+      // A method the reference lists is a canonical structure too, even though it is not in the
+      // keyword or function lists: a block whose only recognisable content is `.to_list()` is
+      // still an example of the language, and skipping it left the structure check unable to
+      // see a block that calls one method it knows and one it does not.
+      const methodsHere = [...block.body.matchAll(/\.([A-Za-z_]\w*)\s*\(/g)]
+        .map((match) => match[1])
+        .filter((word) => methods.has(word));
+      if (canonicalHere.length === 0 && methodsHere.length === 0) continue;
       scannedBlocks += 1;
+
+      // A block is asked what *else* it calls only when it is Oqthara code. A `java` fence or a
+      // transcript is somebody else's language, and its calls belong to that language.
+      if (OQ_FENCES.has(block.language) || inferLanguage(block.body) === "oq") {
+        for (const word of unresolvedCalls(block.body, { globals: canonical.functions, methods, builtins: known })) {
+          unresolved.push({ document, line: block.line, word });
+        }
+      }
       if (!tagged) {
         // An untagged block is not automatically a defect: the site runs the same inference
         // used here before rendering, so most bare fences are coloured as Oqthara anyway. What
@@ -367,8 +486,10 @@ export function audit({ root, docs, grammar, known, canonical }) {
     scannedBlocks,
     canonicalTotal: allCanonical.size,
     grammarTotal: known.size,
+    methodTotal: methods.size,
     untagged,
     uncoloured,
+    unresolved,
     findings,
   };
 }
@@ -403,19 +524,25 @@ function main() {
     process.exit(3);
   }
 
-  let canonical;
+  let reference;
   try {
-    canonical = canonicalStructures(readFileSync(join(docs, REFERENCE_PATH), "utf8"));
+    reference = readFileSync(join(docs, REFERENCE_PATH), "utf8");
   } catch {
     console.error(`audit-code-blocks: cannot read ${join(docs, REFERENCE_PATH)}`);
     process.exit(3);
   }
+  const canonical = canonicalStructures(reference);
   if (!canonical) {
     console.error(`audit-code-blocks: ${REFERENCE_PATH} no longer lists keywords and functions`);
     process.exit(3);
   }
+  const methods = canonicalMethods(reference);
+  if (!methods) {
+    console.error(`audit-code-blocks: ${REFERENCE_PATH} no longer lists the methods on values`);
+    process.exit(3);
+  }
 
-  const result = audit({ root: process.cwd(), docs, grammar, known, canonical });
+  const result = audit({ root: process.cwd(), docs, grammar, known, canonical, methods });
   if (json) {
     console.log(JSON.stringify(result, null, 2));
   } else if (!result.evaluated) {
@@ -425,7 +552,7 @@ function main() {
       `Oqthara code-block audit over ${result.documents} published documents`,
       `- ${result.blocks} fenced blocks, ${result.oqBlocks} tagged as Oqthara, ${result.scannedBlocks} containing canonical structures`,
       `- ${result.untagged.length} blocks carry no tag (${result.untagged.length - result.uncoloured.length} inferred as Oqthara and coloured anyway, ${result.uncoloured.length} left uncoloured)`,
-      `- ${result.canonicalTotal} canonical structures, ${result.grammarTotal} the grammar can colour`,
+      `- ${result.canonicalTotal} canonical structures, ${result.grammarTotal} the grammar can colour, ${result.methodTotal} methods on values`,
     ];
     if (result.findings.length) {
       const byWord = new Map();
@@ -448,11 +575,23 @@ function main() {
       }
       lines.push("UNCOLOURED: an untagged block containing canonical structures infers no language.");
     }
+    if (result.unresolved.length) {
+      const byWord = new Map();
+      for (const finding of result.unresolved) {
+        byWord.set(finding.word, [...(byWord.get(finding.word) ?? []), `${finding.document}:${finding.line}`]);
+      }
+      for (const [word, where] of [...byWord].sort()) {
+        lines.push(`  unaccounted call \`${word}\` at ${where.slice(0, 3).join(", ")}${where.length > 3 ? ` (+${where.length - 3} more)` : ""}`);
+      }
+      lines.push("UNACCOUNTED: an Oqthara block calls a name the reference does not list and the block does not declare.");
+    }
     console.log(lines.join("\n"));
   }
 
   if (!result.evaluated) process.exit(3);
-  process.exit(result.findings.length > 0 || result.uncoloured.length > 0 ? 2 : 0);
+  const drift =
+    result.findings.length > 0 || result.uncoloured.length > 0 || result.unresolved.length > 0;
+  process.exit(drift ? 2 : 0);
 }
 
 if (process.argv[1]?.endsWith("audit-code-blocks.mjs")) main();
