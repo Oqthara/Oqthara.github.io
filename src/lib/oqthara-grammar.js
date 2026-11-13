@@ -96,6 +96,18 @@ export const OQ_BUILTINS = [
   "url_join", "url_parse", "uuid", "values", "variance",
   "walk", "wrap_text", "write", "write_bytes", "write_text",
   "zip", "zip_compress", "zip_decompress", "zlib_compress", "zlib_decompress",
+  // Alpha 4 §17 added these after the list above was transcribed, and nothing noticed: a name
+  // missing here falls through to the identifier rule and is drawn as a plain variable, which is
+  // the shape of a typo rather than a call. `scripts/audit-grammar.mjs` reports the gap, and
+  // `scripts/audit-code-blocks.mjs` reports it again from the published examples' side.
+  "acos", "asin", "atan", "atan2", "hypot", "sin", "cos", "tan",
+  "degrees", "radians", "exp", "ln", "log2", "log10", "pi", "e", "tau",
+  "fraction", "fraction_abs", "fraction_add", "fraction_ceil", "fraction_compare",
+  "fraction_den", "fraction_div", "fraction_floor", "fraction_mul", "fraction_neg",
+  "fraction_num", "fraction_of", "fraction_pow", "fraction_round", "fraction_sub",
+  "fraction_text", "fraction_to_decimal",
+  "copy_tree", "ini_parse", "ini_write", "path_absolute", "path_normalize",
+  "properties_parse", "read_lines_or_empty", "stat", "temp_dir", "toml_get", "touch",
 ];
 
 /**

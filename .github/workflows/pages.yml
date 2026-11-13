@@ -43,6 +43,24 @@ jobs:
       - name: Unit and integration tests
         run: npm test
 
+      # The code-block audit reads the published documents, which live in the language
+      # repository and are not part of this checkout. A shallow clone of the default branch is
+      # enough: the audit reads current text, not history.
+      - name: Check out the language documentation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Oqthara/oqthara
+          path: .docs
+          persist-credentials: false
+
+      # Advisory, not gating: the grammar's coverage of the language is tracked by
+      # `scripts/audit-grammar.mjs`, and this reports what a reader would actually see in the
+      # published examples. Requiring it to pass would block a documentation fix on a grammar
+      # fix, and the two are deliberately allowed to move independently.
+      - name: Audit the published code blocks
+        continue-on-error: true
+        run: node scripts/audit-code-blocks.mjs --docs=.docs
+
       # `firebase-tools` 15 refuses to start the emulator on a JRE older than 21, and the
       # runner image does not ship one. The emulator is the only thing that needs the JDK.
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
