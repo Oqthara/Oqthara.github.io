@@ -103,7 +103,10 @@ test("the audit fails when the grammar is missing a structure", () => {
   // Nothing else drifted, so the only finding is the invented keyword. If this line read
   // `unknown ...` the fixture would be wrong, not the grammar.
   assert.doesNotMatch(result.stdout, /unknown /);
-  assert.match(result.stdout, /global functions \(155 canonical\): in step/);
+  // The count is read from the fixture rather than written out. It said 155 while the grammar
+  // had grown to 200, so this line asserted a number that no longer existed anywhere -- the same
+  // stale transcription the audit itself exists to catch, reproduced inside its own test.
+  assert.match(result.stdout, new RegExp(`global functions \\(${functions.length} canonical\\): in step`));
   assert.match(result.stdout, /DRIFT/);
 });
 
