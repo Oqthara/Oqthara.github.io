@@ -190,6 +190,12 @@ test.describe("site", () => {
   });
 
   test("11. pinned alpha.1 and alpha.2 render different documents", async ({ page }) => {
+    // Two pinned tags, each fetched from GitHub rather than the mirror, and each waited on for up
+    // to 25s. The 30s default cannot cover two of those waits in sequence: this test was failing
+    // intermittently at the full 25s while the same commit passed on a rerun. The budget is
+    // raised rather than the wait shortened, because the wait is what distinguishes "GitHub is
+    // slow" from "the pinned ref did not render".
+    test.slow();
     await page.goto(DOC("docs/spec/language.md", "v0.1.0-alpha.1"));
     await waitForArticle(page);
     const alphaOne = await article(page).innerText();
@@ -243,6 +249,10 @@ test.describe("site", () => {
   });
 
   test("17. search finds dynamically discovered documents", async ({ page }) => {
+    // The search index is discovered from the repository at runtime, so this test waits on a
+    // network read before it can type into the box. `test.slow()` triples the budget for the
+    // same reason as test 11.
+    test.slow();
     await openDocs(page);
     const input = page.locator("#site-search");
     await expect(input).toBeVisible();
@@ -382,6 +392,9 @@ test.describe("site", () => {
   // mirror, a pinned tag must come from GitHub. Asserting it here means a misconfigured mirror
   // shows up as a test failure instead of silently degrading to GitHub and looking healthy.
   test("25. main is served by the mirror and a pinned tag by GitHub", async ({ page }) => {
+    // Two full page loads, one of which waits on GitHub for a pinned tag, inside a 30s default.
+    // It failed at 25s on one run and passed on the immediate rerun of the same commit.
+    test.slow();
     await page.goto(DOC("docs/spec/language.md"));
     await waitForArticle(page);
     await expect(page.locator(".content-source").first()).toHaveAttribute("data-source", "firestore");
