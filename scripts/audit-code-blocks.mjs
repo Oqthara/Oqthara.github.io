@@ -103,9 +103,10 @@ export function publishedSections(source) {
  *
  * `publishedDocuments` walks a checkout of the *language* repository, so it sees only the
  * documents that repository carries. The site also writes prose of its own, and that prose
- * carries code blocks -- `language.md` at the repository root is the one a reader lands on.
- * Those blocks were never audited. A fabricated builtin and a fabricated keyword, fenced as
- * Oqthara and added to `language.md`, left the audit reporting 175 blocks and exiting 0.
+ * carries code blocks -- `language.md` at the repository root, which is not published and
+ * exists to seed the emulator. Those blocks were never audited. A fabricated builtin and a
+ * fabricated keyword, fenced as Oqthara and added to `language.md`, left the audit reporting
+ * 175 blocks and exiting 0.
  *
  * The list is explicit rather than a glob over `*.md` because the repository root also holds
  * review reports and recovery notes, whose code blocks are quotations and transcripts rather
