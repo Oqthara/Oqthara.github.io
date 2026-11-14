@@ -75,6 +75,10 @@ function project({ document, source }) {
   writeFileSync(join(root, "src", "lib", "oqthara-grammar.js"), GRAMMAR);
   writeFileSync(join(root, "docs", "stdlib", "reference.md"), REFERENCE);
   writeFileSync(join(root, "docs", "spec", "language.md"), document);
+  // The CLI enforces `SITE_PAGES` against the tree it is run in, so a fixture that invokes the
+  // CLI has to carry the page. An empty page keeps the existing tests measuring what they were
+  // written to measure.
+  writeFileSync(join(root, "language.md"), "");
   return root;
 }
 
@@ -342,4 +346,52 @@ test("a reference with neither keywords nor functions is not read as an empty la
 
 test("a grammar missing a structure list is reported rather than treated as empty", () => {
   assert.equal(knownStructures('export const OQ_KEYWORDS = ["fun"];'), null);
+});
+
+test("a site page is audited, not only the language repository's documents", () => {
+  // `language.md` lives in this repository, not in the checkout the allowlist walks. It was
+  // therefore never audited: a fabricated builtin added to it left the audit reporting the same
+  // block count and exiting 0.
+  const root = project({ document: "```oq\nprint upper(\"a\")\n```\n" });
+  writeFileSync(join(root, "language.md"), "```oq\nfun total(xs)\n  return length(xs) + invented()\nend\n```\n");
+  const result = audit({
+    root,
+    docs: root,
+    grammar: GRAMMAR,
+    known: knownStructures(GRAMMAR),
+    canonical: canonicalStructures(REFERENCE),
+    methods: canonicalMethods(REFERENCE),
+    sitePages: ["language.md"],
+  });
+  assert.deepEqual(result.unresolved.map((f) => f.word), ["invented"]);
+  assert.equal(result.unusable.length, 0);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("a declared site page that is absent is reported rather than skipped", () => {
+  // A page that is renamed or moved must fail, not disappear from the audit. Silence would look
+  // exactly like a clean page.
+  const root = project({ document: "```oq\nprint upper(\"a\")\n```\n" });
+  rmSync(join(root, "language.md"));
+  const result = audit({
+    root,
+    docs: root,
+    grammar: GRAMMAR,
+    known: knownStructures(GRAMMAR),
+    canonical: canonicalStructures(REFERENCE),
+    methods: canonicalMethods(REFERENCE),
+    sitePages: ["language.md"],
+  });
+  assert.deepEqual(result.unusable, ["language.md"]);
+  assert.equal(result.missing, 1);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("the CLI fails when a site page named in the list is not in the tree", () => {
+  const root = project({ document: "```oq\nprint upper(\"a\")\n```\n" });
+  rmSync(join(root, "language.md"));
+  const result = runCli(root);
+  assert.equal(result.status, 2, "a missing published page is drift");
+  assert.match(result.stdout, /MISSING/);
+  rmSync(root, { recursive: true, force: true });
 });
