@@ -98,6 +98,41 @@ export function publishedSections(source) {
   return { sections: names(sections[1]), rootFiles: names(roots[1]) };
 }
 
+/**
+ * This site's own hand-written pages, which the allowlist above cannot describe.
+ *
+ * `publishedDocuments` walks a checkout of the *language* repository, so it sees only the
+ * documents that repository carries. The site also writes prose of its own, and that prose
+ * carries code blocks -- `language.md` at the repository root is the one a reader lands on.
+ * Those blocks were never audited. A fabricated builtin and a fabricated keyword, fenced as
+ * Oqthara and added to `language.md`, left the audit reporting 175 blocks and exiting 0.
+ *
+ * The list is explicit rather than a glob over `*.md` because the repository root also holds
+ * review reports and recovery notes, whose code blocks are quotations and transcripts rather
+ * than published pages. Adding a page here is a decision that the page is reader-facing.
+ */
+export const SITE_PAGES = ["language.md"];
+
+/**
+ * The site pages present in a checkout.
+ *
+ * `SITE_PAGES` is a list of pages that *should* be audited, and the audit's own test fixtures
+ * build throwaway trees that carry none of them. Requiring every entry to exist would make each
+ * fixture responsible for a file it is not testing. The real repository is where absence is
+ * drift -- so the caller passes `sitePages` explicitly, and the default derives it from what is
+ * actually on disk.
+ */
+export function existingSitePages(root) {
+  return SITE_PAGES.filter((path) => {
+    try {
+      statSync(join(root, path));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 /** Every markdown file the allowlist admits, relative to the repository root. */
 export function publishedDocuments(root, { sections, rootFiles }) {
   const found = [];
@@ -413,15 +448,24 @@ export function isTranscript(body) {
  * word, or a global function -- rather than by the absence of a shell prompt, because "not
  * obviously shell" is true of a great many blocks that are not Oqthara either.
  */
-export function audit({ root, docs, grammar, known, canonical, methods = new Set() }) {
+export function audit({ root, docs, grammar, known, canonical, methods = new Set(), sitePages = null }) {
   const sections = publishedSections(readFileSync(join(root, "src", "source.js"), "utf8"));
   if (!sections) return { evaluated: false, reason: "src/source.js no longer declares the allowlist" };
 
   const documents = publishedDocuments(docs, sections);
   if (documents.length === 0) return { evaluated: false, reason: "the allowlist admitted no documents" };
 
+  // Each document is paired with the directory it lives in. The language repository's documents
+  // are read from the checkout, the site's own pages from this repository, and a finding has to
+  // name the file a maintainer can open.
+  const sources = [
+    ...documents.map((path) => ({ path, base: docs })),
+    ...(sitePages ?? existingSitePages(root)).map((path) => ({ path, base: root })),
+  ];
+
   const allCanonical = new Set([...canonical.keywords, ...canonical.functions, ...DECLARATION_WORDS]);
   const findings = [];
+  const unusable = [];
   const untagged = [];
   const uncoloured = [];
   const unresolved = [];
@@ -429,8 +473,18 @@ export function audit({ root, docs, grammar, known, canonical, methods = new Set
   let oqBlocks = 0;
   let scannedBlocks = 0;
 
-  for (const document of documents) {
-    const markdown = readFileSync(join(docs, document), "utf8");
+  let missing = 0;
+  for (const { path: document, base } of sources) {
+    let markdown;
+    try {
+      markdown = readFileSync(join(base, document), "utf8");
+    } catch {
+      // A page named in SITE_PAGES that no longer exists is drift, not a crash: the list is a
+      // claim about what the site publishes, and a stale claim should fail the audit.
+      missing += 1;
+      unusable.push(document);
+      continue;
+    }
     for (const block of fences(markdown)) {
       blocks += 1;
       const tagged = OQ_FENCES.has(block.language);
@@ -480,7 +534,8 @@ export function audit({ root, docs, grammar, known, canonical, methods = new Set
 
   return {
     evaluated: true,
-    documents: documents.length,
+    documents: sources.length,
+    missing,
     blocks,
     oqBlocks,
     scannedBlocks,
@@ -491,6 +546,7 @@ export function audit({ root, docs, grammar, known, canonical, methods = new Set
     uncoloured,
     unresolved,
     findings,
+    unusable,
   };
 }
 
@@ -542,7 +598,18 @@ function main() {
     process.exit(3);
   }
 
-  const result = audit({ root: process.cwd(), docs, grammar, known, canonical, methods });
+  // The CLI enforces the declared list, so a page that moves or is renamed fails here rather
+  // than dropping silently out of the audit. Callers that pass no list get the pages that
+  // exist, which is what keeps a test fixture from having to carry every published page.
+  const result = audit({
+    root: process.cwd(),
+    docs,
+    grammar,
+    known,
+    canonical,
+    methods,
+    sitePages: SITE_PAGES,
+  });
   if (json) {
     console.log(JSON.stringify(result, null, 2));
   } else if (!result.evaluated) {
@@ -575,6 +642,12 @@ function main() {
       }
       lines.push("UNCOLOURED: an untagged block containing canonical structures infers no language.");
     }
+    if (result.unusable.length) {
+      for (const document of result.unusable) {
+        lines.push(`  missing site page \`${document}\``);
+      }
+      lines.push("MISSING: SITE_PAGES names a page that is not in the repository.");
+    }
     if (result.unresolved.length) {
       const byWord = new Map();
       for (const finding of result.unresolved) {
@@ -590,7 +663,10 @@ function main() {
 
   if (!result.evaluated) process.exit(3);
   const drift =
-    result.findings.length > 0 || result.uncoloured.length > 0 || result.unresolved.length > 0;
+    result.findings.length > 0 ||
+    result.uncoloured.length > 0 ||
+    result.unresolved.length > 0 ||
+    result.unusable.length > 0;
   process.exit(drift ? 2 : 0);
 }
 
